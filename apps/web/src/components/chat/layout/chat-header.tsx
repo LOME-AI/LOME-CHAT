@@ -7,6 +7,7 @@ import { ModelSelectorButton } from '@/components/chat/model-selector/model-sele
 import { MemberFacepile } from '@/components/chat/member/member-facepile';
 import type { Model, ChatModality } from '@hushbox/shared';
 import type { SelectedModelEntry } from '@/stores/model';
+import type { ModelFloorGroupContext } from '@/hooks/billing/use-prompt-budget';
 import type { ModelSelectorGatingProps } from '@/components/chat/model-selector/model-selector-types';
 
 interface ChatHeaderProps extends ModelSelectorGatingProps {
@@ -26,6 +27,8 @@ interface ChatHeaderProps extends ModelSelectorGatingProps {
   pickerOpen?: boolean | undefined;
   /** Called when the picker should open or close. */
   onPickerOpenChange?: ((open: boolean) => void) | undefined;
+  /** Group funding context for the picker's affordability floor (threading only). */
+  floorGroup?: ModelFloorGroupContext | undefined;
 }
 
 export function ChatHeader({
@@ -44,6 +47,7 @@ export function ChatHeader({
   activeModality = 'text',
   pickerOpen,
   onPickerOpenChange,
+  floorGroup,
 }: Readonly<ChatHeaderProps>): React.JSX.Element {
   const showGroupFeatures = members !== undefined && members.length > 0;
 
@@ -66,6 +70,7 @@ export function ChatHeader({
           activeModality={activeModality}
           open={pickerOpen}
           onOpenChange={onPickerOpenChange}
+          floorGroup={floorGroup}
         />
       }
       right={

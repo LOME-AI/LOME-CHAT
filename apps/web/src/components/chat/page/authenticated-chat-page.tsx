@@ -6,6 +6,8 @@ import { useAuthenticatedChat } from '@/hooks/chat/use-authenticated-chat';
 import { useGroupChat } from '@/hooks/realtime/use-group-chat';
 import { useForks } from '@/hooks/chat/forks';
 import { useCreateFork, useDeleteFork, useRenameFork } from '@/hooks/chat/forks';
+import { useClearConversationNotifications } from '@/hooks/notifications/use-notification-clearing';
+import { useAdvanceReadCursor } from '@/hooks/notifications/use-read-cursor';
 import { useForkStore } from '@/stores/fork';
 import { useChatEditStore } from '@/stores/chat-edit';
 import { RenameConversationDialog } from '@/components/sidebar/rename-conversation-dialog';
@@ -353,6 +355,8 @@ export function AuthenticatedChatPage({
   const chat = useAuthenticatedChat({ routeConversationId, activeForkId, privateKeyOverride });
   const conversationId = resolveConversationId(routeConversationId, chat.realConversationId);
   const groupChat = useGroupChat(conversationId, chat.callerId, chat.displayTitle);
+  useClearConversationNotifications(conversationId);
+  useAdvanceReadCursor(conversationId);
 
   const forksQueryId = conversationId ?? '';
   const { data: forks } = useForks(forksQueryId);

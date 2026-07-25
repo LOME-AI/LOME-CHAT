@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { nanoUSD, textTag } from '@hushbox/shared';
-import { priceUsageBaseNanoUsd } from '../../models/index.js';
+import { priceUsageBillableNanoUsd } from '../../models/index.js';
 import { createModelResolver } from './model-resolver.js';
 import type { Modality, ModelDescriptor, Pricing, Usage } from '@hushbox/shared';
 import type { ModelPricingResolver } from '../../models/index.js';
@@ -47,7 +47,7 @@ describe('createModelResolver', () => {
     const resolver = createModelResolver(resolverOver([descriptor]));
     const usage: Usage = { inputTokens: 10, outputTokens: 20 };
     const priced = resolver.resolve('priced-model')?.price(usage);
-    expect(priced?._unsafeUnwrap()).toBe(priceUsageBaseNanoUsd(pricing, usage)._unsafeUnwrap());
+    expect(priced?._unsafeUnwrap()).toBe(priceUsageBillableNanoUsd(pricing, usage)._unsafeUnwrap());
     expect(priced?._unsafeUnwrap()).toBe(80n);
   });
 

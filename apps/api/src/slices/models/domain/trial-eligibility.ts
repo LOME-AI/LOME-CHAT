@@ -6,7 +6,7 @@ import {
   outputCharsPerTokenForTier,
   priceRequest,
 } from '@hushbox/shared';
-import { callBaseNanoUsd, ratesFromPricing } from './estimate.js';
+import { callBillableNanoUsd, ratesFromPricing } from './estimate.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import type { Result } from '../../../lib/result/index.js';
@@ -19,14 +19,16 @@ import type { DomainError } from '../../../lib/errors/index.js';
  * per-model affordability against the 1¢ cap, and non-text blocking — all
  * computed in integer nano-USD.
  *
- * Cost basis, stated once (see also the route): the 1¢ cap compares PRE-MARKUP
- * cost — never a marked-up figure and never the worst-case run ceiling. The
- * per-send budget (`trialMessageBaseNanoUsd`) is the provider base PLUS the
- * pass-through R2 storage the send will incur (legacy `calculateTrialBudget`
- * included storage), storage being pre-markup by construction (it never marks
- * up). The coarse premium-classification leg (`exceedsMinimalAffordability`)
- * stays provider-base only: it is a token-count heuristic over a fixed synthetic
- * exchange, with no real character count to size storage against.
+ * Cost basis, stated once (see also the route): the 1¢ cap compares BILLABLE
+ * (all-in) cost — the same figure a paid send would be charged, never the
+ * worst-case run ceiling. The per-send budget (`trialMessageBillableNanoUsd`)
+ * is the billable model cost PLUS the pass-through R2 storage the send will
+ * incur (legacy `calculateTrialBudget` included storage); storage is
+ * pass-through by construction (it never marks up). The coarse
+ * premium-classification leg (`exceedsMinimalAffordability`) folds the same
+ * billable rates but prices no storage: it is a token-count heuristic over a
+ * fixed synthetic exchange, with no real character count to size storage
+ * against.
  */
 
 /** Combined price at/above this quartile of the exposed text catalog is premium. */
@@ -48,7 +50,7 @@ const TRIAL_AFFORDABILITY_OUTPUT_MULTIPLIER = 2;
 const TRIAL_MIN_OUTPUT_TOKENS = 1000;
 
 /** 1¢ in nano-USD (0.01 USD). The per-message and affordability caps compare
- * BASE (pre-markup) cost against this. */
+ * BILLABLE (all-in) cost against this. */
 export const TRIAL_MESSAGE_COST_CAP_NANO_USD = 10_000_000n;
 
 /** A fixed, coarse system-prompt input-token estimate for the model-level
@@ -85,7 +87,7 @@ function flatRate(pricing: Pricing, key: string): bigint {
 
 /**
  * A model is priceable for trial iff it carries BOTH plain per-token rates as
- * bigints — exactly what `callBaseNanoUsd({kind:'tokens'})` requires to price a
+ * bigints — exactly what `callBillableNanoUsd({kind:'tokens'})` requires to price a
  * token exchange. A model missing either rate (e.g. priced only on
  * `cachedInputPerToken`) would error mid-send; refusing it at the gate turns
  * that crash into a clean `PREMIUM_REQUIRES_ACCOUNT` refusal (exclusion at
@@ -97,8 +99,8 @@ function isPriceableForTrial(pricing: Pricing): boolean {
   );
 }
 
-/** input + output per-token base rates — the price the percentile ranks on. */
-function combinedBasePrice(pricing: Pricing): bigint {
+/** input + output per-token billable rates — the price the percentile ranks on. */
+function combinedRate(pricing: Pricing): bigint {
   return flatRate(pricing, 'inputPerToken') + flatRate(pricing, 'outputPerToken');
 }
 
@@ -109,7 +111,7 @@ function ascending(a: bigint, b: bigint): number {
 }
 
 /**
- * The premium price threshold: the combined base price at position
+ * The premium price threshold: the combined billable rate at position
  * floor(len * 0.75) of the exposed text catalog, sorted ascending. `undefined`
  * when fewer than {@link TRIAL_MIN_TEXT_MODELS_FOR_PERCENTILE} priceable text
  * models exist (no threshold, so the percentile leg never fires — it would
@@ -121,7 +123,7 @@ export function trialPriceThresholdNanoUsd(
 ): bigint | undefined {
   const prices = exposedCatalog
     .filter((descriptor) => isTextModel(descriptor) && isPriceableForTrial(descriptor.pricing))
-    .map((descriptor) => combinedBasePrice(descriptor.pricing))
+    .map((descriptor) => combinedRate(descriptor.pricing))
     .toSorted(ascending);
   if (prices.length < TRIAL_MIN_TEXT_MODELS_FOR_PERCENTILE) return undefined;
   return prices[Math.floor(prices.length * TRIAL_PRICE_PERCENTILE)];
@@ -132,16 +134,16 @@ function isRecent(releasedAtSeconds: number, nowMs: number): boolean {
   return releasedAtSeconds * 1000 > nowMs - TRIAL_RECENCY_MS;
 }
 
-/** The minimal representative exchange's base cost exceeds the 1¢ cap. An
+/** The minimal representative exchange's billable cost exceeds the 1¢ cap. An
  * un-priceable minimal exchange (missing rates) is treated as not-exceeded —
  * the percentile and recency legs still guard. */
 function exceedsMinimalAffordability(pricing: Pricing): boolean {
-  const base = callBaseNanoUsd(pricing, {
+  const billable = callBillableNanoUsd(pricing, {
     kind: 'tokens',
     inputTokens: TRIAL_MINIMAL_INPUT_TOKENS,
     outputTokens: AFFORDABILITY_OUTPUT_TOKENS,
   }).unwrapOr(0n);
-  return base > TRIAL_MESSAGE_COST_CAP_NANO_USD;
+  return billable > TRIAL_MESSAGE_COST_CAP_NANO_USD;
 }
 
 /**
@@ -162,7 +164,7 @@ export function trialEligibility(
   if (!isPriceableForTrial(target.pricing)) return { eligible: false, reason: 'premium' };
 
   const threshold = trialPriceThresholdNanoUsd(exposedCatalog);
-  const topQuartile = threshold !== undefined && combinedBasePrice(target.pricing) >= threshold;
+  const topQuartile = threshold !== undefined && combinedRate(target.pricing) >= threshold;
 
   if (
     topQuartile ||
@@ -175,7 +177,7 @@ export function trialEligibility(
 }
 
 /**
- * The pre-markup cost of the ACTUAL trial message on a minimum basis: the FULL
+ * The BILLABLE cost of the ACTUAL trial message on a minimum basis: the FULL
  * input the model will see — every history message's content plus the prompt —
  * estimated as input tokens, its input STORAGE, a fixed minimum output
  * allocation (2000 tokens), and that output's STORAGE; NOT the worst-case run
@@ -184,7 +186,7 @@ export function trialEligibility(
  * `TRIAL_MESSAGE_COST_CAP_NANO_USD` — a long resent history legitimately trips
  * the cap (it is the honest cost of the send, storage included).
  */
-export function trialMessageBaseNanoUsd(
+export function trialMessageBillableNanoUsd(
   target: ModelDescriptor,
   promptText: string,
   history: readonly ChatHistoryMessage[]

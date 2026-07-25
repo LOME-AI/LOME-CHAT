@@ -30,6 +30,7 @@ describe('ACCESSIBILITY_PREFERENCES_DEFAULTS', () => {
   it('has the correct default values for all reading aids fields', () => {
     expect(ACCESSIBILITY_PREFERENCES_DEFAULTS.magnifier).toBe(false);
     expect(ACCESSIBILITY_PREFERENCES_DEFAULTS.readingGuide).toBe(false);
+    expect(ACCESSIBILITY_PREFERENCES_DEFAULTS.readingHighlight).toBe(true);
   });
 
   it('has the correct default values for all audio fields', () => {
@@ -64,6 +65,7 @@ describe('ACCESSIBILITY_PREFERENCES_DEFAULTS', () => {
       'fontFamily',
       'magnifier',
       'readingGuide',
+      'readingHighlight',
       'ttsEnabled',
       'ttsVoice',
       'streamChatAloud',
@@ -126,6 +128,7 @@ describe('accessibilityPreferencesSchema — full object', () => {
       fontFamily: 'open-dyslexic',
       magnifier: true,
       readingGuide: true,
+      readingHighlight: false,
       ttsEnabled: true,
       ttsVoice: 'bm_george',
       streamChatAloud: true,
@@ -335,6 +338,7 @@ describe('accessibilityPreferencesSchema — boolean field validation', () => {
   const booleanFields = [
     'magnifier',
     'readingGuide',
+    'readingHighlight',
     'ttsEnabled',
     'streamChatAloud',
     'muteSounds',

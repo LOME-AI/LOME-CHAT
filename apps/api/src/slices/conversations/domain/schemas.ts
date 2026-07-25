@@ -120,6 +120,15 @@ export const muteBodySchema = z.object({ muted: z.boolean() });
 
 export const pinBodySchema = z.object({ pinned: z.boolean() });
 
+/**
+ * The read acknowledgement: the highest message sequence the client has
+ * displayed. Bounded by `messages.sequence_number` (int4) — a client that
+ * reports anything outside that range is malformed, not merely stale.
+ */
+export const readCursorBodySchema = z.object({
+  lastReadSeq: z.number().int().min(0).max(2_147_483_647),
+});
+
 export const createForkBodySchema = z.object({
   /** Client-generated uuid: the natural idempotency key of the fork. */
   id: z.uuid(),

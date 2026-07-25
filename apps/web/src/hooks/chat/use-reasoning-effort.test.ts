@@ -6,6 +6,7 @@ import {
   offeredEffortLabels,
   offersEffortNone,
   effectiveReasoningSelection,
+  serverAcceptsChoice,
   useReasoningEffort,
   type EffortModel,
 } from '@/hooks/chat/use-reasoning-effort';
@@ -82,6 +83,24 @@ describe('offersEffortNone', () => {
 
   it('hides None when any selected model has mandatory reasoning', () => {
     expect(offersEffortNone([effortModel, mandatoryModel])).toBe(false);
+  });
+});
+
+describe('serverAcceptsChoice', () => {
+  it('accepts a level every selected model offers', () => {
+    expect(serverAcceptsChoice([effortModel, budgetModel], 'high')).toBe(true);
+  });
+
+  it('rejects a level any selected model lacks (union-only levels stay greyed)', () => {
+    expect(serverAcceptsChoice([effortModel, budgetModel], 'max')).toBe(false);
+  });
+
+  it('accepts Min when no selected model has mandatory reasoning', () => {
+    expect(serverAcceptsChoice([effortModel, budgetModel], 'none')).toBe(true);
+  });
+
+  it('rejects Min when any selected model has mandatory reasoning', () => {
+    expect(serverAcceptsChoice([effortModel, mandatoryModel], 'none')).toBe(false);
   });
 });
 

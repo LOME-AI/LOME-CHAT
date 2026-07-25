@@ -65,13 +65,13 @@ function deps(redis: TrialHookDeps['redis'], telemetry: Telemetry = telemetrySpy
   return { redis, db: {} as unknown as TrialHookDeps['db'], telemetry };
 }
 
-function charge(baseCostNanoUsd: bigint): SettlementCharge {
+function charge(billableCostNanoUsd: bigint): SettlementCharge {
   return {
     key: 'answer',
     modelId: 'trial/model',
     providerName: 'trial-provider',
     modality: 'text',
-    baseCostNanoUsd,
+    billableCostNanoUsd,
     isEstimated: false,
   };
 }

@@ -3,6 +3,7 @@ import { AnimatePresence } from 'framer-motion';
 import { Overlay, useIsMobile } from '@hushbox/ui';
 import { useModelStore } from '@/stores/model';
 import { getAccessibleModelIds } from '@/hooks/models/models';
+import { useModelFloor, type ModelFloorGroupContext } from '@/hooks/billing/use-prompt-budget';
 
 import { SignupModal } from '@/components/auth/signup-modal';
 import {
@@ -35,6 +36,12 @@ interface ModelSelectorModalProps extends ModelSelectorGatingProps {
   onSelect: (models: { id: string; name: string }[]) => void;
   /** Filter models to match this modality. Defaults to 'text' for back-compat. */
   activeModality?: ChatModality;
+  /**
+   * Group funding context of the conversation the picker was opened from —
+   * without it the floor verdict is self-funded only, which would grey
+   * models a group member's delegated budget funds.
+   */
+  floorGroup?: ModelFloorGroupContext | undefined;
 }
 
 /**
@@ -54,8 +61,15 @@ export function ModelSelectorModal({
   isLinkGuest,
   onPremiumClick,
   activeModality,
+  floorGroup,
 }: Readonly<ModelSelectorModalProps>): React.JSX.Element {
   const isMobile = useIsMobile();
+  // ONE floor implementation: the same shared verdict that denies the
+  // composer's send greys the picker row (BILLING §Affordability 4).
+  const { isBelowFloor } = useModelFloor({
+    isAuthenticated,
+    ...(floorGroup === undefined ? {} : { group: floorGroup }),
+  });
   const resolvedModality = resolveModality(activeModality);
   const pickerMode = useModelStore((s) => s.pickerMode[resolvedModality]);
   const setPickerMode = useModelStore((s) => s.setPickerMode);
@@ -175,6 +189,16 @@ export function ModelSelectorModal({
         return;
       }
 
+      // Authoritative selectable-blocked guard: a floor-greyed row never
+      // commits and never joins the pending selection. Removing one is always
+      // allowed — a model that falls below the floor after it was selected
+      // would otherwise be escapable only via Clear-all, trapping the whole
+      // selection behind the one row the user wants to drop.
+      const isRemoval = pickerMode === 'multi' && localSelectedIds.has(modelId);
+      if (!isRemoval && isBelowFloor(model)) {
+        return;
+      }
+
       if (pickerMode === 'single') {
         commitSingleSelection(model);
         return;
@@ -192,7 +216,9 @@ export function ModelSelectorModal({
       models,
       isPremiumGated,
       onPremiumClick,
+      isBelowFloor,
       pickerMode,
+      localSelectedIds,
       isMultiModelSignupBlocked,
       commitSingleSelection,
     ]
@@ -277,6 +303,7 @@ export function ModelSelectorModal({
             focusedModelId,
             expandedModelId,
             isPremium,
+            isBelowFloor,
             canAccessPremium,
             isAuthenticated,
             isLinkGuest: isLinkGuest ?? false,

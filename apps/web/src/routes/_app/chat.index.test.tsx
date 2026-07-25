@@ -130,6 +130,9 @@ vi.mock('@/hooks/models/models', async (importOriginal) => {
 });
 
 vi.mock('@/hooks/billing/use-prompt-budget', () => ({
+  // The picker's affordability floor shares this module; greying is out of
+  // scope for the route's behavior.
+  useModelFloor: () => ({ isPending: false, isBelowFloor: () => false }),
   usePromptBudget: (input: { value: string }) => ({
     fundingSource: 'personal_balance',
     notifications: [],

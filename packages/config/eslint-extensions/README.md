@@ -35,6 +35,20 @@ consumer config changes needed.
   fixture trees (anything not matching `*.config.mjs` directly in this
   directory is ignored by the loader).
 
+## Current vendored rules
+
+Topic files are self-documenting (each opens with its rationale). Two carry
+data an editor must know about:
+
+- `no-legacy-imports` — bans imports into the quarantined repo-root `/legacy/`
+  corpus, repo-wide, exempting the corpus itself.
+- `fee-seams` — confines the fee-application helpers (`applyMarkup*` from
+  shared money) to the sanctioned seams. **The seam list is data in exactly one
+  place**: `FEE_APPLICATION_SEAMS` in `fee-seams.config.mjs`, each entry
+  carrying the reason it is a seam. Adding a seam is a billing-architecture
+  decision (BILLING.md §Fee Structure), not a lint fix — the default remedy for
+  a violation is to price over already-billable rates instead.
+
 ## Why this exists
 
 Multiple lint concerns land in the same shared config. Without an append-only

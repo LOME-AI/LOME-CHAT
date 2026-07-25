@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ERROR_CODES,
   MINIMUM_OUTPUT_TOKENS,
   nanoUSD,
   PAID_CUSHION_NANO_USD,
@@ -24,8 +25,9 @@ import {
   estimateRunCeilingNanoUsd,
   snapshotResolver,
 } from '../../models/index.js';
+import type { TurnBudget } from './turn-definition.js';
 import type { ModelPricingResolver } from '../../models/index.js';
-import type { ModelDescriptor } from '@hushbox/shared';
+import type { ModelDescriptor, WorkflowDefinition } from '@hushbox/shared';
 
 function descriptorFor(id: string): ModelDescriptor {
   return {
@@ -176,31 +178,31 @@ describe('answerMaxOutputTokens', () => {
   ];
 
   it('derives the ceiling from the max candidate rates and min context length', () => {
-    // free payer, chars=400 → estInput=200; max rates marked = 4600 / 23_000;
-    // fixed = 200×4600 + 400×300 = 1_040_000; variable = 23_000 + 4×300 = 24_200;
-    // maxOutputTokens = floor((50_000_000 − 1_040_000) / 24_200) = 2_023;
-    // min context 4000 − 200 = 3_800 remaining > 2_023 → capped.
+    // free payer, chars=400 → estInput=200; max billable rates = 4000 / 20_000;
+    // fixed = 200×4000 + 400×300 = 920_000; variable = 20_000 + 4×300 = 21_200;
+    // maxOutputTokens = floor((50_000_000 − 920_000) / 21_200) = 2_315;
+    // min context 4000 − 200 = 3_800 remaining > 2_315 → capped.
     const result = answerMaxOutputTokens(
       CATALOG,
       [{ id: 'cheap' }, { id: 'big' }],
       { promptCharacterCount: 400, funding: { remainingNanoUsd: 50_000_000n, kind: 'free' } },
       0n
     );
-    expect(result).toBe(2023);
+    expect(result).toBe(2315);
   });
 
   it('shrinks the ceiling by the classifier reserve deducted from the budget', () => {
     // Same inputs as above, but the classifier's worst-case reserve is set aside
     // first: effective = 50_000_000 − 10_000_000 = 40_000_000;
-    // maxOutputTokens = floor((40_000_000 − 1_040_000) / 24_200) = 1_609;
-    // min context 4000 − 200 = 3_800 remaining > 1_609 → capped.
+    // maxOutputTokens = floor((40_000_000 − 920_000) / 21_200) = 1_843;
+    // min context 4000 − 200 = 3_800 remaining > 1_843 → capped.
     const result = answerMaxOutputTokens(
       CATALOG,
       [{ id: 'cheap' }, { id: 'big' }],
       { promptCharacterCount: 400, funding: { remainingNanoUsd: 50_000_000n, kind: 'free' } },
       10_000_000n
     );
-    expect(result).toBe(1609);
+    expect(result).toBe(1843);
   });
 
   it('clamps to the tightest remaining context even when the reserve leaves little (admission is the gate)', () => {
@@ -219,6 +221,29 @@ describe('answerMaxOutputTokens', () => {
       45_000_000n
     );
     expect(result).toBe(3800);
+  });
+
+  it('bounds the ceiling by the tightest candidate provider completion cap', () => {
+    // A declared `maxOutputTokens` is a strict tightening (BILLING
+    // §Affordability 5): with a budget that would otherwise reach the
+    // tightest remaining context (3900), the 1200-token cap wins.
+    const capped = [
+      { ...pricedDescriptor('cheap', 2000n, 10_000n, 8000), limits: { contextLength: 8000 } },
+      {
+        ...pricedDescriptor('big', 4000n, 20_000n, 4000),
+        limits: { contextLength: 4000, maxOutputTokens: 1200 },
+      },
+    ];
+    const result = answerMaxOutputTokens(
+      capped,
+      [{ id: 'cheap' }, { id: 'big' }],
+      {
+        promptCharacterCount: 400,
+        funding: { remainingNanoUsd: 10_000_000_000_000n, kind: 'purchased' },
+      },
+      0n
+    );
+    expect(result).toBe(1200);
   });
 
   it('returns undefined when a candidate is missing from the catalog snapshot', () => {
@@ -471,12 +496,21 @@ describe('compileAutoEffortTurn (pinned model + auto effort)', () => {
     funding: { kind: 'purchased' as const, remainingNanoUsd: nanoUSD(10_000_000_000n) },
   };
 
+  /** The built definition, or a thrown failure naming the unexpected outcome. */
+  function builtDefinition(
+    catalog: readonly ModelDescriptor[],
+    model: string,
+    turnBudget: TurnBudget
+  ): WorkflowDefinition {
+    const build = compileAutoEffortTurn(catalog, model, turnBudget)._unsafeUnwrap();
+    if (build.kind !== 'built') throw new Error(`expected a built turn, got '${build.kind}'`);
+    return build.definition;
+  }
+
   it('builds a single-candidate smartModel node with the effort dimension and a concrete B+H cap', () => {
-    const build = compileAutoEffortTurn([pinned, cheapText], 'pinned-model', budget);
-    expect(build.kind).toBe('built');
-    if (build.kind !== 'built') throw new Error('unreachable');
-    const node = build.definition.nodes[0];
-    expect(build.definition.nodes).toHaveLength(1);
+    const definition = builtDefinition([pinned, cheapText], 'pinned-model', budget);
+    const node = definition.nodes[0];
+    expect(definition.nodes).toHaveLength(1);
     expect(node).toMatchObject({
       id: CHAT_TURN_NODE_ID,
       type: 'smartModel',
@@ -484,70 +518,97 @@ describe('compileAutoEffortTurn (pinned model + auto effort)', () => {
       candidates: [{ id: 'pinned-model' }],
       classify: { model: false, effort: true },
     });
-    // The completion cap is concrete (B + H for the highest affordable level):
-    // the runtime carves the classified level's budget out of it, never past it.
+    // The completion cap is concrete (B + H for the strongest affordable
+    // option): the runtime carves the classified level's budget out of it,
+    // never past it.
     const cap = node?.type === 'smartModel' ? node.params['maxOutputTokens'] : undefined;
     expect(typeof cap).toBe('number');
-    expect(cap as number).toBeGreaterThan(REASONING_BUDGET_TOKENS_BY_EFFORT.high);
+    expect(cap as number).toBeGreaterThan(REASONING_BUDGET_TOKENS_BY_EFFORT.max);
     // Persisting paid turn: storage-stamped, prompt tokens stamped.
-    expect(build.definition.storage).toEqual({ inputChars: 40, tier: 'paid' });
+    expect(definition.storage).toEqual({ inputChars: 40, tier: 'paid' });
     expect(node?.type === 'smartModel' && node.promptInputTokens).toBeGreaterThan(0);
-    expect(build.definition.hooks).toEqual(CHAT_TURN_HOOKS);
+    expect(definition.hooks).toEqual(CHAT_TURN_HOOKS);
+  });
+
+  it('walks the model’s own offered budgets, not a fixed level list', () => {
+    // A context this tight clamps every rung from Low upward to the whole
+    // window, so none of them leaves answer headroom; Lite's 2048 is the only
+    // budget that still fits. Walking the model's real options finds it — a
+    // walk over a fixed High/Medium/Low list sees only the clamped rungs and
+    // abandons the turn to the fallback path.
+    const tight = reasoningDescriptor('tight-context-model', 2n, 3n, 3400);
+    const definition = builtDefinition([tight, cheapText], 'tight-context-model', budget);
+    const node = definition.nodes[0];
+    const cap = node?.type === 'smartModel' ? node.params['maxOutputTokens'] : undefined;
+    expect(cap as number).toBeGreaterThanOrEqual(REASONING_BUDGET_TOKENS_BY_EFFORT.lite);
   });
 
   it('admission prices the built definition within the payer budget (reconciled cap)', () => {
-    const build = compileAutoEffortTurn([pinned, cheapText], 'pinned-model', budget);
-    if (build.kind !== 'built') throw new Error('expected built');
+    const definition = builtDefinition([pinned, cheapText], 'pinned-model', budget);
     const estimate = createEstimateRun(snapshotResolver([pinned, cheapText]));
-    const priced = estimate(build.definition)._unsafeUnwrap();
+    const priced = estimate(definition)._unsafeUnwrap();
     expect(priced <= budget.funding.remainingNanoUsd + 500_000_000n).toBe(true);
   });
 
   it('carries the pinned model description onto its candidate entry', () => {
     const described = { ...pinned, id: 'described-model', description: 'thinks hard' };
-    const build = compileAutoEffortTurn([described, cheapText], 'described-model', budget);
-    if (build.kind !== 'built') throw new Error('expected built');
-    const node = build.definition.nodes[0];
+    const definition = builtDefinition([described, cheapText], 'described-model', budget);
+    const node = definition.nodes[0];
     expect(node?.type === 'smartModel' && node.candidates[0]?.description).toBe('thinks hard');
   });
 
   it('falls back when the pinned model has no context length (no pricing basis for the cap)', () => {
     const capless = { ...pinned, id: 'capless-model', limits: {} };
-    expect(compileAutoEffortTurn([capless, cheapText], 'capless-model', budget)).toEqual({
-      kind: 'fallback',
-    });
+    expect(
+      compileAutoEffortTurn([capless, cheapText], 'capless-model', budget)._unsafeUnwrap()
+    ).toEqual({ kind: 'fallback' });
   });
 
   it('falls back for a single-level mandatory model (empty offered ladder — no choice exists)', () => {
-    // Product note (T16 audit corner): auto on a single-level mandatory model
-    // offers nothing to choose, so the classifier stage honestly declines and
-    // the regular path runs it at the provider default within H.
+    // Auto on a single-level mandatory model offers nothing to choose, so the
+    // classifier stage honestly declines and the regular path runs it at the
+    // provider default within H.
     const mandatory = {
       ...pinned,
       id: 'mandatory-model',
       reasoning: { supportedEfforts: ['only'], mandatory: true },
     };
-    expect(compileAutoEffortTurn([mandatory, cheapText], 'mandatory-model', budget)).toEqual({
-      kind: 'fallback',
-    });
+    expect(
+      compileAutoEffortTurn([mandatory, cheapText], 'mandatory-model', budget)._unsafeUnwrap()
+    ).toEqual({ kind: 'fallback' });
+  });
+
+  it('falls back on a Min-only model (one real choice — no classifier, no reserve)', () => {
+    // Exactly one option (Min) ⇒ the deterministic pick belongs to the regular
+    // path; building a classifier here would charge for a settled question.
+    const minOnly = { ...pinned, id: 'min-only', reasoning: { supportedEfforts: ['none'] } };
+    expect(compileAutoEffortTurn([minOnly, cheapText], 'min-only', budget)._unsafeUnwrap()).toEqual(
+      {
+        kind: 'fallback',
+      }
+    );
   });
 
   it('falls back for a non-reasoning pinned model (regular path owns it)', () => {
     const plain = { ...descriptorFor('plain-model') };
-    expect(compileAutoEffortTurn([plain, cheapText], 'plain-model', budget)).toEqual({
-      kind: 'fallback',
-    });
+    expect(
+      compileAutoEffortTurn([plain, cheapText], 'plain-model', budget)._unsafeUnwrap()
+    ).toEqual({ kind: 'fallback' });
   });
 
   it('falls back for a model unknown to the catalog', () => {
-    expect(compileAutoEffortTurn([cheapText], 'ghost-model', budget)).toEqual({ kind: 'fallback' });
-  });
-
-  it('falls back when no classifier can be priced (rateless catalog)', () => {
-    const rateless = { ...pinned, id: 'rateless-model', pricing: {} };
-    expect(compileAutoEffortTurn([rateless], 'rateless-model', budget)).toEqual({
+    expect(compileAutoEffortTurn([cheapText], 'ghost-model', budget)._unsafeUnwrap()).toEqual({
       kind: 'fallback',
     });
+  });
+
+  it('refuses with the typed classifier code when no classifier can be priced', () => {
+    // BILLING §Effort 5/8d: no priceable engine ⇒ a typed refusal, never a
+    // silent static pick; explicit levels stay usable.
+    const rateless = { ...pinned, id: 'rateless-model', pricing: {} };
+    const error = compileAutoEffortTurn([rateless], 'rateless-model', budget)._unsafeUnwrapErr();
+    expect(error.code).toBe('unavailable');
+    expect(error.wireCode).toBe(ERROR_CODES.CLASSIFIER_UNAVAILABLE);
   });
 
   it('falls back when no reasoning level leaves answer headroom under the budget', () => {
@@ -556,9 +617,9 @@ describe('compileAutoEffortTurn (pinned model + auto effort)', () => {
       promptCharacterCount: 40,
       funding: { kind: 'free' as const, remainingNanoUsd: nanoUSD(1n) },
     };
-    expect(compileAutoEffortTurn([pinned, cheapText], 'pinned-model', broke)).toEqual({
-      kind: 'fallback',
-    });
+    expect(
+      compileAutoEffortTurn([pinned, cheapText], 'pinned-model', broke)._unsafeUnwrap()
+    ).toEqual({ kind: 'fallback' });
   });
 });
 

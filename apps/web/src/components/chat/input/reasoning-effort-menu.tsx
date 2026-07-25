@@ -1,10 +1,5 @@
 import * as React from 'react';
-import {
-  planReasoning,
-  planReasoningOff,
-  REASONING_EFFORT_LABELS,
-  TEST_IDS,
-} from '@hushbox/shared';
+import { REASONING_EFFORT_LABELS, TEST_IDS, turnEffortOptions } from '@hushbox/shared';
 import {
   cn,
   useIsMobile,
@@ -18,15 +13,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@hushbox/ui';
-import {
-  useReasoningEffort,
-  offeredEffortLabels,
-  offersEffortNone,
-} from '@/hooks/chat/use-reasoning-effort';
-import type { ReasoningEffortSelection, CANONICAL_REASONING_EFFORTS } from '@hushbox/shared';
+import { useReasoningEffort, serverAcceptsChoice } from '@/hooks/chat/use-reasoning-effort';
+import type { EffortOption as SharedEffortOption, ReasoningEffortSelection } from '@hushbox/shared';
 import type { EffortModel } from '@/hooks/chat/use-reasoning-effort';
 
-type OptionState = 'enabled' | 'balance' | 'output-limit';
+type OptionState = 'enabled' | 'balance' | 'output-limit' | 'unsupported';
 
 export interface EffortOption {
   readonly selection: ReasoningEffortSelection;
@@ -37,6 +28,7 @@ export interface EffortOption {
 export const EFFORT_DISABLED_REASONS: Readonly<Record<Exclude<OptionState, 'enabled'>, string>> = {
   balance: "Doesn't fit your current balance",
   'output-limit': "Exceeds the model's output limit",
+  unsupported: 'Not supported by every selected model',
 };
 
 interface EffortOptionStatesInput {
@@ -47,62 +39,59 @@ interface EffortOptionStatesInput {
 }
 
 /**
- * Feasibility of one offered level across every selected model, THROUGH the
- * shared plan (G5): the answer headroom mirrors the server's derivation —
- * min(balance-affordable output, context headroom) minus the level's largest
- * reasoning budget — and the shared `planReasoning` has the final word. The
- * cause split drives the copy: a level the model's context can never hold is
- * `output-limit`; one only the balance blocks is `balance`.
+ * Feasibility of one shared choice: the answer headroom is
+ * min(balance-affordable output, context headroom, the option's declared
+ * completion cap) minus the option's resolved reasoning budget — every term
+ * except the two client-measured ones rides the shared option itself. The
+ * cause split drives the copy: a choice no physical ceiling can hold is
+ * `output-limit`; one only the balance blocks is `balance`. A choice the
+ * server's current validation would refuse is `unsupported` regardless of
+ * headroom (see {@link serverAcceptsChoice}).
  */
-function classifyLevel(
+function classifyOption(
   models: readonly EffortModel[],
-  label: (typeof CANONICAL_REASONING_EFFORTS)[number],
+  option: SharedEffortOption,
   input: EffortOptionStatesInput,
   contextHeadroom: number
 ): OptionState {
-  let maxBudget = 0;
-  for (const model of models) {
-    const probe = planReasoning(model, label, 1);
-    /* v8 ignore next -- unreachable: labels come from offeredEffortLabels, so the probe is feasible by construction */
-    if (!probe.feasible) return 'output-limit';
-    maxBudget = Math.max(maxBudget, probe.plan.reasoningBudgetTokens);
-  }
-  const headroom = Math.min(input.maxOutputTokens, contextHeadroom) - maxBudget;
-  if (headroom >= 1 && models.every((model) => planReasoning(model, label, headroom).feasible)) {
-    return 'enabled';
-  }
-  return contextHeadroom - maxBudget < 1 ? 'output-limit' : 'balance';
+  if (!serverAcceptsChoice(models, option.choice)) return 'unsupported';
+  const physicalCeiling =
+    option.completionCapTokens === undefined
+      ? contextHeadroom
+      : Math.min(contextHeadroom, option.completionCapTokens);
+  const headroom =
+    Math.min(input.maxOutputTokens, physicalCeiling) - option.maxReasoningBudgetTokens;
+  if (headroom >= 1) return 'enabled';
+  return physicalCeiling - option.maxReasoningBudgetTokens < 1 ? 'output-limit' : 'balance';
 }
 
 /**
- * The menu's options in display order — Auto (first), offered levels
- * strongest first, None (hard off) last — each with its live feasibility
- * state. Auto is never disabled: the server picks a fitting level or engages
- * nothing.
+ * The menu's options in display order — Auto (first), the shared union
+ * choice set strongest-level first, Min (the off row) last — each with its
+ * live feasibility state. The choice SET is exactly `turnEffortOptions`
+ * (union across the selection, Min included when any model can disable);
+ * only the ordering is presentation. Auto is never disabled: the server
+ * picks a fitting level or engages nothing.
  */
 export function effortOptionStates(input: EffortOptionStatesInput): EffortOption[] {
   const { models } = input;
   const contextHeadroom =
     Math.min(...models.map((model) => model.contextLength)) - input.estimatedInputTokens;
-  const descending = offeredEffortLabels(models).toReversed();
+  const shared = turnEffortOptions(models);
+  const levelsDescending = shared.filter((option) => option.choice !== 'none').toReversed();
+  const min = shared.find((option) => option.choice === 'none');
+  const displayOrder = min === undefined ? levelsDescending : [...levelsDescending, min];
   const options: EffortOption[] = [{ selection: 'auto', state: 'enabled' }];
-  for (const label of descending) {
-    options.push({ selection: label, state: classifyLevel(models, label, input, contextHeadroom) });
-  }
-  if (offersEffortNone(models)) {
-    const offHeadroom = Math.min(input.maxOutputTokens, contextHeadroom);
-    const capable = models.filter((model) => model.reasoning !== undefined);
-    const offFeasible =
-      offHeadroom >= 1 && capable.every((model) => planReasoningOff(model, offHeadroom).feasible);
-    const offBlocked: OptionState = contextHeadroom < 1 ? 'output-limit' : 'balance';
-    options.push({ selection: 'none', state: offFeasible ? 'enabled' : offBlocked });
+  for (const option of displayOrder) {
+    options.push({
+      selection: option.choice,
+      state: classifyOption(models, option, input, contextHeadroom),
+    });
   }
   return options;
 }
 
 export interface ReasoningEffortMenuProps {
-  /** Trial users (false) get infeasible levels HIDDEN (G9), never greyed. */
-  isAuthenticated: boolean;
   maxOutputTokens: number;
   estimatedInputTokens: number;
 }
@@ -299,34 +288,24 @@ function EffortChip({
  * grid-columns wrapper below.
  */
 export function ReasoningEffortMenu({
-  isAuthenticated,
   maxOutputTokens,
   estimatedInputTokens,
 }: Readonly<ReasoningEffortMenuProps>): React.JSX.Element {
-  const { preferred, effective, models, setSelection } = useReasoningEffort();
+  const { effective, models, setSelection } = useReasoningEffort();
   const isMobile = useIsMobile();
   const reasonIdBase = React.useId();
 
   const visible = effective !== undefined && models !== undefined;
+  // Greyed-never-hidden for EVERY tier (trial and guest included): infeasible
+  // options render greyed with a reason, never filtered out.
   const options = visible
     ? effortOptionStates({ models, maxOutputTokens, estimatedInputTokens })
     : [];
-  // Trial turns offer exactly the ceiling-fitting levels (G9): infeasible
-  // options are hidden, not greyed — greyed-never-hidden applies outside trial.
-  const shown = isAuthenticated ? options : options.filter((option) => option.state === 'enabled');
-
-  // A trial preference whose level is no longer offered resets to Auto: the
-  // option is hidden (not greyed), so an invisible active selection would
-  // otherwise send a level the trial ceiling refuses.
-  React.useEffect(() => {
-    if (isAuthenticated || !visible || preferred === 'auto') return;
-    if (!shown.some((option) => option.selection === preferred)) setSelection('auto');
-  });
 
   // `effective` is defined whenever `visible`; the 'auto' arm only feeds the
   // (never-rendered) current snapshot of hidden states.
   const { menuData, onCollapseEnd } = useSlideRetention(visible, {
-    options: shown,
+    options,
     effective: effective ?? 'auto',
   });
 

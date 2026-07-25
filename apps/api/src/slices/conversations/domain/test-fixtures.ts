@@ -63,6 +63,7 @@ export function memberRecord(overrides: Partial<MemberRecord> = {}): MemberRecor
     acceptedAt: new Date(0),
     muted: false,
     pinned: false,
+    lastReadSeq: 0n,
     ...overrides,
   };
 }

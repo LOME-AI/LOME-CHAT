@@ -1,4 +1,4 @@
-import { resolveFundingDecision } from '@hushbox/shared';
+import { ERROR_CODES, resolveFundingDecision } from '@hushbox/shared';
 import { groupEffectiveRemainingNanoUsd, readBalance } from '../../billing/index.js';
 import { resolveCallerMember } from '../../conversations/index.js';
 import { forbiddenError, notFoundError } from '../../../lib/errors/index.js';
@@ -422,7 +422,14 @@ function resolvePayerWallet(
     // encodes that materialization rule.
     if (args.sender.kind === 'linkGuest') {
       return errAsync<ResolvedPayer, DomainError>(
-        forbiddenError('chat turn: link guest has no funds and the owner cannot cover the turn')
+        forbiddenError(
+          'chat turn: link guest has no funds and the owner cannot cover the turn',
+          undefined,
+          // Typed wire projection: the shared funding core's refusal code, so
+          // the client maps the denial to the owner-allocated-budget remedy
+          // copy instead of the generic FORBIDDEN permission copy.
+          ERROR_CODES.GROUP_BUDGET_EXHAUSTED
+        )
       );
     }
     // Fall-through: freeze the real caller balance so the tier gate's core call

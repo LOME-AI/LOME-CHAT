@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyMarkup } from '../../billing/index.js';
+import { applyMarkup } from '@hushbox/shared';
 import { runSettlement } from '../../../lib/idempotency/index.js';
 import {
   SettlementCompletionError,
@@ -151,6 +151,8 @@ function chargeContext(overrides: Partial<ChargeContext> = {}): ChargeContext {
   return {
     walletId: 'w1',
     userId: 'u1',
+    // Solo turn by default: the payer is also the sender.
+    sender: { kind: 'user', userId: 'u1' },
     runId: 'run-1',
     now: new Date(0),
     // The chat slice's persist seam: a persist stand-in mints a content item id
@@ -170,7 +172,7 @@ function settlementCharge(
     modelId: 'test/model',
     providerName: 'test-provider',
     modality: 'text',
-    baseCostNanoUsd: 100n,
+    billableCostNanoUsd: applyMarkup(100n),
     isEstimated: true,
     ...overrides,
   };
@@ -215,7 +217,7 @@ describe('createChargingCommit — the record → charge-input mapping', () => {
       FENCE_A,
       [
         settlementCharge('answer', {
-          baseCostNanoUsd: 4200n,
+          billableCostNanoUsd: applyMarkup(4200n),
           modelId: 'openrouter/x',
           providerName: 'x-labs',
           modality: 'video',
@@ -233,6 +235,7 @@ describe('createChargingCommit — the record → charge-input mapping', () => {
     expect(captured).toEqual([
       {
         userId: 'u1',
+        senderUserId: 'u1',
         runId: 'run-1',
         contentItemId: 'c1',
         modelId: 'openrouter/x',
@@ -252,6 +255,39 @@ describe('createChargingCommit — the record → charge-input mapping', () => {
     const captured: UsageRecordInput[] = [];
     await settle(makeWorld(), FENCE_A, [settlementCharge('answer')], commitFor(captured));
     expect(captured[0]).not.toHaveProperty('generationId');
+  });
+
+  it('threads a member sender onto every charge of the run (payer and sender independent)', async () => {
+    const captured: UsageRecordInput[] = [];
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [settlementCharge('answer'), settlementCharge('sibling')],
+      commitFor(
+        captured,
+        chargeContext({
+          sender: { kind: 'user', userId: 'member-7' },
+          contentItemIdFor: (key) => `content-${key}`,
+        })
+      )
+    );
+    // The payer (context userId) and the sender ride the usage record
+    // independently — an owner-funded member turn records both.
+    expect(captured.map((input) => input.userId)).toEqual(['u1', 'u1']);
+    expect(captured.map((input) => input.senderUserId)).toEqual(['member-7', 'member-7']);
+    expect(captured[0]).not.toHaveProperty('senderLinkId');
+  });
+
+  it('threads a link-guest sender as the link principal, never a user id', async () => {
+    const captured: UsageRecordInput[] = [];
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [settlementCharge('answer')],
+      commitFor(captured, chargeContext({ sender: { kind: 'linkGuest', linkId: 'link-3' } }))
+    );
+    expect(captured[0]?.senderLinkId).toBe('link-3');
+    expect(captured[0]).not.toHaveProperty('senderUserId');
   });
 
   it('pairs each charge to the content item persisted for its key', async () => {
@@ -409,8 +445,8 @@ describe('createChargingCommit — member-budget attribution', () => {
       makeWorld(),
       FENCE_A,
       [
-        settlementCharge('a', { baseCostNanoUsd: 100n }),
-        settlementCharge('b', { baseCostNanoUsd: 200n }),
+        settlementCharge('a', { billableCostNanoUsd: applyMarkup(100n) }),
+        settlementCharge('b', { billableCostNanoUsd: applyMarkup(200n) }),
       ],
       createChargingCommit({ stores: makeStores([], spending), context })
     );

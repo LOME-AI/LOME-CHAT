@@ -25,6 +25,7 @@ export const refusalSchema = z.discriminatedUnion('refusal', [
   z.object({ refusal: z.literal('cannot-remove-self') }),
   z.object({ refusal: z.literal('cannot-change-own-privilege') }),
   z.object({ refusal: z.literal('privilege-insufficient') }),
+  z.object({ refusal: z.literal('budget-below-spent') }),
   z.object({ refusal: z.literal('fork-limit'), limit: z.number().int() }),
   z.object({ refusal: z.literal('fork-name-taken') }),
   z.object({ refusal: z.literal('fork-tip-conflict'), currentTipMessageId: z.string().nullable() }),
@@ -104,6 +105,10 @@ export function refusalToWire(refusal: Refusal): WireRefusal {
     .with(
       { refusal: 'privilege-insufficient' },
       (): WireRefusal => ({ code: ERROR_CODES.PRIVILEGE_INSUFFICIENT, status: 403 })
+    )
+    .with(
+      { refusal: 'budget-below-spent' },
+      (): WireRefusal => ({ code: ERROR_CODES.BUDGET_BELOW_SPENT, status: 400 })
     )
     .with(
       { refusal: 'fork-limit' },

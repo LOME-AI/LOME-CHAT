@@ -87,6 +87,8 @@ jobs:
         run: pnpm --filter web build
         # BEGIN GENERATED: build-env-android
         env:
+          VITE_SANDBOX_ORIGIN_URL: https://sandbox.hushbox.ai
+          VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
           VITE_API_URL: https://api.hushbox.ai
           VITE_HELCIM_JS_TOKEN: ${{ secrets.VITE_HELCIM_JS_TOKEN_PRODUCTION }}
           VITE_PLATFORM: ${{ inputs.vite-platform }}

@@ -1,0 +1,30 @@
+# Assets-only Worker serving the sandbox origin on sandbox.hushbox.ai. This is
+# the dedicated, credential-free origin that hosts the document renderer pages
+# (/render.html, /python.html) and the self-hosted, pinned Pyodide assets. It
+# is the security boundary: untrusted document code only
+# ever executes inside a cross-origin `sandbox="allow-scripts"` iframe served
+# from here, never on the product origin. No bindings, no code — static assets
+# only; no cookies are ever set and no authenticated endpoint exists here.
+#
+# The Content-Security-Policy, wasm/worker MIME, and CORS response headers are
+# supplied by ./public/_headers and served by the assets runtime; nothing here
+# injects them.
+name = "hushbox-sandbox"
+compatibility_date = "2026-07-24"
+workers_dev = false
+
+[assets]
+directory = "./dist"
+# Discrete static pages (not a client-routed SPA): an unknown path is a 404,
+# never a rewrite to an index shell.
+not_found_handling = "none"
+
+# A custom domain (not a zone route) binds the whole hostname to this Worker and
+# has wrangler provision its DNS record and certificate on first deploy — no
+# manual dashboard step. It is available here only because this Worker owns
+# sandbox.hushbox.ai exclusively; admin.hushbox.ai, by contrast, is split
+# between two Workers (the product Worker claims /api/* there, the admin assets
+# Worker takes the rest), and a custom domain cannot share a hostname.
+[[routes]]
+pattern = "sandbox.hushbox.ai"
+custom_domain = true

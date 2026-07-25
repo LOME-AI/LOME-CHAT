@@ -1,12 +1,21 @@
 // @vitest-environment jsdom
 import { render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { MarkdownRenderer } from '@/components/chat/message/markdown-renderer';
+import type { Document } from '@/lib/document-parser';
+
+const storeMock = vi.hoisted(() => ({
+  setActiveDocument: vi.fn(),
+  refreshActiveDocument: vi.fn(),
+}));
 
 vi.mock('@/stores/document', () => ({
   useDocumentStore: () => ({
     activeDocumentId: null,
-    setActiveDocument: vi.fn(),
+    activeDocument: null,
+    setActiveDocument: storeMock.setActiveDocument,
+    refreshActiveDocument: storeMock.refreshActiveDocument,
   }),
 }));
 
@@ -159,6 +168,64 @@ describe('MarkdownRenderer', () => {
 
     await awaitCodeBlockProcessed(container);
     expect(screen.queryByTestId('document-card')).not.toBeInTheDocument();
+  });
+
+  describe('streaming state', () => {
+    const codeLines = (count: number): string =>
+      Array.from({ length: count })
+        .fill(null)
+        .map((_, index) => `const line${String(index)} = ${String(index)};`)
+        .join('\n');
+
+    const jsxLines = codeLines(15);
+
+    const openDocument = async (): Promise<Document> => {
+      await userEvent.click(await screen.findByTestId('document-card'));
+      const call = storeMock.setActiveDocument.mock.calls.at(-1);
+      expect(call).toBeDefined();
+      return call?.[0] as Document;
+    };
+
+    beforeEach(() => {
+      storeMock.setActiveDocument.mockClear();
+    });
+
+    it('marks a document from a still-streaming message as streaming', async () => {
+      render(<MarkdownRenderer content={`\`\`\`jsx\n${jsxLines}\n\`\`\``} isStreaming />);
+
+      const opened = await openDocument();
+      expect(opened.isStreaming).toBe(true);
+    });
+
+    it('marks a document from a settled message as not streaming', async () => {
+      render(<MarkdownRenderer content={`\`\`\`jsx\n${jsxLines}\n\`\`\``} isStreaming={false} />);
+
+      const opened = await openDocument();
+      expect(opened.isStreaming).toBe(false);
+    });
+
+    it('marks a block whose fence never closed by its message, not by its text', async () => {
+      // The document is half-written either way; only the message says whether
+      // more of it is still coming.
+      render(<MarkdownRenderer content={`\`\`\`jsx\n${jsxLines}`} isStreaming />);
+
+      const opened = await openDocument();
+      expect(opened.isStreaming).toBe(true);
+    });
+
+    it('marks a mermaid diagram from a still-streaming message as streaming', async () => {
+      render(<MarkdownRenderer content={'```mermaid\ngraph TD\n  A --> B'} isStreaming />);
+
+      const opened = await openDocument();
+      expect(opened.isStreaming).toBe(true);
+    });
+
+    it('treats a message with no streaming state as settled', async () => {
+      render(<MarkdownRenderer content={`\`\`\`jsx\n${jsxLines}\n\`\`\``} />);
+
+      const opened = await openDocument();
+      expect(opened.isStreaming).toBe(false);
+    });
   });
 
   it('renders bold and italic text', async () => {

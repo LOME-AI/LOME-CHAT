@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, beforeEach, vi, afterEach } from 'vitest';
 import { TEST_IDS } from '@hushbox/shared';
@@ -39,6 +39,7 @@ describe('DocumentPanel', () => {
     title: 'MyComponent',
     content: 'const x = 1;\nconst y = 2;',
     lineCount: 2,
+    isStreaming: false,
     ...overrides,
   });
 
@@ -46,6 +47,7 @@ describe('DocumentPanel', () => {
 
   beforeEach(() => {
     mockMatchMedia(false);
+    vi.stubEnv('VITE_SANDBOX_ORIGIN_URL', 'http://localhost:7400');
     useDocumentStore.setState({
       isPanelOpen: false,
       panelWidth: 400,
@@ -56,6 +58,7 @@ describe('DocumentPanel', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   describe('visibility', () => {
@@ -326,10 +329,11 @@ describe('DocumentPanel', () => {
       expect(screen.queryByRole('button', { name: /show rendered/i })).not.toBeInTheDocument();
     });
 
-    it('renders code block for html documents', () => {
+    it('renders the sandbox preview for html documents by default', () => {
       const document_ = createDocument({
         type: 'html',
         language: 'html',
+        title: 'Landing',
         content: '<div>Hello</div>',
       });
       useDocumentStore.setState({
@@ -339,7 +343,65 @@ describe('DocumentPanel', () => {
       });
       render(<DocumentPanel />);
 
+      const frame = screen.getByTitle('Landing');
+      expect(frame).toBeInTheDocument();
+      expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
+      expect(screen.queryByTestId(TEST_IDS.highlightedCode)).not.toBeInTheDocument();
+    });
+
+    it('shows a raw toggle for runnable documents and reveals source when toggled', async () => {
+      const user = userEvent.setup();
+      const document_ = createDocument({
+        type: 'html',
+        language: 'html',
+        title: 'Landing',
+        content: '<div>Hello</div>',
+      });
+      useDocumentStore.setState({
+        isPanelOpen: true,
+        activeDocumentId: document_.id,
+        activeDocument: document_,
+      });
+      render(<DocumentPanel />);
+
+      await user.click(screen.getByRole('button', { name: /show raw/i }));
+
       expect(screen.getByTestId(TEST_IDS.highlightedCode)).toBeInTheDocument();
+      expect(screen.queryByTitle('Landing')).not.toBeInTheDocument();
+    });
+
+    it('renders the sandbox preview for js documents', () => {
+      const document_ = createDocument({
+        type: 'js',
+        language: 'javascript',
+        title: 'Script',
+        content: 'document.body.append("x");',
+      });
+      useDocumentStore.setState({
+        isPanelOpen: true,
+        activeDocumentId: document_.id,
+        activeDocument: document_,
+      });
+      render(<DocumentPanel />);
+
+      expect(screen.getByTitle('Script')).toBeInTheDocument();
+    });
+
+    it('renders a Run control for python documents', () => {
+      const document_ = createDocument({
+        type: 'python',
+        language: 'python',
+        title: 'Analysis',
+        content: 'print("hi")',
+      });
+      useDocumentStore.setState({
+        isPanelOpen: true,
+        activeDocumentId: document_.id,
+        activeDocument: document_,
+      });
+      render(<DocumentPanel />);
+
+      expect(screen.getByRole('button', { name: /run/i })).toBeInTheDocument();
     });
 
     it('wraps code content in document-panel-code class', () => {
@@ -355,11 +417,12 @@ describe('DocumentPanel', () => {
       expect(codeContainer).toHaveClass('document-panel-code');
     });
 
-    it('renders code block for react documents', () => {
+    it('renders the sandbox preview for react documents by default', () => {
       const document_ = createDocument({
         type: 'react',
         language: 'tsx',
-        content: 'function App() { return <div /> }',
+        title: 'Widget',
+        content: 'export default function App() { return <div /> }',
       });
       useDocumentStore.setState({
         isPanelOpen: true,
@@ -368,7 +431,162 @@ describe('DocumentPanel', () => {
       });
       render(<DocumentPanel />);
 
+      expect(screen.getByTitle('Widget')).toBeInTheDocument();
+    });
+  });
+
+  describe('streaming documents', () => {
+    const statusOf = (container: HTMLElement): string | null =>
+      container.querySelector<HTMLElement>('#document-render-status')?.dataset['status'] ?? null;
+
+    const reactDocument = (overrides: Partial<Document> = {}): Document =>
+      createDocument({
+        type: 'react',
+        language: 'jsx',
+        title: 'Widget',
+        content: 'export default function App() { return <div /> }',
+        ...overrides,
+      });
+
+    const openDocument = (document_: Document): void => {
+      useDocumentStore.setState({
+        isPanelOpen: true,
+        activeDocumentId: document_.id,
+        activeDocument: document_,
+      });
+    };
+
+    it('hands a still-streaming document to the sandbox rather than withholding it', () => {
+      openDocument(reactDocument({ isStreaming: true }));
+      render(<DocumentPanel />);
+
+      expect(screen.getByTitle('Widget')).toBeInTheDocument();
+    });
+
+    it('shows the source and no error until something renders', () => {
+      openDocument(reactDocument({ isStreaming: true }));
+      const { container } = render(<DocumentPanel />);
+
       expect(screen.getByTestId(TEST_IDS.highlightedCode)).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(statusOf(container)).toBe('streaming');
+    });
+
+    it('announces the wait as a status, not as a failure', () => {
+      openDocument(reactDocument({ isStreaming: true }));
+      const { container } = render(<DocumentPanel />);
+
+      const status = container.querySelector('#document-render-status');
+      expect(status).toHaveAttribute('role', 'status');
+      expect(status).toHaveTextContent(/preview starts when the code is ready/i);
+      expect(screen.getAllByText(/preview starts when the code is ready/i).length).toBeGreaterThan(
+        0
+      );
+    });
+
+    it('holds back the mermaid diagram while its message streams', () => {
+      openDocument(
+        createDocument({
+          type: 'mermaid',
+          language: 'mermaid',
+          content: 'flowchart TD\n    A --> B',
+          isStreaming: true,
+        })
+      );
+      const { container } = render(<DocumentPanel />);
+
+      expect(screen.getByTestId(TEST_IDS.highlightedCode)).toBeInTheDocument();
+      expect(screen.queryByTestId(TEST_IDS.mermaidLoading)).not.toBeInTheDocument();
+      expect(statusOf(container)).toBe('streaming');
+    });
+
+    it('shows a plain code document as source with no preview status', () => {
+      openDocument(createDocument({ type: 'code', isStreaming: true }));
+      const { container } = render(<DocumentPanel />);
+
+      expect(screen.getByTestId(TEST_IDS.highlightedCode)).toBeInTheDocument();
+      expect(statusOf(container)).toBeNull();
+    });
+
+    it('offers the raw toggle while the message is still streaming', () => {
+      openDocument(reactDocument({ isStreaming: true }));
+      render(<DocumentPanel />);
+
+      expect(screen.getByRole('button', { name: /show raw/i })).toBeInTheDocument();
+    });
+
+    it('still requires an explicit run for python while its message streams', () => {
+      openDocument(
+        createDocument({
+          type: 'python',
+          language: 'python',
+          title: 'Analysis',
+          content: 'print("hi")',
+          isStreaming: true,
+        })
+      );
+      render(<DocumentPanel />);
+
+      expect(screen.getByRole('button', { name: /run/i })).toBeInTheDocument();
+    });
+
+    it('keeps an explicit raw choice when the message settles', async () => {
+      const user = userEvent.setup();
+      const streaming = reactDocument({ isStreaming: true });
+      openDocument(streaming);
+      render(<DocumentPanel />);
+
+      await user.click(screen.getByRole('button', { name: /show raw/i }));
+      act(() => {
+        useDocumentStore.getState().refreshActiveDocument({ ...streaming, isStreaming: false });
+      });
+
+      expect(screen.getByTestId(TEST_IDS.highlightedCode)).toBeInTheDocument();
+      expect(screen.queryByTitle('Widget')).not.toBeInTheDocument();
+    });
+
+    it('keeps the same sandbox frame as a streaming document grows', () => {
+      const streaming = reactDocument({ isStreaming: true });
+      openDocument(streaming);
+      render(<DocumentPanel />);
+      const frame = screen.getByTitle('Widget');
+
+      act(() => {
+        useDocumentStore.getState().refreshActiveDocument({
+          ...streaming,
+          id: 'doc-grown',
+          content: `${streaming.content}\n// more`,
+        });
+      });
+
+      expect(screen.getByTitle('Widget')).toBe(frame);
+    });
+
+    it('drops the raw choice when the user opens another document', async () => {
+      const user = userEvent.setup();
+      openDocument(reactDocument());
+      render(<DocumentPanel />);
+
+      await user.click(screen.getByRole('button', { name: /show raw/i }));
+      act(() => {
+        useDocumentStore
+          .getState()
+          .setActiveDocument(reactDocument({ id: 'doc-other', title: 'Other' }));
+      });
+
+      expect(screen.getByTitle('Other')).toBeInTheDocument();
+    });
+
+    it('remounts the sandbox frame when the user opens another document', () => {
+      openDocument(reactDocument());
+      render(<DocumentPanel />);
+      const frame = screen.getByTitle('Widget');
+
+      act(() => {
+        useDocumentStore.getState().setActiveDocument(reactDocument({ id: 'doc-other' }));
+      });
+
+      expect(screen.getByTitle('Widget')).not.toBe(frame);
     });
   });
 

@@ -31,6 +31,7 @@ export * from './linear/index.js';
 export * from './error-messages.js';
 export * from './mobile.js';
 export * from './platform.js';
+export * from './documents/index.js';
 export * from './models/index.js';
 export * from './smart-model/index.js';
 export * from './pre-inference/index.js';
@@ -81,7 +82,6 @@ export {
   spendableFundsNanoUsd,
   turnEffortOptions,
   STORAGE_COST_PER_CHARACTER_NANO,
-  WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL,
   WEB_SEARCH_RESERVATION_NANO_PER_MODEL,
   webSearchLineItem,
 } from './estimate/index.js';
@@ -128,6 +128,7 @@ export * from './test-signals.js';
 export * from './storage-keys.js';
 export * from './usage-stats-windows.js';
 export * from './admin/index.js';
+export * from './notifications/index.js';
 
 export {
   FEEDBACK_BODY_MAX_LENGTH,
@@ -156,6 +157,9 @@ export { LEDGER_ENTRY_KINDS, PAYMENT_STATUSES } from './billing-enums.js';
 export { IMAGE_MIME_TYPES } from './media-mime.js';
 export { MEMBER_PRIVILEGES, MemberPrivilege } from './member-privilege.js';
 export { MODALITIES, Modality } from './modality.js';
+// Fee-seam: this barrel PUBLISHES the fee helpers to the sanctioned
+// cross-package application seams; the vendored fee-seams lint rule confines
+// who may import them (seam list in fee-seams.config.mjs).
 export {
   MARKUP_BASIS_POINTS,
   applyMarkup,
@@ -304,3 +308,5 @@ export { composeEnvConfig, composedEnvConfig, envConfigAdditions } from './env-c
 export { mockDirectivesSchema } from './mock-directives.js';
 export type { MockDirectives } from './mock-directives.js';
 export * from './reasoning-format.js';
+export * from './tts-hosts.js';
+export * from './tts-model-download.js';

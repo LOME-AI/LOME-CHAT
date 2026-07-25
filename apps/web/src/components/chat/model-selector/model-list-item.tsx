@@ -2,7 +2,7 @@ import * as React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Link } from '@tanstack/react-router';
 import { ChevronUp, ChevronDown, Lock, Square, CheckSquare, Info } from 'lucide-react';
-import { Button, cn, useIsTouchDevice } from '@hushbox/ui';
+import { Button, cn, Tooltip, TooltipContent, TooltipTrigger, useIsTouchDevice } from '@hushbox/ui';
 import { ROUTES, shortenModelName, TEST_IDS, TEST_ID_BUILDERS } from '@hushbox/shared';
 import { type PickerMode } from '@/stores/model';
 
@@ -110,12 +110,21 @@ function ModelItemContent({
   );
 }
 
+/**
+ * Disabled copy for a model whose minimum-viable turn the shared floor
+ * verdict denies — matches the effort menu's balance reason so the two
+ * "can't fund this" surfaces read alike.
+ */
+export const MODEL_BELOW_FLOOR_REASON = "Doesn't fit your current balance";
+
 export interface ModelListItemProps {
   model: Model;
   isFocused: boolean;
   isSelected: boolean;
   isDisabled: boolean;
   isPremium: boolean;
+  /** Below the shared affordability floor: greyed, tooltip, not selectable. */
+  isBelowFloor: boolean;
   canAccessPremium: boolean;
   isAuthenticated: boolean;
   isLinkGuest: boolean;
@@ -176,6 +185,9 @@ interface RowMainButtonProps {
   isFocused: boolean;
   isDisabled: boolean;
   showOverlay: boolean;
+  /** Floor-greyed: aria-disabled + cause tooltip; activation is guarded upstream. */
+  belowFloor: boolean;
+  belowFloorReasonId: string;
   isAuthenticated: boolean;
   pinnedLabel?: string | undefined;
   /** Row position used by the checkbox cascade-in/out animation. */
@@ -191,6 +203,8 @@ function RowMainButton({
   isFocused,
   isDisabled,
   showOverlay,
+  belowFloor,
+  belowFloorReasonId,
   isAuthenticated,
   pinnedLabel,
   cascadeIndex,
@@ -199,13 +213,18 @@ function RowMainButton({
 }: Readonly<RowMainButtonProps>): React.JSX.Element {
   const ariaLabel =
     pickerMode === 'single' ? `Use ${model.name}` : `Toggle selection for ${model.name}`;
-  return (
+  const button = (
     <button
       type="button"
       aria-label={ariaLabel}
+      // aria-disabled (not disabled): the row stays hoverable and
+      // keyboard-focusable so the cause tooltip and aria-describedby reason
+      // remain reachable — greyed-never-hidden, and discoverable why.
+      {...(belowFloor && { 'aria-disabled': true, 'aria-describedby': belowFloorReasonId })}
       className={cn(
         'flex flex-1 cursor-pointer items-center rounded-md text-left transition-colors',
-        !isSelected && !isFocused && !isDisabled && 'hover:bg-muted'
+        !isSelected && !isFocused && !isDisabled && !belowFloor && 'hover:bg-muted',
+        belowFloor && 'cursor-not-allowed'
       )}
       onClick={onActivate}
       onMouseEnter={onHover}
@@ -223,6 +242,18 @@ function RowMainButton({
         pinnedLabel={pinnedLabel}
       />
     </button>
+  );
+  if (!belowFloor) return button;
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent side="left">{MODEL_BELOW_FLOOR_REASON}</TooltipContent>
+      </Tooltip>
+      <span id={belowFloorReasonId} className="sr-only">
+        {MODEL_BELOW_FLOOR_REASON}
+      </span>
+    </>
   );
 }
 
@@ -356,12 +387,17 @@ function modelListItemRowClass(params: {
   isFocused: boolean;
   isDisabled: boolean;
   isPulsing: boolean;
+  showFloorGrey: boolean;
 }): string {
   return cn(
     'group/row relative flex flex-col rounded-md transition-colors',
     params.isSelected && 'bg-accent/50',
     params.isFocused && 'ring-primary ring-2',
     params.isDisabled && 'pointer-events-none opacity-40',
+    // opacity-60, not lower: greyed rows must stay perceivable for
+    // low-vision users while reading as non-interactive. No
+    // pointer-events-none — the cause tooltip must stay reachable.
+    params.showFloorGrey && 'opacity-60',
     params.isPulsing && 'animate-picker-pulse'
   );
 }
@@ -372,6 +408,7 @@ export function ModelListItem({
   isSelected,
   isDisabled,
   isPremium,
+  isBelowFloor,
   canAccessPremium,
   isAuthenticated,
   isLinkGuest,
@@ -387,7 +424,11 @@ export function ModelListItem({
   onToggleExpand,
 }: Readonly<ModelListItemProps>): React.JSX.Element {
   const showOverlay = isPremium && !canAccessPremium && !isLinkGuest;
+  // The premium lock is its own, separate gate: a premium-locked row shows
+  // the paywall overlay and never the floor grey.
+  const showFloorGrey = isBelowFloor && !showOverlay;
   const showInlineExpansion = isExpanded && isMobile;
+  const belowFloorReasonId = React.useId();
 
   return (
     <div
@@ -395,7 +436,14 @@ export function ModelListItem({
       data-selected={isSelected}
       data-expanded={isExpanded}
       data-pulsing={isPulsing ? 'true' : undefined}
-      className={modelListItemRowClass({ isSelected, isFocused, isDisabled, isPulsing })}
+      data-below-floor={showFloorGrey ? 'true' : undefined}
+      className={modelListItemRowClass({
+        isSelected,
+        isFocused,
+        isDisabled,
+        isPulsing,
+        showFloorGrey,
+      })}
       role="option"
       aria-selected={isSelected}
     >
@@ -414,6 +462,8 @@ export function ModelListItem({
           isFocused={isFocused}
           isDisabled={isDisabled}
           showOverlay={showOverlay}
+          belowFloor={showFloorGrey}
+          belowFloorReasonId={belowFloorReasonId}
           isAuthenticated={isAuthenticated}
           pinnedLabel={pinnedLabel}
           cascadeIndex={cascadeIndex}

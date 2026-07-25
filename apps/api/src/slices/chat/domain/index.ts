@@ -51,7 +51,7 @@ export {
   mockProviderEnabled,
   parseMockDirectives,
   trialEligibility,
-  trialMessageBaseNanoUsd,
+  trialMessageBillableNanoUsd,
 } from '../../models/index.js';
 export type { TrialEligibility } from '../../models/index.js';
 

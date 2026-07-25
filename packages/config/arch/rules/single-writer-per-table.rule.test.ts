@@ -34,6 +34,7 @@ const TABLE_NAMES = [
   'newsletterDeliveries',
   'adminAudit',
   'deviceTokens',
+  'notificationPreferences',
   'feedback',
   'customInstructions',
   'preferences',

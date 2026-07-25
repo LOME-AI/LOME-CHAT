@@ -60,8 +60,14 @@ export interface TtsService {
   /**
    * Required: must be called inside a user gesture (click) on iOS to unlock
    * the AudioContext. Subsequent calls are no-ops.
+   *
+   * `existing` adopts a context the caller already created, for callers that
+   * cannot reach this method synchronously inside the gesture (an `await`
+   * before the call drops WebKit's user-activation token, and iOS unlock is
+   * per-AudioContext-instance, so only the context that will play can be
+   * unlocked). The adopted context is the one playback then uses.
    */
-  unlockAudio(): void;
+  unlockAudio(existing?: AudioContext): void;
 }
 
 let fallbackCounter = 0;
@@ -247,16 +253,40 @@ class WorkerKokoroTtsService implements TtsService {
       this.rejectLoad(new LoadTimeoutError());
     }, timeoutMs);
 
+    // Dedicated download phase: only slot 0 is told to load. Each worker is
+    // its own realm with its own cache lookup, and transformers.js writes the
+    // Cache API entry only after the whole ~92 MB body is read, so loading the
+    // pool in parallel makes every slot miss and fetch the weights again. The
+    // fetches cannot coalesce either: the model URL answers with a `no-store`
+    // 302 to a per-request signed CDN URL, a different HTTP cache key each
+    // time. Slots 1..N are handed `load` in onLoadDone once slot 0 has
+    // populated the cache.
+    const downloadSlot = this.workers[0];
+    const downloadRequestId = loadRequestIdBySlot[0];
+    // Defensive: the pool is non-empty and holds one requestId per slot.
+    /* v8 ignore next */
+    if (downloadSlot !== undefined && downloadRequestId !== undefined) {
+      this.postToSlot(downloadSlot, { type: 'load', requestId: downloadRequestId });
+    }
+
+    return this.loadPromise;
+  }
+
+  /**
+   * Hand `load` to every slot except slot 0. Called once slot 0 reports
+   * loadDone, at which point the weights are in the Cache API entry every
+   * worker shares, so these loads read from cache instead of re-downloading.
+   */
+  private fanOutLoadAfterDownload(pending: PendingLoad): void {
     for (const [slotIndex, slot] of this.workers.entries()) {
-      const reqId = loadRequestIdBySlot[slotIndex];
+      if (slotIndex === 0) continue;
+      const reqId = pending.loadRequestIdBySlot[slotIndex];
       // Defensive: loadRequestIdBySlot has one entry per worker slot, so the
       // parallel index is always defined (noUncheckedIndexedAccess guard).
       /* v8 ignore next */
       if (reqId === undefined) continue;
       this.postToSlot(slot, { type: 'load', requestId: reqId });
     }
-
-    return this.loadPromise;
   }
 
   /** Resolve the in-flight load(), mark loaded, and clear the fail-fast timer. */
@@ -311,9 +341,9 @@ class WorkerKokoroTtsService implements TtsService {
     return this.loaded;
   }
 
-  unlockAudio(): void {
+  unlockAudio(existing?: AudioContext): void {
     if (this.audioCtx !== null) return;
-    const ctx = new AudioContext();
+    const ctx = existing ?? new AudioContext();
     this.audioCtx = ctx;
     const buffer = ctx.createBuffer(1, 1, 22_050);
     const source = ctx.createBufferSource();
@@ -559,9 +589,10 @@ class WorkerKokoroTtsService implements TtsService {
     loaded: number,
     total: number
   ): void {
-    // Only forward progress from slot 0 — the others read the freshly cached
-    // weights from IndexedDB after slot 0 finishes downloading, so their
-    // progress events would over-report.
+    // Only forward progress from slot 0 — it is the sole slot that downloads
+    // (see load()). The others are started after it finishes and read the
+    // weights from the transformers.js Cache API entry, so their progress
+    // events would over-report.
     if (slotIndex !== 0) return;
     const pending = this.pendingLoad;
     if (pending === null) return;
@@ -575,6 +606,7 @@ class WorkerKokoroTtsService implements TtsService {
     if (pending.loadRequestIdBySlot[slotIndex] !== requestId) return;
     if (pending.loadDoneBySlot[slotIndex]) return;
     pending.loadDoneBySlot[slotIndex] = true;
+    if (slotIndex === 0) this.fanOutLoadAfterDownload(pending);
     const warmupRequestId = newRequestId();
     pending.warmupRequestIdBySlot[slotIndex] = warmupRequestId;
     slot.inflight++;

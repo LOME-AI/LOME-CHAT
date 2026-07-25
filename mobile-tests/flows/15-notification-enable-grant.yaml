@@ -1,0 +1,82 @@
+appId: ai.hushbox.app
+name: Enabling notifications from the in-app offer raises the OS dialog and a grant resolves it
+tags:
+  - must
+androidWebViewHierarchy: devtools
+env:
+  # See 10-core-user-flow.yaml for the full reasoning. Short version: Maestro
+  # spends ~10 s per character on Capacitor WebViews on docker-android (issue
+  # #2718), so log in with the shortest legal username (3 chars) rather than a
+  # 27-char email. `tmu` is the seeded MOBILE_TEST_PERSONA username.
+  TEST_USERNAME: tmu
+  TEST_PASSWORD: pass1234
+---
+# The counterpart to the one-time offer: tapping Enable is the only thing that
+# raises the OS permission dialog, and granting it settles the offer for good.
+- launchApp:
+    clearState: true
+    permissions:
+      notifications: unset
+
+- extendedWaitUntil:
+    visible: 'Sign up'
+    timeout: 45000
+
+# The offer lives in the authenticated shell (it reads account notification
+# preferences), so reaching it means logging in. /login is not deep-linkable
+# (auth routes fall back to home), so reach it via in-app links.
+- tapOn: 'Sign up'
+- extendedWaitUntil:
+    visible: 'Create your account'
+    timeout: 10000
+- tapOn: 'Log in'
+- extendedWaitUntil:
+    visible: 'Welcome back'
+    timeout: 10000
+- tapOn: 'Email or Username'
+- inputText: ${TEST_USERNAME}
+- hideKeyboard
+- tapOn: 'Password'
+- inputText: ${TEST_PASSWORD}
+- hideKeyboard
+- tapOn: 'Log in'
+
+# Authenticated chat page (an element unique to chat, not the login page).
+- extendedWaitUntil:
+    visible:
+      id: 'model-selector-button'
+    timeout: 15000
+
+# The offer lives in the sidebar, which on a phone is a drawer whose contents
+# are unmounted while it is closed — so the offer is not in the hierarchy until
+# the drawer opens. `hamburger-button` carries a literal HTML `id`, which
+# Maestro's `id:` selector matches (`id:` matches an `id` attribute, never
+# `data-testid`).
+- tapOn:
+    id: 'hamburger-button'
+
+# The offer is an inline callout; its copy is matched loosely because it wraps
+# across lines in the view hierarchy.
+- extendedWaitUntil:
+    visible: '.*Turn on notifications.*'
+    timeout: 15000
+
+# No system dialog until the tap — without this the assertion after the tap
+# could be satisfied by a dialog that was already on screen.
+- assertNotVisible: 'Allow'
+- tapOn: 'Enable'
+
+# The OS permission dialog, raised by the tap and nothing else.
+- extendedWaitUntil:
+    visible: 'Allow'
+    timeout: 15000
+- tapOn: 'Allow'
+
+# Granting settles the question, so the offer retires. Registration with the
+# push service happens behind this, which is why the wait is extended rather
+# than an immediate assertion.
+- extendedWaitUntil:
+    notVisible: '.*Turn on notifications.*'
+    timeout: 20000
+- assertNotVisible: 'Enable'
+- assertNotVisible: 'Later'

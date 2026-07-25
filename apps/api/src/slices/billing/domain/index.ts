@@ -17,7 +17,7 @@ export {
   MARKUP_BASIS_POINTS,
   MEDIA_STORAGE_COST_PER_BYTE_NANO,
   STORAGE_COST_PER_CHARACTER_NANO,
-  applyMarkup,
+  providerUsdToBillableNanoUsd,
   roundHalfEvenDiv,
   usdToNanoUsd,
 } from './money.js';
@@ -27,7 +27,7 @@ export type { RedisClient } from './keys.js';
 export { provisionWalletsWithinTx } from './wallets.js';
 export type { ProvisionResult } from './wallets.js';
 export { chargeWithinTx } from './charge.js';
-export type { ChargeInput, ChargeResult } from './charge.js';
+export type { ChargeInput, ChargeResult, ChargeSender } from './charge.js';
 export { admitRun, refreshWalletSnapshot, releaseHold, writeThroughSnapshot } from './admission.js';
 export { holdReadoutAt, readBudgetScopeHolds, readSpendable } from './spendable.js';
 export type { ActiveHoldsReadout, BudgetScopeHoldRef } from './spendable.js';

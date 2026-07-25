@@ -73,4 +73,5 @@ export type {
   WrapEpochByMemberAssertion,
 } from './domain/index.js';
 export type { ConversationsStores, MemberRecord, SenderChainRow } from './ports/index.js';
+export type { ConversationEventNotification, NotifyConversationEvent } from './ports/index.js';
 export type { MembershipRevoker, RealtimeBroadcast } from './ports/index.js';

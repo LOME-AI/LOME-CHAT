@@ -8,7 +8,7 @@ import {
   usageRecords,
 } from '@hushbox/db';
 import { runSettlement } from '../../lib/idempotency/index.js';
-import { applyMarkup, createBillingStores } from '../../slices/billing/index.js';
+import { createBillingStores } from '../../slices/billing/index.js';
 import type { Database } from '@hushbox/db';
 import type { Modality } from '@hushbox/shared';
 import type { SettlementTx } from '../../lib/idempotency/index.js';
@@ -77,8 +77,8 @@ export interface UsageSpec {
   readonly modelId: string;
   readonly providerName: string;
   readonly modality: Modality;
-  /** Provider base cost; the 15% markup lands here exactly once (banker's). */
-  readonly baseCostNanoUsd: bigint;
+  /** Already-billable model cost; charged as-is, mirroring `chargeWithinTx`. */
+  readonly billableCostNanoUsd: bigint;
   /** Additive storage fee, charged on top and NEVER marked up. Defaults to 0. */
   readonly storageFeeNanoUsd?: bigint;
   readonly isEstimated?: boolean;
@@ -107,9 +107,9 @@ export interface SeedUsageHistoryResult {
   readonly finalBalanceNanoUsd: bigint;
 }
 
-/** The marked-up model cost plus the additive (never-marked-up) storage fee. */
-function chargedAmount(baseCostNanoUsd: bigint, storageFeeNanoUsd: bigint): bigint {
-  return applyMarkup(baseCostNanoUsd) + storageFeeNanoUsd;
+/** The billable model cost plus the additive (never-marked-up) storage fee. */
+function chargedAmount(billableCostNanoUsd: bigint, storageFeeNanoUsd: bigint): bigint {
+  return billableCostNanoUsd + storageFeeNanoUsd;
 }
 
 /**
@@ -210,7 +210,7 @@ async function writeSeedUsageChargeWithinTx(
   spec: UsageSpec,
   cursor: ChargeCursor
 ): Promise<bigint | null> {
-  const charged = chargedAmount(spec.baseCostNanoUsd, spec.storageFeeNanoUsd ?? 0n);
+  const charged = chargedAmount(spec.billableCostNanoUsd, spec.storageFeeNanoUsd ?? 0n);
   const inserted = await tx
     .insert(usageRecords)
     .values({

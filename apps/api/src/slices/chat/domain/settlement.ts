@@ -8,7 +8,6 @@ import {
 import {
   MEDIA_STORAGE_COST_PER_BYTE_NANO,
   STORAGE_COST_PER_CHARACTER_NANO,
-  applyMarkup,
 } from '../../billing/index.js';
 import {
   advanceForkTipWithinTx,
@@ -26,7 +25,7 @@ import { okAsync } from '../../../lib/result/index.js';
 import { persistEncryptedMessage } from './message-write.js';
 import { senderCaller, senderPrincipalId } from './sender.js';
 import type { SettlementCommit } from '../../workflows/index.js';
-import type { BillingStores } from '../../billing/index.js';
+import type { BillingStores, ChargeSender } from '../../billing/index.js';
 import type { ConversationCaller } from '../../conversations/index.js';
 import type {
   ErrorCode,
@@ -118,10 +117,11 @@ export interface ChatSettlementIdentity {
   readonly epochNumber: number;
   readonly walletId: string;
   /**
-   * The PAYER's user account — whose wallet is charged and whose usage the
-   * record attributes to (the initiator for a user turn, the OWNER for a guest
-   * turn; a guest has no account). NEVER the guest's identity — that rides
-   * `sender`.
+   * The user account the run's usage is attributed to: the initiator for a user
+   * turn, the OWNER for a guest turn (a guest has no account). NEVER the guest's
+   * identity — that rides `sender`. Not necessarily the charged wallet's owner:
+   * an owner-funded member turn debits `walletId` (the owner's wallet) while
+   * this stays the member.
    */
   readonly userId: string;
   /**
@@ -305,6 +305,19 @@ function settlementSenderUserId(identity: ChatSettlementIdentity): string | unde
 }
 
 /**
+ * The sender recorded on every billed row (`ChargeSender`), independent of the
+ * payer: a member sender by userId, a link guest by linkId. The flat fallback
+ * (no discriminated `sender`) is a solo turn — sender and payer are the same
+ * user, so both columns attribute to `identity.userId`.
+ */
+function settlementChargeSender(identity: ChatSettlementIdentity): ChargeSender {
+  if (identity.sender === undefined) return { kind: 'user', userId: identity.userId };
+  return identity.sender.kind === 'user'
+    ? { kind: 'user', userId: identity.sender.userId }
+    : { kind: 'linkGuest', linkId: identity.sender.linkId };
+}
+
+/**
  * The epoch-at-persist gate (forward secrecy): FOR SHARE re-read + assert the
  * send-time epoch is still current and the SENDER still belongs to it, INSIDE
  * this transaction, BEFORE wrapping — then read the wrap key. The check is
@@ -458,7 +471,7 @@ function resolveDisplayAnchorKey(
  * its originating charge key), the SUM over EVERY charge in the run that anchors
  * to it — its own generation PLUS any auxiliary charge (a Smart Model classifier)
  * whose cost the debit path already FKs to the same content item. Each summand is
- * `applyMarkup(base) + storageFee`, the identical value `chargeWithinTx` debits,
+ * `billableCost + storageFee`, the identical value `chargeWithinTx` debits,
  * so the mirrored display total equals the wallet debit total by construction
  * (Σ content_items.cost == Σ usage_records.cost per run) and cannot drift.
  * `isSmartModel` is true iff a charge anchoring here ran the smartModel routing
@@ -474,7 +487,7 @@ function aggregateDisplayCostByKey(
   for (const charge of charges) {
     const anchorKey = resolveDisplayAnchorKey(charge.key, contentItemKeys);
     if (anchorKey === undefined) continue;
-    const cost = applyMarkup(charge.baseCostNanoUsd) + (charge.storageFeeNanoUsd ?? 0n);
+    const cost = charge.billableCostNanoUsd + (charge.storageFeeNanoUsd ?? 0n);
     const prior = byKey.get(anchorKey);
     byKey.set(anchorKey, {
       costNanoUsd: (prior?.costNanoUsd ?? 0n) + cost,
@@ -1146,6 +1159,7 @@ export function createChatSettlementCommit(deps: ChatSettlementDeps): Settlement
       context: {
         walletId: deps.identity.walletId,
         userId: deps.identity.userId,
+        sender: settlementChargeSender(deps.identity),
         runId: deps.identity.runId,
         now: deps.now(),
         contentItemIdFor: (key) => contentItemIdByKey.get(key),

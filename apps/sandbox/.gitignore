@@ -1,0 +1,8 @@
+# Assembled deploy output (built by `pnpm --filter @hushbox/sandbox build`).
+dist
+
+# Self-hosted Pyodide runtime + wheels. Generated, pinned, and reproducible via
+# `pnpm --filter @hushbox/sandbox fetch-pyodide` (scripts/fetch-pyodide.sh);
+# ~26 MB of wasm/wheels are fetched at build time rather than committed. The
+# fetch mechanism is the committed source of truth for these bytes.
+public/pyodide

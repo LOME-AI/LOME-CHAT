@@ -1,16 +1,26 @@
 export {
   registerDeviceToken,
   registerDeviceTokenSchema,
+  registerWebSubscription,
+  registerWebSubscriptionSchema,
   unregisterDeviceToken,
 } from './device-tokens.js';
-export type { RegisterDeviceTokenInput } from './device-tokens.js';
+export type { RegisterDeviceTokenInput, RegisterWebSubscriptionInput } from './device-tokens.js';
 export { fullSessionClaims } from './session-claims.js';
 export { domainErrorBody, domainErrorStatus } from './wire.js';
 export type { DomainErrorStatus } from './wire.js';
-export { selectPushRecipients } from './push-recipients.js';
-export type { SelectPushRecipientsParams } from './push-recipients.js';
-export { sendPushForNewMessage } from './notify-message.js';
-export type { MessagePushDeps, NewMessagePush } from './notify-message.js';
+export { selectNotifyRecipients } from './notify-decision.js';
+export type { SelectNotifyRecipientsParams } from './notify-decision.js';
+export { isWithinQuietHours, localMinutesOfDay } from './quiet-hours.js';
+export { notifyEvent } from './notify-event.js';
+export type { NotifyEventDeps, NotifyEventInput } from './notify-event.js';
+export {
+  getNotificationPreferences,
+  putNotificationPreferencesBodySchema,
+  saveNotificationPreferences,
+  toPreferencesView,
+} from './notification-preferences.js';
+export type { NotificationPreferencesView } from './notification-preferences.js';
 export { defineEmailTemplate, escapeHtml } from './templates/builder.js';
 export type { EmailContent } from './templates/builder.js';
 export { verificationEmail } from './templates/verification.js';
@@ -38,4 +48,4 @@ export type { AdminDigestAction } from './templates/admin-daily-digest.js';
 // lib surface routes need travels through here.
 export { idempotencyExempt, idempotent, runMutation } from '../../../lib/idempotency/index.js';
 export { createErrorResponse } from '../../../lib/errors/index.js';
-export type { DeviceTokenStore } from '../ports/index.js';
+export type { DeviceTokenStore, NotificationPreferencesStore } from '../ports/index.js';

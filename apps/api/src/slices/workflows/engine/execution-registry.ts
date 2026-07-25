@@ -111,17 +111,17 @@ export interface NodeGenerationCharge {
   /** Distinguishes this generation's charge key from the node's own. */
   readonly keySuffix: string;
   readonly billing: NodeBillingMetadata;
-  readonly baseCostNanoUsd: bigint;
+  readonly billableCostNanoUsd: bigint;
   readonly isEstimated: boolean;
 }
 
 export interface NodeRunSuccess {
   readonly value: unknown;
   /**
-   * The base (pre-markup) cost this generation is charged: the authoritative
-   * inline provider cost for text/video, or the catalog estimate for image and
-   * the pathological missing-cost path. Also accrued toward the `hold × K` cost
-   * circuit. Settlement applies the markup once.
+   * The BILLABLE cost this generation is charged: the port-converted inline
+   * provider cost for text/video, or the billable catalog estimate for image
+   * and the pathological missing-cost path. Also accrued toward the `hold × K`
+   * cost circuit. Settlement charges it as-is — no further fee application.
    */
   readonly costNanoUsd: bigint;
   /**

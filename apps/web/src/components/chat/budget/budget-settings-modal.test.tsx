@@ -1,6 +1,7 @@
 import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { friendlyErrorMessage } from '@hushbox/shared';
 
 vi.mock('@/hooks/billing/use-conversation-budgets.js', () => ({
   useConversationBudgets: vi.fn(),
@@ -218,6 +219,23 @@ describe('BudgetSettingsModal', () => {
 
     expect(mockMutateAsync).toHaveBeenCalledTimes(1);
     expect(mockMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ memberId: 'mem-2' }));
+  });
+
+  it('surfaces a BUDGET_BELOW_SPENT rejection with the shared copy, inline', async () => {
+    // The server refuses a cap below the accrued spend with the typed 400;
+    // the thrown ApiError carries the code in `.message`, and useAsyncAction
+    // maps it through friendlyErrorMessage — the copy comes from the ONE
+    // shared code→copy map, never a hardcoded string here.
+    mockMutateAsync.mockRejectedValue(new Error('BUDGET_BELOW_SPENT'));
+    render(<BudgetSettingsModal {...defaultProps} />);
+
+    const input = screen.getByTestId('budget-input-mem-2');
+    await userEvent.clear(input);
+    await userEvent.type(input, '30.00');
+    await userEvent.click(screen.getByTestId('budget-save-button'));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(friendlyErrorMessage('BUDGET_BELOW_SPENT'));
   });
 
   it('closes modal when Cancel is clicked', async () => {

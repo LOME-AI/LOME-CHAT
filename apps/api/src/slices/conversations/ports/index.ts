@@ -6,6 +6,11 @@ export type {
 } from './realtime.js';
 export type { MembershipRevoker } from './revocation.js';
 export type {
+  ConversationEventNotification,
+  NotifyConversationEvent,
+  NotifyConversationEventFactory,
+} from './notify.js';
+export type {
   ActiveLinkGuest,
   ConversationListRecord,
   ConversationRecord,

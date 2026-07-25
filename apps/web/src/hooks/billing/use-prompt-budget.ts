@@ -1,13 +1,19 @@
 import * as React from 'react';
 import {
+  MINIMUM_OUTPUT_TOKENS,
   SMART_MODEL_ID,
   buildTurnSystemPrompt,
+  evaluateManifest,
   generateNotifications,
   nanoUSD,
   outputCharsPerTokenForTier,
+  payerSizingTier,
   planReasoning,
+  priceRequest,
   promptCharacterCount,
+  resolveClientBilling,
   smartModelMinimumRequiredNanoUsd,
+  turnEffortOptions,
   type CanonicalReasoningEffort,
   type Model,
   type BudgetError,
@@ -17,6 +23,7 @@ import {
   type ReasoningEffortSelection,
   type SmartModelPoolCandidate,
   type SmartModelStorageContext,
+  type UserTier,
 } from '@hushbox/shared';
 import {
   useBudgetCalculation,
@@ -31,6 +38,7 @@ import {
   type UseMediaCostEstimateInput,
 } from '@/hooks/billing/use-media-cost-estimate';
 import { useResolveBilling } from '@/hooks/billing/use-resolve-billing';
+import { useSpendable } from '@/hooks/billing/use-spendable';
 import { useUserTierInfo } from '@/hooks/billing/use-user-tier-info';
 import { useModelStore } from '@/stores/model';
 import { useModels } from '@/hooks/models/models';
@@ -136,6 +144,26 @@ function buildBillingResolverInput(args: {
 interface GroupBillingContext {
   effectiveRemainingNanoUsd: bigint;
   ownerBalanceNanoUsd: bigint;
+}
+
+/**
+ * Owner-funded means owner-priced (BILLING §Group Funding 1): the tier that
+ * sizes the storage context is the PAYER's — 'paid' whenever the shared
+ * funding core says the owner funds the turn (the server derives the same
+ * tier from the admitted wallet's kind), the caller's own tier everywhere the
+ * sender pays. Hoisted out of the hook so the conditional spread doesn't bump
+ * its cyclomatic complexity past the lint threshold.
+ */
+function resolveSizingTier(
+  tier: UserTier,
+  purchasedBalanceNanoUsd: bigint,
+  groupContext: GroupBillingContext | undefined
+): UserTier {
+  return payerSizingTier({
+    tier,
+    purchasedBalanceNanoUsd,
+    ...(groupContext !== undefined && { group: groupContext }),
+  });
 }
 
 /**
@@ -313,6 +341,10 @@ function smartModelPoolFromCatalog(modelCatalog: readonly Model[]): SmartModelPo
         description: model.description,
         pricing,
         contextLength: model.contextLength,
+        // The provider completion ceiling bounds every candidate's answer cap;
+        // dropping it here under-denies (a model that cannot emit a minimum
+        // answer would price the pool floor).
+        ...(model.maxOutputTokens === undefined ? {} : { maxOutputTokens: model.maxOutputTokens }),
       },
     ];
   });
@@ -483,6 +515,11 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
 
   // 3. Resolve billing: who pays or why denied
   const isPremiumModel = selectedModels.some((sm) => modelsData?.premiumIds.has(sm.id) ?? false);
+  const sizingTier = resolveSizingTier(
+    tierInfo.tier,
+    tierInfo.purchasedBalanceNanoUsd,
+    groupContext
+  );
   // Smart Model prices through the shared affordability gate (reserve + cheapest
   // floor), never the catalog's headline-min — so the client refuses exactly the
   // sends the server refuses. A non-Smart text turn keeps the token-derived cost.
@@ -494,7 +531,7 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
     tokenMinimumCostNanoUsd: budgetResult.estimatedMinimumCostNanoUsd,
     mediaNanoUsd: mediaCost.estimatedNanoUsd,
     storage: {
-      outputCharsPerToken: outputCharsPerTokenForTier(tierInfo.tier),
+      outputCharsPerToken: outputCharsPerTokenForTier(sizingTier),
       inputChars: promptChars,
     },
   });
@@ -555,4 +592,127 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
     maxOutputTokens: budgetResult.maxOutputTokens,
     estimatedInputTokens: budgetResult.estimatedInputTokens,
   };
+}
+
+/** Group funding context for the floor — the conversation the picker was opened from. */
+export interface ModelFloorGroupContext {
+  readonly conversationId: string;
+  readonly currentUserPrivilege: MemberPrivilege;
+}
+
+export interface UseModelFloorInput {
+  readonly isAuthenticated: boolean;
+  /** Present when the picker belongs to a group conversation the caller is in. */
+  readonly group?: ModelFloorGroupContext | undefined;
+}
+
+export interface ModelFloorResult {
+  /** True while funding inputs load; `isBelowFloor` already suppresses then. */
+  readonly isPending: boolean;
+  /** Whether the model's minimum-viable turn is unaffordable — the picker greys on true. */
+  readonly isBelowFloor: (model: Model) => boolean;
+}
+
+/**
+ * A model's minimum-viable-answer floor in nano-USD at its CHEAPEST
+ * configuration: the shared single-model manifest at zero prompt input,
+ * evaluated at the minimum answer plus the cheapest resolvable reasoning
+ * budget (0 when reasoning can disable or is absent; the lowest offered
+ * rung when reasoning is mandatory — `turnEffortOptions` ascending order
+ * makes its first entry exactly that cheapest configuration). Undefined for
+ * rows without per-token rates (media rows: no token floor) or a catalog
+ * still loading — never grey on missing data.
+ */
+function modelFloorNanoUsd(
+  model: Model,
+  sizingTier: UserTier,
+  modelCatalog: readonly Model[] | undefined
+): bigint | undefined {
+  const outputCharsPerToken = outputCharsPerTokenForTier(sizingTier);
+  if (model.isSmartModel === true) {
+    if (modelCatalog === undefined) return undefined;
+    const minimum = smartModelMinimumRequiredNanoUsd(smartModelPoolFromCatalog(modelCatalog), 0, {
+      outputCharsPerToken,
+      inputChars: 0,
+    });
+    return minimum ?? undefined;
+  }
+  const { inputPerToken, outputPerToken } = model.pricing;
+  if (inputPerToken === undefined || outputPerToken === undefined) return undefined;
+  const manifest = priceRequest({
+    models: [
+      { pricing: { inputPerToken: BigInt(inputPerToken), outputPerToken: BigInt(outputPerToken) } },
+    ],
+    inputTokens: 0n,
+    inputChars: 0,
+    outputCharsPerToken,
+  });
+  /* v8 ignore next 2 -- unreachable: bigint rates and zero token/char inputs are always priceable */
+  if (!manifest.ok) return undefined;
+  const cheapestChoice = turnEffortOptions([model])[0];
+  const reasoningBudgetTokens = cheapestChoice?.maxReasoningBudgetTokens ?? 0;
+  return evaluateManifest(manifest.value, BigInt(MINIMUM_OUTPUT_TOKENS + reasoningBudgetTokens), {
+    scope: 'all-in',
+  });
+}
+
+/**
+ * The composer's canSend floor, packaged per model for the picker
+ * (BILLING §Affordability 4): a model greys when its minimum-viable turn is
+ * unaffordable under the SAME funding verdict the composer renders —
+ * `resolveClientBilling` over the served spendable / free allowance / fixed
+ * trial arm, with the group headroom dimension when the picker belongs to a
+ * group conversation (a group-blind floor would grey models the owner's
+ * budget funds). The premium lock is deliberately NOT part of the floor
+ * (`isPremiumModel: false`) — it is its own separate picker gate.
+ */
+export function useModelFloor(input: UseModelFloorInput): ModelFloorResult {
+  const tierInfo = useUserTierInfo(input.isAuthenticated);
+  const { data: spendableData, isPending: isSpendablePending } = useSpendable();
+  const isGroupMember = resolveIsGroupMember(
+    input.group?.conversationId,
+    input.group?.currentUserPrivilege
+  );
+  const { data: groupBudgetData, isPending: isGroupBudgetPending } = useConversationBudgets(
+    resolveGroupBudgetArgument(isGroupMember, input.group?.conversationId)
+  );
+  const groupContext = useGroupBillingContext(isGroupMember, groupBudgetData);
+  const { data: modelsData } = useModels();
+
+  const isPending =
+    (input.isAuthenticated && isSpendablePending) || (isGroupMember && isGroupBudgetPending);
+  const spendableNanoUsd = spendableData ? BigInt(spendableData.spendableNanoUsd) : 0n;
+  const { tier, purchasedBalanceNanoUsd, freeAllowanceNanoUsd } = tierInfo;
+  const sizingTier = resolveSizingTier(tier, purchasedBalanceNanoUsd, groupContext);
+  const modelCatalog = modelsData?.models;
+
+  const isBelowFloor = React.useCallback(
+    (model: Model): boolean => {
+      if (isPending) return false;
+      const floorNanoUsd = modelFloorNanoUsd(model, sizingTier, modelCatalog);
+      if (floorNanoUsd === undefined) return false;
+      const decision = resolveClientBilling({
+        tier,
+        purchasedBalanceNanoUsd,
+        spendableNanoUsd,
+        freeAllowanceNanoUsd,
+        isPremiumModel: false,
+        estimatedMinimumCostNanoUsd: floorNanoUsd,
+        ...(groupContext !== undefined && { group: groupContext }),
+      });
+      return decision.fundingSource === 'denied';
+    },
+    [
+      isPending,
+      sizingTier,
+      modelCatalog,
+      tier,
+      purchasedBalanceNanoUsd,
+      spendableNanoUsd,
+      freeAllowanceNanoUsd,
+      groupContext,
+    ]
+  );
+
+  return { isPending, isBelowFloor };
 }

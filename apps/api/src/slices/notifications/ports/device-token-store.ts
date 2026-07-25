@@ -1,5 +1,5 @@
 import type { deviceTokens } from '@hushbox/db';
-import type { PushRecipient } from './push-sender.js';
+import type { PushDeviceRef, PushRecipient } from './push-sender.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 
@@ -9,6 +9,13 @@ export interface DeviceTokenRegistration {
   readonly userId: string;
   readonly token: string;
   readonly platform: DevicePlatform;
+  /**
+   * Web Push subscription keys — present only for `web` rows (the `token`
+   * holds the endpoint URL there). The DB CHECK binds their presence to the
+   * `web` platform in both directions.
+   */
+  readonly p256dh?: string;
+  readonly auth?: string;
 }
 
 /**
@@ -37,4 +44,12 @@ export interface DeviceTokenStore {
   listTokensForUsers(
     userIds: readonly string[]
   ): ResultAsync<readonly PushRecipient[], DomainError>;
+  /**
+   * Marks the given targets as alive right now. `lastSeenAt` is the liveness
+   * clock the retention delete reads, so it must advance on every proof of
+   * life — registration and successful delivery alike; without the delivery
+   * touch a device that only ever receives pushes ages out and is deleted
+   * while still in use.
+   */
+  touchLastSeen(references: readonly PushDeviceRef[]): ResultAsync<void, DomainError>;
 }

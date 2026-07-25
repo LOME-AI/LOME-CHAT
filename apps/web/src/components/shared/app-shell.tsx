@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { TEST_IDS } from '@hushbox/shared';
 import { Sidebar } from '@/components/sidebar/sidebar';
+import { NotificationActivityLayer } from '@/components/notifications/notification-activity-layer';
 import { useModelValidation } from '@/hooks/models/use-model-validation';
+import { usePushRegistration } from '@/hooks/notifications/use-push-registration';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -9,6 +11,7 @@ interface AppShellProps {
 
 export function AppShell({ children }: Readonly<AppShellProps>): React.JSX.Element {
   useModelValidation();
+  usePushRegistration();
 
   return (
     <div data-testid={TEST_IDS.appShell} className="bg-background flex h-full">
@@ -21,6 +24,11 @@ export function AppShell({ children }: Readonly<AppShellProps>): React.JSX.Eleme
       >
         Skip to content
       </a>
+
+      {/* Renders only a screen-reader live region; it exists here so the
+          activity count, tab title, and app badge have one owner for the whole
+          authenticated app. */}
+      <NotificationActivityLayer />
 
       <Sidebar />
 

@@ -2,9 +2,10 @@ const MB = 1_048_576;
 const KB = 1024;
 
 /**
- * Render "<loaded.X> / <total> MB" for the read-aloud model download.
- * Loaded uses one decimal so the digits visibly tick over; total is rounded
- * to an integer to match the disclosure copy ("80 MB, one-time download").
+ * Render "<loaded.X> / <total> MB" for the read-aloud model download. Loaded
+ * uses one decimal so the digits visibly tick over; total is rounded to a
+ * whole MB for a clean readout. Both are the actual bytes reported by the
+ * engine, not the friendly disclosure figure.
  */
 export function formatBytesProgress(loaded: number, total: number): string {
   const loadedMb = (loaded / MB).toFixed(1);

@@ -67,6 +67,7 @@ const TABLE_OWNER: Record<string, string | string[]> = {
   newsletterDeliveries: 'newsletter',
   adminAudit: 'admin',
   deviceTokens: 'notifications',
+  notificationPreferences: 'notifications',
   feedback: 'feedback',
   customInstructions: 'account',
   preferences: 'account',

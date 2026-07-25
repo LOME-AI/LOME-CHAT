@@ -6,7 +6,9 @@ import { TEST_IDS } from '@hushbox/shared';
 import { Button, cn, useIsMobile } from '@hushbox/ui';
 import { MermaidDiagram } from '@/components/chat/message/mermaid-diagram';
 import { useDocumentStore } from '../../stores/document';
-import { getFileExtension } from '../../lib/document-parser';
+import { DocumentSandbox } from './document-sandbox';
+import { DocumentRenderStatus, PENDING_PREVIEW_TEXT } from './document-render-status';
+import { getFileExtension, isRunnableDocument } from '../../lib/document-parser';
 import type { Document } from '../../lib/document-parser';
 
 interface DocumentPanelProps {
@@ -165,27 +167,72 @@ function buildFencedCodeBlock(content: string, language?: string): string {
   return `${fence}${language ?? ''}\n${content}\n${fence}`;
 }
 
+function HighlightedSource({
+  content,
+  language,
+}: Readonly<{ content: string; language: string | undefined }>): React.JSX.Element {
+  return (
+    <div data-testid={TEST_IDS.highlightedCode} className="document-panel-code">
+      <Streamdown plugins={{ code }} controls={{ code: false }} animated={false}>
+        {buildFencedCodeBlock(content, language)}
+      </Streamdown>
+    </div>
+  );
+}
+
+/** Whether this document type has a preview to switch to at all. */
+function hasPreview(type: Document['type']): boolean {
+  return type === 'mermaid' || isRunnableDocument(type);
+}
+
+/** The source, plus the line explaining why no preview is on screen yet. */
+function PendingSourceView({ document }: Readonly<{ document: Document }>): React.JSX.Element {
+  return (
+    <div>
+      <HighlightedSource content={document.content} language={document.language} />
+      {/* Repeats the status text visibly; the status element announces it. */}
+      <p className="text-muted-foreground px-4 pb-4 text-sm" aria-hidden="true">
+        {PENDING_PREVIEW_TEXT}
+      </p>
+    </div>
+  );
+}
+
 function DocumentContent({ document, showRaw }: Readonly<DocumentContentProps>): React.JSX.Element {
   if (document.type === 'mermaid') {
     if (showRaw) {
+      return <HighlightedSource content={document.content} language="mermaid" />;
+    }
+    // Mermaid draws in-app and reports nothing back, so a half-written diagram
+    // offers no failed attempt to observe — unlike the sandbox kinds, whose
+    // frame says whether the code actually ran. It therefore waits for the
+    // message to settle rather than showing a syntax complaint per token.
+    if (document.isStreaming) {
       return (
-        <div data-testid={TEST_IDS.highlightedCode} className="document-panel-code">
-          <Streamdown plugins={{ code }} controls={{ code: false }} animated={false}>
-            {buildFencedCodeBlock(document.content, 'mermaid')}
-          </Streamdown>
-        </div>
+        <>
+          <PendingSourceView document={document} />
+          <DocumentRenderStatus status="streaming" text={PENDING_PREVIEW_TEXT} />
+        </>
       );
     }
     return <MermaidDiagram chart={document.content} />;
   }
 
-  return (
-    <div data-testid={TEST_IDS.highlightedCode} className="document-panel-code">
-      <Streamdown plugins={{ code }} controls={{ code: false }} animated={false}>
-        {buildFencedCodeBlock(document.content, document.language)}
-      </Streamdown>
-    </div>
-  );
+  // html/js/react/python execute in the sandbox iframe when Rendered; Raw shows
+  // the highlighted source, mirroring the mermaid toggle.
+  if (isRunnableDocument(document.type) && !showRaw) {
+    return (
+      <DocumentSandbox
+        kind={document.type}
+        code={document.content}
+        title={document.title}
+        isStreaming={document.isStreaming}
+        pendingView={<PendingSourceView document={document} />}
+      />
+    );
+  }
+
+  return <HighlightedSource content={document.content} language={document.language} />;
 }
 
 export function DocumentPanel({
@@ -194,8 +241,8 @@ export function DocumentPanel({
   const {
     isPanelOpen,
     panelWidth,
-    activeDocumentId,
     activeDocument,
+    activeSelectionId,
     isFullscreen,
     closePanel,
     setPanelWidth,
@@ -207,9 +254,12 @@ export function DocumentPanel({
   const panelRef = React.useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
+  // Keyed on the selection, not the document id: the id is a content hash that
+  // mutates while a message streams, and re-anchoring must not discard the
+  // view the user picked.
   React.useEffect(() => {
     setShowRaw(false);
-  }, [activeDocumentId]);
+  }, [activeSelectionId]);
 
   React.useEffect(() => {
     if (!isResizing || isMobile) return;
@@ -280,11 +330,15 @@ export function DocumentPanel({
     URL.revokeObjectURL(url);
   };
 
-  const supportsRawToggle = activeDocument.type === 'mermaid';
+  const supportsRawToggle = hasPreview(activeDocument.type);
 
   return (
     <div
       ref={panelRef}
+      // Literal HTML `id` (a distinct mechanism from `data-testid`) so the mobile
+      // Maestro flow can select this singleton panel container — Maestro's `id:`
+      // selector matches an `id` attribute, not `data-testid`.
+      id="document-panel"
       data-testid={TEST_IDS.documentPanel}
       data-chrome=""
       className={cn(
@@ -315,7 +369,12 @@ export function DocumentPanel({
 
       <div data-testid={TEST_IDS.documentPanelScroll} className="flex-1 overflow-auto">
         <div>
-          <DocumentContent document={activeDocument} showRaw={showRaw} />
+          {/* Keyed by the selection, not the document id: opening another
+              document remounts the content, tearing the sandbox iframe down and
+              killing anything running in it, while a streaming document — whose
+              content-hash id changes every token — keeps the frame it is
+              already driving. */}
+          <DocumentContent key={activeSelectionId} document={activeDocument} showRaw={showRaw} />
         </div>
       </div>
     </div>

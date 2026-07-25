@@ -192,6 +192,21 @@ describe('WorkerKokoroTtsService', () => {
     return ctx;
   }
 
+  /** The stubbed global constructor, for asserting the engine did not call it. */
+  function audioContextConstructor(): ReturnType<typeof vi.fn> {
+    return (globalThis as unknown as { AudioContext: ReturnType<typeof vi.fn> }).AudioContext;
+  }
+
+  /** How many `load` messages each slot has been posted, in slot order. */
+  function loadCounts(): number[] {
+    return createdWorkers.map((w) => countInboundOfType(w, 'load'));
+  }
+
+  /** `[first, ...rest]` shaped expectation over the pool, for slot-0-only assertions. */
+  function perSlot(first: number, rest: number): number[] {
+    return [first, ...Array.from({ length: WORKER_POOL_SIZE - 1 }, () => rest)];
+  }
+
   async function ackLoadOn(worker: FakeWorker): Promise<void> {
     const msg = lastInboundOfType(worker, 'load');
     if (msg) worker.send({ type: 'loadDone', requestId: msg.requestId });
@@ -254,14 +269,30 @@ describe('WorkerKokoroTtsService', () => {
     expect(service.isLoaded()).toBe(false);
   });
 
-  it('load() spawns WORKER_POOL_SIZE workers and posts a load message to every one', async () => {
+  it('load() spawns WORKER_POOL_SIZE workers and starts the download on slot 0 alone', async () => {
     const service = getTtsService();
     const loadPromise = service.load('af_heart');
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(createdWorkers).toHaveLength(WORKER_POOL_SIZE);
-    for (const worker of createdWorkers) {
-      expect(countInboundOfType(worker, 'load')).toBe(1);
-    }
+    expect(loadCounts()).toEqual(perSlot(1, 0));
+    await completeLoad();
+    await loadPromise;
+    expect(service.isLoaded()).toBe(true);
+  });
+
+  it('load() fans the load out to the remaining slots only after slot 0 reports loadDone', async () => {
+    const service = getTtsService();
+    const loadPromise = service.load('af_heart');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Dedicated download phase: one worker fetches the weights while the rest
+    // stay idle, so a cold pool transfers the model once instead of N times.
+    expect(loadCounts()).toEqual(perSlot(1, 0));
+
+    await ackLoadOn(createdWorkers[0]!);
+
+    expect(loadCounts()).toEqual(perSlot(1, 1));
+
     await completeLoad();
     await loadPromise;
     expect(service.isLoaded()).toBe(true);
@@ -322,7 +353,10 @@ describe('WorkerKokoroTtsService', () => {
     expect(onProgress).toHaveBeenCalledWith(50, 100);
     onProgress.mockClear();
 
-    // Progress from other slots is suppressed — they hit the IndexedDB cache.
+    // The other slots only start loading once slot 0 has downloaded, and they
+    // read the weights from the Cache API entry, so their progress events —
+    // which would over-report against slot 0's — are suppressed.
+    await ackLoadOn(createdWorkers[0]!);
     for (let index = 1; index < createdWorkers.length; index++) {
       const lm = lastInboundOfType(createdWorkers[index]!, 'load')!;
       createdWorkers[index]!.send({
@@ -338,12 +372,29 @@ describe('WorkerKokoroTtsService', () => {
     await loadPromise;
   });
 
-  it('load() rejects fail-fast on the first loadError from any worker', async () => {
+  it('load() rejects fail-fast when the downloading slot 0 reports loadError', async () => {
     const service = getTtsService();
     const loadPromise = service.load('af_heart');
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const slot1Load = lastInboundOfType(createdWorkers[1] ?? createdWorkers[0]!, 'load')!;
-    (createdWorkers[1] ?? createdWorkers[0]!).send({
+    const slot0Load = lastInboundOfType(createdWorkers[0]!, 'load')!;
+    createdWorkers[0]!.send({
+      type: 'loadError',
+      requestId: slot0Load.requestId,
+      message: 'download died',
+    });
+    await expect(loadPromise).rejects.toThrow('download died');
+    expect(service.isLoaded()).toBe(false);
+    // The download never completed, so nothing was fanned out to the rest.
+    expect(loadCounts()).toEqual(perSlot(1, 0));
+  });
+
+  it('load() rejects fail-fast on a loadError from a fanned-out slot', async () => {
+    const service = getTtsService();
+    const loadPromise = service.load('af_heart');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await ackLoadOn(createdWorkers[0]!);
+    const slot1Load = lastInboundOfType(createdWorkers[1]!, 'load')!;
+    createdWorkers[1]!.send({
       type: 'loadError',
       requestId: slot1Load.requestId,
       message: 'gpu died',
@@ -358,9 +409,9 @@ describe('WorkerKokoroTtsService', () => {
     const promiseB = service.load('af_heart');
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(createdWorkers).toHaveLength(WORKER_POOL_SIZE);
-    for (const worker of createdWorkers) {
-      expect(countInboundOfType(worker, 'load')).toBe(1);
-    }
+    // The second call attaches to the in-flight load rather than kicking off a
+    // second download on slot 0.
+    expect(loadCounts()).toEqual(perSlot(1, 0));
     await completeLoad();
     await Promise.all([promiseA, promiseB]);
   });
@@ -456,6 +507,44 @@ describe('WorkerKokoroTtsService', () => {
     service.unlockAudio();
     service.unlockAudio();
     expect(createdContexts).toHaveLength(1);
+  });
+
+  it('unlockAudio(existing) adopts the supplied context instead of constructing one', () => {
+    const service = getTtsService();
+    const supplied = makeAudioContext();
+    service.unlockAudio(supplied as unknown as AudioContext);
+    expect(audioContextConstructor()).not.toHaveBeenCalled();
+    expect(supplied.createBuffer).toHaveBeenCalledWith(1, 1, expect.any(Number));
+    const source = createdSources.at(-1)!;
+    expect(source.connect).toHaveBeenCalledWith(supplied.destination);
+    expect(source.start).toHaveBeenCalled();
+  });
+
+  it('plays through the adopted context rather than a context of its own', async () => {
+    const service = getTtsService();
+    const supplied = makeAudioContext();
+    service.unlockAudio(supplied as unknown as AudioContext);
+    const loadPromise_ = service.load('af_heart');
+    await completeLoad();
+    await loadPromise_;
+    const speakPromise = service.speak('hi', 'af_heart');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const speakMsg = lastInboundOfType(createdWorkers[0]!, 'speak')!;
+    createdWorkers[0]!.send({
+      type: 'speakReady',
+      requestId: speakMsg.requestId,
+      audio: new Float32Array(100),
+      samplingRate: 24_000,
+    });
+    createdWorkers[0]!.send({ type: 'workerReady' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(audioContextConstructor()).not.toHaveBeenCalled();
+    expect(supplied.createBuffer).toHaveBeenLastCalledWith(1, 100, 24_000);
+    const source = createdSources.at(-1)!;
+    expect(source.connect).toHaveBeenCalledWith(supplied.destination);
+    expect(source.start).toHaveBeenCalled();
+    source.triggerEnded();
+    await expect(speakPromise).resolves.toBeUndefined();
   });
 
   it('speak() throws when called before load()', async () => {

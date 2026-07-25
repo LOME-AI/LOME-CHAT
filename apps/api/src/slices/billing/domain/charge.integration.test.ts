@@ -14,13 +14,14 @@ import {
   mediaGenerations,
   memberBudgets,
   messages,
+  sharedLinks,
   usageRecords,
   users,
   wallets,
 } from '@hushbox/db';
 import { runSettlement } from '../../../lib/idempotency/index.js';
 import { createBillingStores } from '../adapters/stores.js';
-import { applyMarkup } from './money.js';
+import { applyMarkup } from '@hushbox/shared';
 import { utcDayKey } from './period.js';
 import { chargeWithinTx } from './charge.js';
 import type { ChargeInput, ChargeResult } from './charge.js';
@@ -138,12 +139,14 @@ function chargeInput(fixture: ChargeFixture, overrides?: Partial<ChargeInput>): 
   return {
     walletId: fixture.walletId,
     userId: fixture.userId,
+    // Solo turn by default: the payer is also the sender.
+    sender: { kind: 'user', userId: fixture.userId },
     runId: crypto.randomUUID(),
     contentItemId: fixture.contentItemId,
     modelId: MODEL_ID,
     providerName: PROVIDER_NAME,
     modality: 'text',
-    baseCostNanoUsd: 1_000_000_000n,
+    billableCostNanoUsd: applyMarkup(1_000_000_000n),
     storageFeeNanoUsd: 0n,
     isEstimated: true,
     idempotencyKey: `charge-test:${crypto.randomUUID()}`,
@@ -185,7 +188,7 @@ afterAll(async () => {
 });
 
 describe('chargeWithinTx', () => {
-  it('charges the marked-up cost and debits the wallet', async () => {
+  it('charges the billable amount as given — no further markup — and debits the wallet', async () => {
     const fixture = await seedFixture('purchased', 10_000_000_000n);
     const input = chargeInput(fixture);
     const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
@@ -234,16 +237,78 @@ describe('chargeWithinTx', () => {
     expect(rows[0]?.contentItemId).toBe(fixture.contentItemId);
   });
 
-  it('adds the storage fee on top of the marked-up cost without marking it up', async () => {
+  it('records the payer and a member sender independently on the usage record', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    const senderUserId = await seedUser();
+    const input = chargeInput(fixture, { sender: { kind: 'user', userId: senderUserId } });
+    const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    const rows = await db
+      .select()
+      .from(usageRecords)
+      .where(eq(usageRecords.id, result.usageRecordId));
+    // Owner-funded shape: the payer column carries the charged wallet's owner,
+    // the sender column carries the member who sent the turn — both queryable
+    // without a message join.
+    expect(rows[0]?.userId).toBe(fixture.userId);
+    expect(rows[0]?.senderUserId).toBe(senderUserId);
+    expect(rows[0]?.senderLinkId).toBeNull();
+  });
+
+  it('records a link-guest sender as the link principal with no sender user', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    const linkRows = await db
+      .insert(sharedLinks)
+      .values({
+        conversationId: fixture.conversationId,
+        linkPublicKey: crypto.getRandomValues(new Uint8Array(32)),
+      })
+      .returning({ id: sharedLinks.id });
+    const linkId = linkRows[0]?.id;
+    if (linkId === undefined) throw new Error('shared link seed failed');
+    const input = chargeInput(fixture, { sender: { kind: 'linkGuest', linkId } });
+    const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    const rows = await db
+      .select()
+      .from(usageRecords)
+      .where(eq(usageRecords.id, result.usageRecordId));
+    expect(rows[0]?.userId).toBe(fixture.userId);
+    expect(rows[0]?.senderLinkId).toBe(linkId);
+    expect(rows[0]?.senderUserId).toBeNull();
+  });
+
+  it('severs the sender on user deletion via SET NULL, keeping the charge row intact', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    const senderUserId = await seedUser();
+    const input = chargeInput(fixture, { sender: { kind: 'user', userId: senderUserId } });
+    const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    const before = await db
+      .select({ senderUserId: usageRecords.senderUserId })
+      .from(usageRecords)
+      .where(eq(usageRecords.id, result.usageRecordId));
+    expect(before[0]?.senderUserId).toBe(senderUserId);
+    await db.delete(users).where(eq(users.id, senderUserId));
+    const rows = await db
+      .select()
+      .from(usageRecords)
+      .where(eq(usageRecords.id, result.usageRecordId));
+    // Pseudonymization doctrine: the financial row survives the sender's hard
+    // deletion; only the sender reference is scrubbed.
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.senderUserId).toBeNull();
+    expect(rows[0]?.userId).toBe(fixture.userId);
+    expect(rows[0]?.costNanoUsd).toBe(1_150_000_000n);
+  });
+
+  it('adds the storage fee on top of the billable cost without marking it up', async () => {
     const fixture = await seedFixture('purchased', 10_000_000_000n);
     // 10 chars × 300 nano/char = 3000n additive storage.
     const input = chargeInput(fixture, { storageFeeNanoUsd: 3000n });
     const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
-    const modelWithMarkup = applyMarkup(1_000_000_000n);
-    expect(modelWithMarkup).toBe(1_150_000_000n);
-    // The exact split: charged = marked-up model cost + un-marked-up storage.
+    const billableModelCost = applyMarkup(1_000_000_000n);
+    expect(billableModelCost).toBe(1_150_000_000n);
+    // The exact split: charged = billable model cost + un-marked-up storage.
     expect(result.chargedNanoUsd).toBe(1_150_000_000n + 3000n);
-    expect(result.chargedNanoUsd - modelWithMarkup).toBe(3000n);
+    expect(result.chargedNanoUsd - billableModelCost).toBe(3000n);
     const usage = await db
       .select()
       .from(usageRecords)
@@ -263,6 +328,23 @@ describe('chargeWithinTx', () => {
     const input = chargeInput(fixture, { modality: 'image', storageFeeNanoUsd: 1800n });
     const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
     expect(result.chargedNanoUsd).toBe(1_150_000_000n + 1800n);
+  });
+
+  it('charges an image generation exactly its deterministic billable catalog estimate', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    // Image bills the deterministic billable catalog estimate (no inline
+    // provider cost by design, isEstimated=true). The charge must be that
+    // estimate EXACTLY — any fee application here would double-mark the
+    // already-billable catalog rate (the retired interim ~+32% double markup).
+    const billableCatalogEstimate = 46_000_000n;
+    const input = chargeInput(fixture, {
+      modality: 'image',
+      billableCostNanoUsd: billableCatalogEstimate,
+      isEstimated: true,
+      storageFeeNanoUsd: 0n,
+    });
+    const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    expect(result.chargedNanoUsd).toBe(billableCatalogEstimate);
   });
 
   it('writes the llm_completions token dimension for a language generation', async () => {
@@ -391,7 +473,7 @@ describe('chargeWithinTx', () => {
 
   it('records free-wallet charges against the daily allowance period row', async () => {
     const fixture = await seedFixture('free', 0n);
-    const input = chargeInput(fixture, { baseCostNanoUsd: 10_000_000n });
+    const input = chargeInput(fixture, { billableCostNanoUsd: applyMarkup(10_000_000n) });
     await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
     const rows = await db
       .select()
@@ -603,7 +685,7 @@ describe('settlement concurrency model — FOR UPDATE row-lock serialization', (
   it('serializes two concurrent same-wallet charges with no lost update and no 40001', async () => {
     const initialBalance = 10_000_000_000n;
     const fixture = await seedFixture('purchased', initialBalance);
-    // The default charge input debits the marked-up model cost (no storage fee).
+    // The default charge input debits the billable model cost (no storage fee).
     const chargedEach = applyMarkup(1_000_000_000n);
     expect(chargedEach).toBe(1_150_000_000n);
     const afterFirst = initialBalance - chargedEach;

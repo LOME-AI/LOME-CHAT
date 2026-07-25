@@ -29,6 +29,8 @@ const BOOT_POLL_INTERVAL_MS = 2000;
 const BOOT_DIAGNOSTIC_INTERVAL = 10;
 const API_TIMEOUT_POLLS = 30;
 const API_POLL_INTERVAL_MS = 1000;
+const SANDBOX_TIMEOUT_POLLS = 30;
+const SANDBOX_POLL_INTERVAL_MS = 1000;
 const CONTAINER_NAME_PREFIX = 'hushbox-mobile-emulator-shard-';
 const FLOW_DIR = 'mobile-tests/flows';
 const OTA_FLOW = 'mobile-tests/flows/13-ota-update.yaml';
@@ -70,6 +72,10 @@ const WITH_ENV_HINT = 'Ensure the script is run via with-env.';
 
 function requireApiPort(): string {
   return requireEnv('HB_API_PORT', WITH_ENV_HINT);
+}
+
+function requireSandboxPort(): string {
+  return requireEnv('HB_SANDBOX_PORT', WITH_ENV_HINT);
 }
 
 /**
@@ -279,8 +285,16 @@ async function pollEmulatorBoot(
 
 async function setupAdbReverse(host: string): Promise<void> {
   const apiPort = requireApiPort();
-  console.log(`Setting up adb reverse for API port ${apiPort} on ${host}...`);
+  // The document-panel sandbox iframe loads from VITE_SANDBOX_ORIGIN_URL
+  // (http://localhost:<sandbox port>), so the emulator's WebView must reach the
+  // host-served sandbox origin at the same port. adb-reverse maps the guest's
+  // localhost:<port> to the host's, alongside the API port.
+  const sandboxPort = requireSandboxPort();
+  console.log(
+    `Setting up adb reverse for API port ${apiPort} and sandbox port ${sandboxPort} on ${host}...`
+  );
   await execa('adb', ['-s', host, 'reverse', `tcp:${apiPort}`, `tcp:${apiPort}`]);
+  await execa('adb', ['-s', host, 'reverse', `tcp:${sandboxPort}`, `tcp:${sandboxPort}`]);
 }
 
 export async function startEmulator(
@@ -406,6 +420,147 @@ export async function stopDevApi(handle: DevApiHandle): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Failed to stop API server: ${message}`);
   }
+}
+
+/**
+ * Spawn the assets-only sandbox origin (`@hushbox/sandbox` dev server) so the
+ * emulator's WebView can load the document renderer pages it embeds. Like the
+ * API, the underlying assets are the caller's responsibility (built into
+ * `apps/sandbox/public`); this just serves them on the computed sandbox port,
+ * which `setupAdbReverse` then bridges into each emulator.
+ */
+async function pollSandboxReady(sandboxPort: string): Promise<boolean> {
+  try {
+    // /render.html is the html/js/react renderer page — a static asset present
+    // whenever the origin is serving, so a 200 means the origin is reachable.
+    await execa('curl', ['-sf', `http://localhost:${sandboxPort}/render.html`], {
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface SandboxOriginHandle {
+  sandboxProcess: ReturnType<typeof execa> | null;
+}
+
+export async function startSandboxOrigin(): Promise<SandboxOriginHandle> {
+  const sandboxPort = requireSandboxPort();
+
+  if (await pollSandboxReady(sandboxPort)) {
+    console.log('Sandbox origin already running — reusing existing process');
+    return { sandboxProcess: null };
+  }
+
+  console.log('Starting sandbox origin server...');
+  const sandboxProcess = execa('pnpm', ['--filter', '@hushbox/sandbox', 'dev'], {
+    stdio: 'ignore',
+    env: process.env,
+  });
+  // eslint-disable-next-line promise/prefer-await-to-then, @typescript-eslint/no-empty-function -- fire-and-forget subprocess; explicit kill happens via stopSandboxOrigin
+  sandboxProcess.catch(() => {});
+  sandboxProcess.unref();
+
+  for (let index = 0; index < SANDBOX_TIMEOUT_POLLS; index++) {
+    if (await pollSandboxReady(sandboxPort)) {
+      console.log('Sandbox origin ready');
+      return { sandboxProcess };
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, SANDBOX_POLL_INTERVAL_MS);
+    });
+  }
+  await stopSandboxOrigin({ sandboxProcess });
+  throw new Error('Sandbox origin failed to start within timeout');
+}
+
+// eslint-disable-next-line @typescript-eslint/require-await -- kept async to match call sites; the kill is synchronous but may grow async cleanup
+export async function stopSandboxOrigin(handle: SandboxOriginHandle): Promise<void> {
+  if (!handle.sandboxProcess) return;
+  console.log('Stopping sandbox origin we started...');
+  try {
+    handle.sandboxProcess.kill();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Failed to stop sandbox origin: ${message}`);
+  }
+}
+
+// The mobile persona (scripts/lib/seed-personas.ts MOBILE_TEST_PERSONA) that
+// Maestro logs in as; the seeded HTML-document conversation is owned by it.
+export const DOCUMENT_SEED_OWNER_EMAIL = 'test-mobile@test.hushbox.ai';
+
+// A deliberately import-free HTML document (>= MIN_LINES_FOR_DOCUMENT lines, so
+// the web parser extracts it as a runnable `html` document) embedded in an
+// assistant message. Import-free keeps the on-device render independent of
+// esm.sh / the module stub being reachable from the emulator — the heading and
+// list are all the render needs to prove execution.
+export const DOCUMENT_SEED_MESSAGE = [
+  'Here is a simple web page you can preview.',
+  '',
+  '```html',
+  '<!doctype html>',
+  '<html lang="en">',
+  '  <head>',
+  '    <meta charset="utf-8" />',
+  '    <title>Mobile render proof</title>',
+  '  </head>',
+  '  <body>',
+  '    <main>',
+  '      <h1>Mobile render proof</h1>',
+  '      <p>This document rendered inside the on-device WebView sandbox.</p>',
+  '      <ul>',
+  '        <li>First item</li>',
+  '        <li>Second item</li>',
+  '        <li>Third item</li>',
+  '      </ul>',
+  '    </main>',
+  '  </body>',
+  '</html>',
+  '```',
+].join('\n');
+
+export function documentSeedPayload(): string {
+  return JSON.stringify({
+    ownerEmail: DOCUMENT_SEED_OWNER_EMAIL,
+    // The Maestro flow taps the seeded conversation's chat row by this exact
+    // title text; an untitled row renders the placeholder and is untappable.
+    title: 'Mobile render proof',
+    messages: [
+      { content: 'Show me a simple web page.', senderType: 'user' },
+      { content: DOCUMENT_SEED_MESSAGE, senderType: 'ai' },
+    ],
+  });
+}
+
+/**
+ * Seed a conversation whose assistant message carries the HTML document, via
+ * the `dev-only` `/dev/conversation` route on the running API. Maestro cannot
+ * make HTTP calls, and the mock provider only echoes prompts (so no in-flow
+ * turn can produce a fenced document), so the document is seeded here and the
+ * flow navigates to it. Freshly seeded each run, it is the newest conversation
+ * and sorts to the top of the persona's sidebar. `-sf` fails the run loudly if
+ * the seed does not return 2xx.
+ */
+export async function seedDocumentConversation(): Promise<void> {
+  const apiPort = requireApiPort();
+  console.log('Seeding the HTML-document conversation for the mobile persona...');
+  await execa(
+    'curl',
+    [
+      '-sf',
+      '-X',
+      'POST',
+      `http://localhost:${apiPort}/dev/conversation`,
+      '-H',
+      'Content-Type: application/json',
+      '-d',
+      documentSeedPayload(),
+    ],
+    { stdio: 'ignore' }
+  );
 }
 
 const GOOGLE_SERVICES_PATH = 'apps/web/android/app/google-services.json';
@@ -708,6 +863,7 @@ export function listFlowsForRun(smoke: boolean): string[] {
 
 async function prepareAdbServer(n: number): Promise<void> {
   const apiPort = requireApiPort();
+  const sandboxPort = requireSandboxPort();
   // The adb server auto-discovers emulator ports (5554-5682) and creates
   // ghost "emulator-XXXX offline" entries that crash Maestro's dadb.
   // ADB_LOCAL_TRANSPORT_MAX_PORT=0 prevents the scan entirely.
@@ -722,8 +878,11 @@ async function prepareAdbServer(n: number): Promise<void> {
     const host = `localhost:${String(adbPortForShard(shard))}`;
     await execa('adb', ['connect', host]);
     await execa('adb', ['-s', host, 'wait-for-device']);
-    console.log(`Re-establishing adb reverse for API port ${apiPort} on ${host}...`);
+    console.log(
+      `Re-establishing adb reverse for API port ${apiPort} and sandbox port ${sandboxPort} on ${host}...`
+    );
     await execa('adb', ['-s', host, 'reverse', `tcp:${apiPort}`, `tcp:${apiPort}`]);
+    await execa('adb', ['-s', host, 'reverse', `tcp:${sandboxPort}`, `tcp:${sandboxPort}`]);
   }
 }
 
@@ -943,9 +1102,15 @@ export async function main(): Promise<void> {
   // The idle-killer daemon reaps containers later if this process crashes
   // without explicit teardown.
   const devApi = await startDevApi();
+  // The document-panel flow embeds the sandbox origin's renderer pages; serve
+  // them locally so the emulator's WebView (via adb-reverse) can reach them.
+  const sandboxOrigin = await startSandboxOrigin();
   mkdirSync(RESULTS_DIR, { recursive: true });
   const runId = randomUUID().slice(0, 8);
   try {
+    // Seed the HTML-document conversation the document-render flow opens. The
+    // API is up and the DB is seeded (ensure-stack) by this point.
+    await seedDocumentConversation();
     await Promise.all([startEmulators(n, imageTag), buildApk()]);
     await installApks(n);
     await configureAllAppLinks(n);
@@ -976,6 +1141,7 @@ export async function main(): Promise<void> {
     console.log('Mobile tests complete!');
   } finally {
     await stopEmulators(n);
+    await stopSandboxOrigin(sandboxOrigin);
     await stopDevApi(devApi);
   }
 }

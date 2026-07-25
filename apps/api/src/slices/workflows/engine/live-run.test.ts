@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PolicyHooks, listTag, nanoUSD, optionalTag, textTag } from '@hushbox/shared';
-import { usdToNanoUsd } from '../../billing/index.js';
+import { providerUsdToBillableNanoUsd } from '../../billing/index.js';
 import { ok } from '../../../lib/result/index.js';
 import { fanIn } from '../builder/fan-in.js';
 import { fanOut } from '../builder/fan-out.js';
@@ -347,7 +347,7 @@ describe('live workflow run — the composite smartModel turn', () => {
         providerName: 'p',
         modality: 'text',
         generationId: 'gen-answer',
-        baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
+        billableCostNanoUsd: providerUsdToBillableNanoUsd(BRANCH_COST_USD),
         isEstimated: false,
         tokens: TOKENS,
         // The routing pipeline ran, so the primary answer charge is badged; the
@@ -360,7 +360,7 @@ describe('live workflow run — the composite smartModel turn', () => {
         providerName: 'p',
         modality: 'text',
         generationId: 'gen-cls',
-        baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
+        billableCostNanoUsd: providerUsdToBillableNanoUsd(BRANCH_COST_USD),
         isEstimated: false,
         tokens: TOKENS,
       },
@@ -390,7 +390,7 @@ describe('live workflow run — data-driven fanOut over live capability branches
         providerName: 'p',
         modality: 'text',
         generationId: 'gen-good',
-        baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
+        billableCostNanoUsd: providerUsdToBillableNanoUsd(BRANCH_COST_USD),
         isEstimated: false,
         tokens: TOKENS,
       },
@@ -436,7 +436,7 @@ describe('live workflow run — data-driven fanOut over live capability branches
         providerName: 'p',
         modality: 'text',
         generationId: 'gen-one',
-        baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
+        billableCostNanoUsd: providerUsdToBillableNanoUsd(BRANCH_COST_USD),
         isEstimated: false,
         tokens: TOKENS,
       },
@@ -446,7 +446,7 @@ describe('live workflow run — data-driven fanOut over live capability branches
         providerName: 'p',
         modality: 'text',
         generationId: 'gen-two',
-        baseCostNanoUsd: usdToNanoUsd(BRANCH_COST_USD),
+        billableCostNanoUsd: providerUsdToBillableNanoUsd(BRANCH_COST_USD),
         isEstimated: false,
         tokens: TOKENS,
       },

@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./cipher-messages": "./src/cipher-messages.ts",
+    "./documents": "./src/documents/index.ts",
     "./env.config": "./src/env.config.ts",
     "./legal": "./src/legal/index.ts",
     "./linear": "./src/linear/index.ts",

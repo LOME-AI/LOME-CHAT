@@ -318,8 +318,10 @@ Tag chrome wrappers (sidebar, header, footer, panels surrounding main content) w
 - E2E tests for critical user flows
 - Integration-first: tests run against real local infra; mocks exist only at true external
   seams (gateway, payments, email, push) — never for internal slices
-- CI's hot path is 100% cassette hits for AI calls — zero charged real calls; a cassette
-  miss is a failure, not a recording (recording happens out-of-band)
+- AI calls in CI ride record-on-miss cassettes: an unchanged request replays from the
+  cache; a changed request makes one real call on the spend-restricted key and records it
+  for the next run. Steady state is a warm cache with zero charged calls. Mechanism:
+  `docs/CI-CASSETTES.md`
 - Tests must not depend on execution order
 - No hardcoded dates (use time mocking)
 - Test behavior, not implementation

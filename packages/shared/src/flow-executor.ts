@@ -95,8 +95,9 @@ export interface MediaGenerationFacts {
  * persisted `contentItemId` is minted at persist time (the `key` pairs this
  * charge to that content); for MEDIA it is pre-minted at run start (see
  * `MediaPersistPlan`) because the ciphertext must be stored to R2 during
- * streaming under its final key. `baseCostNanoUsd` is pre-markup — the 15%
- * markup lands once, downstream in `chargeWithinTx`.
+ * streaming under its final key. `billableCostNanoUsd` is already billable —
+ * the port conversion (or the billable catalog estimate) applied the fee;
+ * `chargeWithinTx` charges it as-is.
  */
 export interface SettlementCharge {
   /**
@@ -110,7 +111,7 @@ export interface SettlementCharge {
   readonly providerName: string;
   readonly modality: Modality;
   readonly generationId?: string;
-  readonly baseCostNanoUsd: bigint;
+  readonly billableCostNanoUsd: bigint;
   readonly isEstimated: boolean;
   /**
    * The additive storage fee (nano-USD, never marked up) for this generation,

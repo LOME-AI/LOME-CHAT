@@ -9,7 +9,7 @@ import {
   serializeReasoningText,
   textTag,
 } from '@hushbox/shared';
-import { usdToNanoUsd } from '../../billing/index.js';
+import { providerUsdToBillableNanoUsd } from '../../billing/index.js';
 import { ok } from '../../../lib/result/index.js';
 import { InferenceError } from '../../models/index.js';
 import { createSmartModelExecution } from './smart-model-execution.js';
@@ -135,7 +135,7 @@ function makeDeps(
       [HARD, binding(HARD)],
     ]),
     schemas: { resolveSchema: vi.fn() },
-    usdToNanoUsd,
+    usdToBillableNanoUsd: providerUsdToBillableNanoUsd,
     ...overrides,
   };
 }
@@ -190,7 +190,7 @@ describe('createSmartModelExecution — classify → resolve → answer', () => 
     const result = await execution.run(smartNode(), ['pick a model for me'], makeCtx(emitted));
     const success = result._unsafeUnwrap();
     expect(success.value).toBe('hard answer');
-    expect(success.costNanoUsd).toBe(usdToNanoUsd(0.004));
+    expect(success.costNanoUsd).toBe(providerUsdToBillableNanoUsd(0.004));
     expect(success.isEstimated).toBe(false);
     const tokens = { inputTokens: 3, outputTokens: 5, reasoningTokens: 0, cachedInputTokens: 0 };
     expect(success.billing).toEqual({
@@ -210,7 +210,7 @@ describe('createSmartModelExecution — classify → resolve → answer', () => 
           generationId: 'gen-cls',
           tokens,
         },
-        baseCostNanoUsd: usdToNanoUsd(0.001),
+        billableCostNanoUsd: providerUsdToBillableNanoUsd(0.001),
         isEstimated: false,
       },
     ]);
@@ -352,7 +352,7 @@ describe('createSmartModelExecution — classify → resolve → answer', () => 
 
     expect(order).toEqual([
       `call:${CHEAP}`,
-      `accrue:${String(usdToNanoUsd(0.001))}`,
+      `accrue:${String(providerUsdToBillableNanoUsd(0.001))}`,
       `call:${HARD}`,
     ]);
   });

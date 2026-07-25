@@ -1,4 +1,10 @@
-import { REASONING_OFF_WIRE, textTag } from '@hushbox/shared';
+import {
+  ERROR_CODES,
+  REASONING_OFF_WIRE,
+  reasoningPlanModelFrom,
+  textTag,
+  turnEffortOptions,
+} from '@hushbox/shared';
 import { buildWorkflow, smartModel, workflowInputs } from '../../workflows/index.js';
 import {
   buildSmartModelCandidates,
@@ -8,8 +14,8 @@ import {
   snapshotResolver,
 } from '../../models/index.js';
 import { readBalance } from '../../billing/index.js';
-import { errAsync, okAsync } from '../../../lib/result/index.js';
-import { validationError } from '../../../lib/errors/index.js';
+import { err, errAsync, ok, okAsync } from '../../../lib/result/index.js';
+import { unavailableError, validationError } from '../../../lib/errors/index.js';
 import {
   CHAT_TURN_HOOKS,
   CHAT_TURN_INPUT,
@@ -27,7 +33,6 @@ import {
   turnStorageContext,
   withStorageStamp,
 } from './turn-definition.js';
-import { reasoningEntryFor } from './turn-reasoning.js';
 import type { TurnBudget, TurnModelPricing } from './turn-definition.js';
 import type { createConstraintRegistry, NodeRegistryContext } from '../../workflows/index.js';
 import type { SmartModelCandidateEntry } from '../../models/index.js';
@@ -85,6 +90,19 @@ export interface SmartModelTurnParams {
 }
 
 /**
+ * The tightest declared provider completion cap across the candidates: it
+ * bounds the answer ceiling jointly with the context window (a candidate
+ * without one is bounded by its context alone). Undefined when none declares
+ * a cap.
+ */
+function tightestCompletionCap(pricings: readonly TurnModelPricing[]): number | undefined {
+  const declared = pricings
+    .map((candidate) => candidate.maxOutputTokens)
+    .filter((cap): cap is number => cap !== undefined);
+  return declared.length === 0 ? undefined : Math.min(...declared);
+}
+
+/**
  * The answer generation's output-token ceiling for a Smart Model turn: the
  * shared derivation priced at the MOST EXPENSIVE candidate rates (legacy
  * `computeMaxEligibleFees` — the budget must absorb whichever candidate the
@@ -120,10 +138,12 @@ export function answerMaxOutputTokens(
     }
     minContextLength = Math.min(candidate.contextLength, minContextLength);
   }
+  const minMaxOutputTokens = tightestCompletionCap(pricings);
   const worstCase: TurnModelPricing = {
     inputPerTokenNanoUsd: maxInputRate,
     outputPerTokenNanoUsd: maxOutputRate,
     contextLength: minContextLength,
+    ...(minMaxOutputTokens === undefined ? {} : { maxOutputTokens: minMaxOutputTokens }),
   };
   // The classifier call is spent before the answer, so the answer's affordable
   // ceiling is sized against the funds that remain once the classifier's
@@ -143,9 +163,16 @@ export function answerMaxOutputTokens(
   // (`declaredOutputCeiling`) takes the MAX over the candidates' OWN full
   // contexts, so an omitted cap reserves the WIDEST candidate's full window at
   // the priciest rate — >$200 on a $100 wallet. Always stamp a concrete
-  // ceiling, clamped to the tightest candidate's remaining context, so BOTH the
-  // admission estimate and the real provider request stay bounded.
-  return Math.max(1, minContextLength - promptInputTokensFor(budget));
+  // ceiling, clamped to the tightest candidate's remaining context and its
+  // declared completion cap, so BOTH the admission estimate and the real
+  // provider request stay bounded.
+  const contextHeadroom = minContextLength - promptInputTokensFor(budget);
+  return Math.max(
+    1,
+    minMaxOutputTokens === undefined
+      ? contextHeadroom
+      : Math.min(contextHeadroom, minMaxOutputTokens)
+  );
 }
 
 /**
@@ -385,38 +412,55 @@ export function effortDimensionForCandidates(
 export type AutoEffortTurnBuild =
   | { readonly kind: 'built'; readonly definition: WorkflowDefinition }
   /**
-   * Not classifier-eligible (unknown/non-reasoning model, unpriceable
-   * classifier, or no affordable reasoning level): the regular single-model
-   * path owns the turn — its `auto` resolution degrades honestly without a
-   * classifier call, charge, or reserve.
+   * Not classifier-eligible: the turn has at most ONE real effort choice
+   * (unknown/non-reasoning model, single-level mandatory ladder, Min-only
+   * model), no pricing basis, or no affordable reasoning level. The regular
+   * single-model path owns the turn — its `auto` resolution is the
+   * deterministic pick or reasoning-free, with no classifier call, charge,
+   * or reserve.
    */
   | { readonly kind: 'fallback' };
 
 /**
- * The pinned-model + auto-effort turn (D3): the user chose the model, so the
+ * The pinned-model + auto-effort turn: the user chose the model, so the
  * ONE classifier generation classifies only the effort dimension over a
  * single-candidate smartModel node — `classify: { model: false, effort:
  * true }` — and the model dimension short-circuits at runtime. The node is
  * NOT badged Smart Model (the pick is the user's own).
  *
- * The answer cap reserves the HIGHEST affordable level's budget on top of
+ * The answer cap reserves the STRONGEST affordable option's budget on top of
  * the answer headroom (B + H, sized after deducting the classifier's
- * worst-case reserve), so whichever canonical level the classifier picks at
- * runtime carves its budget out of an already-held cap — reserve ≥ charge by
+ * worst-case reserve), so whichever option the classifier picks at runtime
+ * carves its budget out of an already-held cap — reserve ≥ charge by
  * construction. The classifier is the cheapest priceable engine-text model
- * (the Smart Model derivation, reused).
+ * (the Smart Model derivation, reused); when the catalog holds no priceable
+ * engine the send is REFUSED with the typed classifier code (BILLING §Effort
+ * 5) — never a silent static pick, and explicit levels stay usable.
  */
 export function compileAutoEffortTurn(
   catalog: readonly ModelDescriptor[],
   model: string,
   budget: TurnBudget
-): AutoEffortTurnBuild {
+): Result<AutoEffortTurnBuild, DomainError> {
   const target = catalog.find((descriptor) => descriptor.id === model);
-  if (target?.reasoning === undefined) return { kind: 'fallback' };
+  if (target === undefined) return ok({ kind: 'fallback' });
+  // Two or more real choices is what makes a classification exist; with one
+  // or none the answer is settled, so no call is bought (BILLING §Effort 5).
+  if (turnEffortOptions([reasoningPlanModelFrom(target)]).length < 2) {
+    return ok({ kind: 'fallback' });
+  }
   const classifier = pickEffortClassifier(catalog, target);
-  if (classifier === null) return { kind: 'fallback' };
+  if (classifier === null) {
+    return err(
+      unavailableError(
+        'no priceable classifier engine in the catalog',
+        undefined,
+        ERROR_CODES.CLASSIFIER_UNAVAILABLE
+      )
+    );
+  }
   const pricings = turnModelPricings([model], snapshotResolver(catalog));
-  if (pricings === undefined) return { kind: 'fallback' };
+  if (pricings === undefined) return ok({ kind: 'fallback' });
   // The classifier spends before the answer, so the cap sizes against the
   // funds left after its worst-case reserve (the Smart Model deduction rule).
   const answerBudget: TurnBudget = {
@@ -427,7 +471,7 @@ export function compileAutoEffortTurn(
     },
   };
   const cap = autoEffortAnswerCap(target, answerBudget, pricings);
-  if (cap === undefined) return { kind: 'fallback' };
+  if (cap === undefined) return ok({ kind: 'fallback' });
   const registries = createTurnCompileRegistries(snapshotResolver(catalog));
   const built = buildSmartModelTurn({
     classifierModelId: classifier.classifierModelId,
@@ -446,33 +490,38 @@ export function compileAutoEffortTurn(
   /* v8 ignore next -- defensive: the pinned model was found in the SAME
      catalog snapshot the compile registries read, so a compile failure means
      the two reads drifted — kept fail-closed rather than assumed impossible */
-  if (built.isErr()) return { kind: 'fallback' };
+  if (built.isErr()) return ok({ kind: 'fallback' });
   const stamped = withStorageStamp(built.value, budget, CHAT_TURN_HOOKS);
-  return {
+  return ok({
     kind: 'built',
     // The B+H guess is an upper bound; the ONE canonical admission estimator
     // re-fits it (shrinking the cap, never growing it) so the hold fits the
     // payer's funds by construction.
     definition: reconcileAnswerCeiling(stamped, snapshotResolver(catalog), budget, cap),
-  };
+  });
 }
 
 /**
- * The auto turn's completion-cap guess: the highest canonical level (of the
- * classifier's possible picks — every non-empty ladder offers High) whose
- * budget leaves answer headroom under the payer's funds, as B + H. Undefined
- * when no level fits — auto then degrades through the fallback path.
+ * The auto turn's completion-cap guess: the STRONGEST offered option the
+ * payer can afford, as B + H. The reserve must cover whatever the classifier
+ * picks, and it is presented exactly the turn's options — so the walk runs
+ * the model's own offered budgets, descending, rather than any fixed level
+ * order. Min (B = 0) needs no reserve of its own: any level's cap covers it.
+ * Undefined when no offered level fits — auto then degrades through the
+ * fallback path.
  */
 function autoEffortAnswerCap(
   target: ModelDescriptor,
   budget: TurnBudget,
   pricings: readonly TurnModelPricing[]
 ): number | undefined {
-  for (const level of ['high', 'medium', 'low'] as const) {
-    const entry = reasoningEntryFor(target, level);
-    if (entry === undefined) continue;
-    const headroom = answerHeadroomTokens(budget, pricings, entry.reasoningBudgetTokens);
-    if (headroom !== undefined) return entry.reasoningBudgetTokens + headroom;
+  const budgets = turnEffortOptions([reasoningPlanModelFrom(target)])
+    .map((option) => option.maxReasoningBudgetTokens)
+    .filter((tokens) => tokens > 0)
+    .toSorted((a, b) => b - a);
+  for (const reasoningBudgetTokens of budgets) {
+    const headroom = answerHeadroomTokens(budget, pricings, reasoningBudgetTokens);
+    if (headroom !== undefined) return reasoningBudgetTokens + headroom;
   }
   return undefined;
 }
@@ -481,14 +530,15 @@ function autoEffortAnswerCap(
  * Builds the pinned+auto turn end to end from the request's db — one exposed
  * catalog read feeds the classifier pick, the cap sizing, and the compile
  * registries (compile ⟺ runtime never diverge). `fallback` tells the route
- * to build the regular single-model turn instead.
+ * to build the regular single-model turn instead; a typed error refuses the
+ * send outright (no priceable classifier engine).
  */
 export function buildAutoEffortTurnDefinition(
   deps: TrialSmartModelTurnDeps,
   model: string,
   args: { readonly budget: TurnBudget }
 ): ResultAsync<AutoEffortTurnBuild, DomainError> {
-  return listDescriptors({ db: deps.db, telemetry: deps.telemetry }).map((catalog) =>
+  return listDescriptors({ db: deps.db, telemetry: deps.telemetry }).andThen((catalog) =>
     compileAutoEffortTurn(catalog, model, args.budget)
   );
 }

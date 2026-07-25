@@ -1,0 +1,17 @@
+{
+  "name": "HushBox",
+  "short_name": "HushBox",
+  "description": "One interface for every AI model. End-to-end encrypted.",
+  "start_url": "/chat",
+  "display": "standalone",
+  "background_color": "#faf9f6",
+  "theme_color": "#faf9f6",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

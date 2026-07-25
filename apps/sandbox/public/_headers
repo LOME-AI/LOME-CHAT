@@ -1,0 +1,55 @@
+# Response headers for the sandbox origin, served by the Cloudflare assets
+# runtime in production (copied into ./dist by the build). Three concerns live
+# here:
+#
+#   1. CORS + resource policy — the opaque `allow-scripts` iframe fetches the
+#      Pyodide wasm/wheels cross-origin, so they must be CORS-readable. `.wasm`
+#      is served as `application/wasm` by the assets runtime natively. This
+#      origin serves no credentials and reads no cookies, so `*` is safe.
+#
+#   2. Content-Security-Policy — the network posture below IS the containment
+#      model for untrusted document code:
+#        - default-src 'none' is the floor: anything not explicitly enumerated
+#          below is denied, so a fetch directive left unset blocks rather than
+#          inheriting a permissive fallback.
+#        - connect-src allows ONLY 'self' plus the two PyPI wheel hosts micropip
+#          needs (pypi.org for the JSON index, files.pythonhosted.org for the
+#          wheels). No other fetch/XHR/WebSocket destination is reachable, so
+#          document code cannot exfiltrate or call out to arbitrary hosts. The
+#          module CDN (esm.sh) is deliberately NOT here — it is a script-src
+#          source, not a fetch target, so imports work but fetch() to it does
+#          not.
+#        - frame-src/child-src/worker-src/object-src 'none': untrusted code
+#          cannot spawn a child frame, worker, or object. Beyond blocking those
+#          as egress/compute, this denies a fresh realm — the only way to recover
+#          the WebRTC constructors the bootstrap deletes from this frame.
+#        - webrtc 'block': connect-src does NOT govern WebRTC. This directive is a
+#          draft Chromium does not enforce, so the real block is the bootstrap
+#          deleting the RTCPeerConnection constructors before document code runs;
+#          the directive is kept for engines that may honor it later.
+#        - script-src allows 'self', the module CDN for ES-module imports,
+#          `blob:` for the in-browser-transpiled module the renderer imports,
+#          'wasm-unsafe-eval' for the Pyodide WebAssembly runtime, and
+#          'unsafe-inline' because the sandbox exists to run the document's OWN
+#          scripts — an html document IS inline <script>, classic or module, and
+#          a static file cannot nonce arbitrary user code.
+#          Inline execution grants no new capability: containment is the opaque
+#          origin plus the network lockdown above, not script-src. Built-in
+#          Pyodide packages are self-hosted ('self'); nothing loads from a
+#          third-party package CDN.
+#        - frame-ancestors limits embedders to the web app origin plus the
+#          mobile app-shell origins: capacitor://localhost is the iOS WebView
+#          shell, http://localhost:* the Android/dev shell (androidScheme is
+#          `http`, so the Android WebView origin is http://localhost on an
+#          arbitrary port — the portless form matched only port 80 and blocked
+#          the ported dev origin). No wildcard — arbitrary sites cannot frame
+#          this origin.
+#
+#   3. X-DNS-Prefetch-Control: off — CSP cannot cover DNS prefetch, so without
+#      this a document could leak data by encoding it into a hostname and
+#      triggering a lookup via `<link rel="dns-prefetch" href="//data.evil.com">`.
+/*
+  Access-Control-Allow-Origin: *
+  Cross-Origin-Resource-Policy: cross-origin
+  X-DNS-Prefetch-Control: off
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://esm.sh; worker-src 'none'; connect-src 'self' https://pypi.org https://files.pythonhosted.org; frame-src 'none'; child-src 'none'; object-src 'none'; webrtc 'block'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-ancestors https://hushbox.ai capacitor://localhost http://localhost:*; base-uri 'self'; form-action 'self'

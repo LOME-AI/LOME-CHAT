@@ -12,7 +12,7 @@
  * like conversation history.
  */
 import { utcDayKey } from '../utils/date.js';
-import { BASE_SYSTEM_PREAMBLE } from './base-preamble.js';
+import { BASE_SYSTEM_PREAMBLE, RUNNABLE_DOCUMENTS_GUIDANCE } from './base-preamble.js';
 
 export interface SystemPromptInput {
   /** Reference instant; the prompt renders its UTC calendar date (YYYY-MM-DD). */
@@ -23,7 +23,10 @@ export interface SystemPromptInput {
 
 export function buildTurnSystemPrompt(input: SystemPromptInput): string {
   const currentDate = utcDayKey(input.now);
-  const sections: string[] = [`${BASE_SYSTEM_PREAMBLE}\nCurrent date: ${currentDate}`];
+  const sections: string[] = [
+    `${BASE_SYSTEM_PREAMBLE}\nCurrent date: ${currentDate}`,
+    RUNNABLE_DOCUMENTS_GUIDANCE,
+  ];
 
   // Whitespace-only instructions are treated as absent — a bare "   " must not
   // emit a dangling, content-free section.

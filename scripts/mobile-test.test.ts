@@ -70,6 +70,9 @@ vi.mock('./lib/mobile-image.js', async () => {
 
 import { execa } from 'execa';
 import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+
+import { MIN_LINES_FOR_DOCUMENT } from '@hushbox/shared/documents';
+
 import { bakeImage } from './lib/mobile-image.js';
 import {
   parseArgs,
@@ -100,6 +103,12 @@ import {
   runMaestroOta,
   setupOtaUpdate,
   stopDevApi,
+  startSandboxOrigin,
+  stopSandboxOrigin,
+  seedDocumentConversation,
+  documentSeedPayload,
+  DOCUMENT_SEED_OWNER_EMAIL,
+  DOCUMENT_SEED_MESSAGE,
   withMobileTestRun,
   writeApiSlice,
   dumpApiLogTail,
@@ -140,6 +149,7 @@ function bootReadinessMock(cmd: string, args: readonly string[]): { stdout: stri
 
 describe('mobile-test script', () => {
   let savedEmulatorAdbPort: string | undefined;
+  let savedSandboxPort: string | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -153,6 +163,10 @@ describe('mobile-test script', () => {
     // Restore the original after each test.
     savedEmulatorAdbPort = process.env['HB_EMULATOR_ADB_PORT'];
     process.env['HB_EMULATOR_ADB_PORT'] = '5555';
+    // Adb-reverse and the sandbox-origin server require HB_SANDBOX_PORT; pin it
+    // to the canonical base so tests are deterministic (fail-fast tests delete it).
+    savedSandboxPort = process.env['HB_SANDBOX_PORT'];
+    process.env['HB_SANDBOX_PORT'] = '7400';
   });
 
   afterEach(() => {
@@ -161,6 +175,11 @@ describe('mobile-test script', () => {
       delete process.env['HB_EMULATOR_ADB_PORT'];
     } else {
       process.env['HB_EMULATOR_ADB_PORT'] = savedEmulatorAdbPort;
+    }
+    if (savedSandboxPort === undefined) {
+      delete process.env['HB_SANDBOX_PORT'];
+    } else {
+      process.env['HB_SANDBOX_PORT'] = savedSandboxPort;
     }
   });
 
@@ -770,6 +789,20 @@ describe('mobile-test script', () => {
       ]);
     }, 30_000);
 
+    it('also reverses the sandbox port so the WebView can reach the sandbox origin', async () => {
+      scriptBootSequence([{ stdout: 'connected to localhost:5555' }], [{ stdout: '1' }]);
+
+      await startEmulator(0, 'test-image', '993');
+
+      expect(mockExeca).toHaveBeenCalledWith('adb', [
+        '-s',
+        'localhost:5555',
+        'reverse',
+        'tcp:7400',
+        'tcp:7400',
+      ]);
+    }, 30_000);
+
     it('logs boot progress only at the diagnostic interval', async () => {
       const logSpy = vi.mocked(console.log);
       scriptBootSequence(
@@ -1018,6 +1051,178 @@ describe('mobile-test script', () => {
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       await expect(stopDevApi({ apiProcess: fakeProcess })).resolves.toBeUndefined();
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('ESRCH'));
+    });
+  });
+
+  describe('startSandboxOrigin', () => {
+    it('reuses an already-serving sandbox origin and returns a null process', async () => {
+      const handle = await startSandboxOrigin();
+      expect(mockExeca).toHaveBeenCalledWith('curl', ['-sf', 'http://localhost:7400/render.html'], {
+        stdio: 'ignore',
+      });
+      expect(handle.sandboxProcess).toBeNull();
+      const sandboxDevCalls = mockExeca.mock.calls.filter(
+        (call) =>
+          call[0] === 'pnpm' &&
+          Array.isArray(call[1]) &&
+          call[1].includes('--filter') &&
+          call[1].includes('@hushbox/sandbox')
+      );
+      expect(sandboxDevCalls).toHaveLength(0);
+    });
+
+    it('spawns the sandbox dev server as a background subprocess when not ready', async () => {
+      let readinessCount = 0;
+      mockExeca.mockImplementation(((cmd: string) => {
+        if (cmd === 'curl') {
+          readinessCount++;
+          if (readinessCount === 1) return Promise.reject(new Error('not serving'));
+          return mockSubprocess();
+        }
+        return mockSubprocess();
+      }) as never);
+
+      const handle = await startSandboxOrigin();
+      expect(handle.sandboxProcess).not.toBeNull();
+      expect(mockExeca).toHaveBeenCalledWith(
+        'pnpm',
+        ['--filter', '@hushbox/sandbox', 'dev'],
+        expect.objectContaining({ stdio: 'ignore' })
+      );
+    });
+
+    it('does not crash when the spawned sandbox subprocess dies immediately', async () => {
+      let readinessCount = 0;
+      function deadSubprocess(): never {
+        const rejected = Promise.reject(new Error('sandbox crashed'));
+        return Object.assign(rejected, { unref: vi.fn(), kill: vi.fn() }) as never;
+      }
+      mockExeca.mockImplementation(((cmd: string) => {
+        if (cmd === 'curl') {
+          readinessCount++;
+          if (readinessCount === 1) return Promise.reject(new Error('not serving'));
+          return mockSubprocess();
+        }
+        return deadSubprocess();
+      }) as never);
+
+      const handle = await startSandboxOrigin();
+      expect(handle.sandboxProcess).not.toBeNull();
+    });
+
+    it('throws when HB_SANDBOX_PORT is not set', async () => {
+      delete process.env['HB_SANDBOX_PORT'];
+      await expect(startSandboxOrigin()).rejects.toThrow('HB_SANDBOX_PORT not set');
+    });
+
+    it('throws when the sandbox origin never becomes ready', async () => {
+      const originalSetTimeout = globalThis.setTimeout;
+      globalThis.setTimeout = ((function_: () => void) => {
+        function_();
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout;
+      try {
+        mockExeca.mockImplementation(((cmd: string) => {
+          if (cmd === 'curl') return Promise.reject(new Error('sandbox never ready'));
+          return mockSubprocess();
+        }) as never);
+        await expect(startSandboxOrigin()).rejects.toThrow(/failed to start within timeout/);
+      } finally {
+        globalThis.setTimeout = originalSetTimeout;
+      }
+    });
+  });
+
+  describe('stopSandboxOrigin', () => {
+    it('is a no-op when sandboxProcess is null', async () => {
+      await expect(stopSandboxOrigin({ sandboxProcess: null })).resolves.toBeUndefined();
+    });
+
+    it('kills the sandboxProcess when present', async () => {
+      const fakeProcess = mockSubprocess() as unknown as ReturnType<typeof execa>;
+      await stopSandboxOrigin({ sandboxProcess: fakeProcess });
+      expect((fakeProcess as unknown as { kill: () => void }).kill).toHaveBeenCalled();
+    });
+
+    it('does not throw when kill itself fails (best-effort cleanup)', async () => {
+      const fakeProcess = {
+        kill: vi.fn(() => {
+          throw new Error('already exited');
+        }),
+      } as unknown as ReturnType<typeof execa>;
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await expect(stopSandboxOrigin({ sandboxProcess: fakeProcess })).resolves.toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to stop sandbox origin')
+      );
+    });
+
+    it('stringifies non-Error failures from kill', async () => {
+      const fakeProcess = {
+        kill: vi.fn(() => {
+          // eslint-disable-next-line @typescript-eslint/only-throw-error -- exercises the non-Error branch of the kill recovery
+          throw 'ESRCH';
+        }),
+      } as unknown as ReturnType<typeof execa>;
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await expect(stopSandboxOrigin({ sandboxProcess: fakeProcess })).resolves.toBeUndefined();
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('ESRCH'));
+    });
+  });
+
+  describe('document conversation seed', () => {
+    it('payload owns the mobile persona and carries the fenced HTML document', () => {
+      const parsed = JSON.parse(documentSeedPayload()) as {
+        ownerEmail: string;
+        title: string;
+        messages: { content: string; senderType: string }[];
+      };
+      expect(parsed.ownerEmail).toBe(DOCUMENT_SEED_OWNER_EMAIL);
+      // The Maestro flow taps the seeded conversation's chat row by this exact
+      // title text, so an untitled row (the empty-title placeholder) would be
+      // untappable — see mobile-tests/flows/14-document-renders.yaml.
+      expect(parsed.title).toBe('Mobile render proof');
+      const aiMessage = parsed.messages.find((m) => m.senderType === 'ai');
+      expect(aiMessage?.content).toBe(DOCUMENT_SEED_MESSAGE);
+      expect(aiMessage?.content).toContain('```html');
+    });
+
+    it('the seeded document is at least MIN_LINES_FOR_DOCUMENT lines so the parser extracts it', () => {
+      // Asserted against the shared threshold, never a copy of its value: the
+      // seed is sized with headroom above it, and raising the threshold past
+      // that headroom must fail here rather than silently demote the seeded
+      // document to an inline code block on device.
+      const fenceBody = DOCUMENT_SEED_MESSAGE.split('```html')[1]?.split('```')[0] ?? '';
+      const lineCount = fenceBody.trim().split('\n').length;
+      expect(lineCount).toBeGreaterThanOrEqual(MIN_LINES_FOR_DOCUMENT);
+    });
+
+    it('POSTs the payload to the dev-only /dev/conversation route on the API port', async () => {
+      process.env['HB_API_PORT'] = '8787';
+      try {
+        await seedDocumentConversation();
+        expect(mockExeca).toHaveBeenCalledWith(
+          'curl',
+          [
+            '-sf',
+            '-X',
+            'POST',
+            'http://localhost:8787/dev/conversation',
+            '-H',
+            'Content-Type: application/json',
+            '-d',
+            documentSeedPayload(),
+          ],
+          { stdio: 'ignore' }
+        );
+      } finally {
+        delete process.env['HB_API_PORT'];
+      }
+    });
+
+    it('throws when HB_API_PORT is not set', async () => {
+      delete process.env['HB_API_PORT'];
+      await expect(seedDocumentConversation()).rejects.toThrow('HB_API_PORT not set');
     });
   });
 

@@ -789,7 +789,6 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
             2026-07-23); it renders nothing (collapsed slide wrapper) unless
             the selected model offers reasoning levels. */}
         <ReasoningEffortMenu
-          isAuthenticated={isAuthenticated !== false}
           maxOutputTokens={budget.maxOutputTokens}
           estimatedInputTokens={budget.estimatedInputTokens}
         />

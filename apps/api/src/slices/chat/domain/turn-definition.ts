@@ -12,6 +12,7 @@ import {
   reasoningPlanModelFrom,
   spendableFundsNanoUsd,
   textTag,
+  turnEffortOptions,
 } from '@hushbox/shared';
 import {
   DEFAULT_WORKFLOW_CAPABILITIES,
@@ -28,16 +29,11 @@ import {
   createEstimateRun,
   createModelPricingResolver,
 } from '../../models/index.js';
-import { STORAGE_COST_PER_CHARACTER_NANO, applyMarkup } from '../../billing/index.js';
+import { STORAGE_COST_PER_CHARACTER_NANO } from '../../billing/index.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import { CHAT_TURN_HOOKS, CHAT_TURN_INPUT, CHAT_TURN_NODE_ID } from './constants.js';
-import {
-  AUTO_REASONING_EFFORT_ORDER,
-  reasoningEntryFor,
-  requiredReasoningEntryFor,
-  resolveTurnReasoning,
-} from './turn-reasoning.js';
+import { requiredReasoningEntryFor, resolveTurnReasoning } from './turn-reasoning.js';
 import type { TurnReasoningByModel, TurnReasoningEntry } from './turn-reasoning.js';
 import type { PayerFunding } from './turn-context.js';
 import type { ModelResolver, NodeRegistryContext } from '../../workflows/index.js';
@@ -150,8 +146,8 @@ export interface TurnModelPricing {
  *   - input tokens = ceil(chars / charsPerToken), 4 chars/token for a
  *     purchased payer (legacy paid) and 2 for a free payer (legacy
  *     conservative), zero for zero chars;
- *   - fixed cost = input tokens × Σ fee-inclusive input rates + chars ×
- *     storage rate; variable cost/token = Σ fee-inclusive output rates +
+ *   - fixed cost = input tokens × Σ billable input rates + chars ×
+ *     storage rate; variable cost/token = Σ billable output rates +
  *     output-storage chars/token (tier-inverted: 2 paid, 4 free) × storage
  *     rate × model count;
  *   - effective funds = remaining + the $0.50 cushion (purchased only);
@@ -160,12 +156,13 @@ export interface TurnModelPricing {
  *     makes admission refuse, the new tree's one balance gate;
  *   - `computeSafeMaxTokens` drops the cap when it covers the remaining
  *     context window (the model default applies).
- * Rates arrive BASE (catalog) and are marked up per-token here, mirroring the
- * fee-inclusive prices legacy fed the same math. Multi-model sums rates across
+ * Rates arrive BILLABLE from the catalog (fees baked at ingestion) and sum
+ * as-is — the same fee-inclusive prices legacy fed the same math, with no
+ * fee application here. Multi-model sums rates across
  * models and caps against the MIN context length — legacy computed ONE shared
  * value for all slots. The quotient is a token count, never money.
  */
-/** The fee-inclusive rate sums plus the tightest context window and tightest
+/** The billable rate sums plus the tightest context window and tightest
  * provider completion cap across the turn's models. */
 interface SummedTurnPricing {
   readonly sumInputRate: bigint;
@@ -182,8 +179,8 @@ function summedTurnPricing(models: readonly TurnModelPricing[]): SummedTurnPrici
   let minContextLength = models[0]?.contextLength ?? 0;
   let minMaxOutputTokens: number | undefined;
   for (const model of models) {
-    sumInputRate += applyMarkup(model.inputPerTokenNanoUsd);
-    sumOutputRate += applyMarkup(model.outputPerTokenNanoUsd);
+    sumInputRate += model.inputPerTokenNanoUsd;
+    sumOutputRate += model.outputPerTokenNanoUsd;
     if (model.contextLength < minContextLength) minContextLength = model.contextLength;
     if (
       model.maxOutputTokens !== undefined &&
@@ -1063,11 +1060,12 @@ function compileMultiModelTurn(
  * effort levels whose shared-plan token cost fits the fixed trial ceiling —
  * COMPUTED via the same plan and headroom math the paid path prices with,
  * never a hardcoded level list. An explicit level that does not fit is
- * refused (`accepted: false` → the trial's over-cap 402); `auto` picks the
- * first placeholder-order level that is both feasible and ceiling-fitting, or
- * quietly runs reasoning-free (auto is the server's choice — degrading it is
- * honest, unlike downgrading an explicit ask); `none` passes through so the
- * build owns the mandatory-reasoning refusal.
+ * refused (`accepted: false` → the trial's over-cap 402); `auto` takes the
+ * turn's SOLE real choice when exactly one exists (deterministic — no
+ * classifier, no reserve) and otherwise runs reasoning-free (auto is the
+ * server's choice — degrading it is honest, unlike downgrading an explicit
+ * ask); `none` passes through so the build owns the mandatory-reasoning
+ * refusal.
  */
 export type TrialReasoningDecision =
   | { readonly accepted: true; readonly selection: ReasoningEffortSelection | undefined }
@@ -1084,13 +1082,14 @@ export function trialReasoningSelection(
     pricings !== undefined &&
     answerHeadroomTokens(budget, pricings, entry.reasoningBudgetTokens) !== undefined;
   if (selection === 'auto') {
-    if (descriptor.reasoning === undefined) return ok({ accepted: true, selection: undefined });
-    for (const effort of AUTO_REASONING_EFFORT_ORDER) {
-      const entry = reasoningEntryFor(descriptor, effort);
-      if (entry !== undefined && fitsCeiling(entry)) {
-        return ok({ accepted: true, selection: effort });
-      }
-    }
+    // Exactly one real choice ⇒ the deterministic pick (BILLING §Effort 5):
+    // no classifier call and no reserve. The only single-choice catalog
+    // shape is Min-only — a model that offers no rung but can disable — so
+    // the pick is always the hard off; a lone rung cannot occur, because a
+    // model that cannot disable either offers nothing or offers ≥ 2 rungs.
+    const options = turnEffortOptions([reasoningPlanModelFrom(descriptor)]);
+    const sole = options.length === 1 ? options[0] : undefined;
+    if (sole?.choice === 'none') return ok({ accepted: true, selection: 'none' });
     return ok({ accepted: true, selection: undefined });
   }
   return requiredReasoningEntryFor(descriptor, selection).map((entry) =>

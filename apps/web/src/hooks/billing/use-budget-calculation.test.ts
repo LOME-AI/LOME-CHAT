@@ -3,7 +3,6 @@ import { makeBalance } from '@/test-utils/balance-fixture';
 import { renderHook, act } from '@testing-library/react';
 import {
   affordability,
-  applyMarkup,
   estimateTokensForTier,
   getEffectiveBalanceNano,
   outputCharsPerTokenForTier,
@@ -630,10 +629,10 @@ describe('useBudgetCalculation', () => {
     });
 
     it('adds exactly B times the effective per-output-token rate to the minimum cost', () => {
-      // The same effective rate `affordability` prices with: marked-up model
-      // output rate plus the raw output-storage rate (paid tier: 2 chars/token
-      // at 300 nano/char).
-      const variableRate = applyMarkup(30_000n) + 2n * 300n;
+      // The same effective rate `affordability` prices with: the billable
+      // model output rate as-is plus the raw output-storage rate (paid tier:
+      // 2 chars/token at 300 nano/char) — no fee math client-side.
+      const variableRate = 30_000n + 2n * 300n;
       const budget = REASONING_BUDGET_TOKENS_BY_EFFORT.medium;
       expect(estimateFor(budget)).toBe(estimateFor() + BigInt(budget) * variableRate);
     });

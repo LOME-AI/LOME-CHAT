@@ -1,12 +1,25 @@
-import { applyMarkup } from './money.js';
 import { utcDayKey } from './period.js';
 import type { CompletionTokens, MediaGenerationFacts } from '@hushbox/shared';
 import type { SettlementTx } from '../../../lib/idempotency/index.js';
 import type { BillingModality, BillingStores, WalletType } from '../ports/index.js';
 
+/**
+ * The turn's SENDER principal, recorded on every billed row beside the payer
+ * (a member's userId, or a link guest's linkId — a guest has no users row).
+ * Required, never inferred from `userId`: on a link-guest turn `userId` is the
+ * OWNER while the guest sent it. On a user turn `userId` is the sending member
+ * itself — owner funding moves the charged WALLET to the owner, never the
+ * attributed user.
+ */
+export type ChargeSender =
+  | { readonly kind: 'user'; readonly userId: string }
+  | { readonly kind: 'linkGuest'; readonly linkId: string };
+
 export interface ChargeInput {
   readonly walletId: string;
   readonly userId: string;
+  /** The sender recorded on the usage record, independent of the payer. */
+  readonly sender: ChargeSender;
   /** Plain grouping uuid for the run's charges — there is no run table. */
   readonly runId: string;
   /** Saved ⟺ billed: the persisted content this charge is anchored to. */
@@ -16,10 +29,15 @@ export interface ChargeInput {
   readonly providerName: string;
   readonly modality: BillingModality;
   readonly generationId?: string;
-  /** Provider base cost; the 15% markup lands here, exactly once. */
-  readonly baseCostNanoUsd: bigint;
   /**
-   * Additive storage fee (nano-USD). Charged on TOP of the marked-up model
+   * The generation's already-billable model cost: the port-converted inline
+   * provider cost, or the billable catalog estimate. Fees were applied at the
+   * two seams (catalog ingestion / the ModelProvider port conversion) — this
+   * module never applies, removes, or reasons about them.
+   */
+  readonly billableCostNanoUsd: bigint;
+  /**
+   * Additive storage fee (nano-USD). Charged on TOP of the billable model
    * cost and NEVER marked up itself — storage is a pass-through cost. 0n when
    * this generation stores nothing.
    */
@@ -63,8 +81,9 @@ export interface ChargeResult {
  * per-generation dimension row (`llm_completions`/`media_generations`), the
  * zero-sum charge leg pair (user wallet ↔ revenue), the wallet balance +
  * sequence, and the spending rows — the period-keyed free-tier allowance and the
- * durable cumulative group member/conversation rows. The charge is the marked-up
- * model cost PLUS the additive (never-marked-up) storage fee. Idempotent by the
+ * durable cumulative group member/conversation rows. The charge is the
+ * already-billable model cost PLUS the additive (never-marked-up) storage fee —
+ * no fee math happens here. Idempotent by the
  * unique charge key: a concurrent or replayed identical charge converges on the
  * first execution's row and writes nothing (the dimension write is skipped too).
  */
@@ -73,10 +92,13 @@ export async function chargeWithinTx(
   tx: SettlementTx,
   input: ChargeInput
 ): Promise<ChargeResult> {
-  const chargedNanoUsd = applyMarkup(input.baseCostNanoUsd) + input.storageFeeNanoUsd;
+  const chargedNanoUsd = input.billableCostNanoUsd + input.storageFeeNanoUsd;
   const wallet = await stores.lockWalletWithinTx(tx, input.walletId);
   const usage = await stores.insertUsageRecordIfAbsentWithinTx(tx, {
     userId: input.userId,
+    ...(input.sender.kind === 'user'
+      ? { senderUserId: input.sender.userId }
+      : { senderLinkId: input.sender.linkId }),
     contentItemId: input.contentItemId,
     runId: input.runId,
     modelId: input.modelId,

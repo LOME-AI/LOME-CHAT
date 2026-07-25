@@ -559,7 +559,13 @@ describe('resolveTurnContext', () => {
       DB,
       GUEST_ARGS
     );
-    expect(result._unsafeUnwrapErr().code).toBe('forbidden');
+    const error = result._unsafeUnwrapErr();
+    expect(error.code).toBe('forbidden');
+    // The denial is TYPED on the wire: the route layer projects the carried
+    // wireCode (GROUP_BUDGET_EXHAUSTED, matching the shared funding core's
+    // refusal code) instead of the generic FORBIDDEN, so the client can show
+    // the guest the owner-allocated-budget remedy from the shared copy map.
+    expect(error.wireCode).toBe('GROUP_BUDGET_EXHAUSTED');
   });
 
   it('refuses a link-guest turn when no active guest membership resolves', async () => {

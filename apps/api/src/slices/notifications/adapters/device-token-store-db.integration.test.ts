@@ -52,6 +52,31 @@ async function tokenRows(token: string): Promise<{ userId: string; platform: str
     .where(eq(deviceTokens.token, token));
 }
 
+/**
+ * Old enough that a refresh is unambiguously observable, recent enough to stay
+ * inside the device-token retention window: the daily retention pass commits a
+ * real delete against this shared local database, and rows older than the
+ * window are fair game for it while these tests are still asserting on them.
+ */
+const STALE_LAST_SEEN = new Date(Date.now() - 60 * 60 * 1000);
+
+/** Ages a row so a refresh is observable without depending on clock resolution. */
+async function makeStale(token: string): Promise<void> {
+  await db
+    .update(deviceTokens)
+    .set({ lastSeenAt: STALE_LAST_SEEN })
+    .where(eq(deviceTokens.token, token));
+}
+
+async function lastSeenAt(token: string): Promise<Date> {
+  const [row] = await db
+    .select({ lastSeenAt: deviceTokens.lastSeenAt })
+    .from(deviceTokens)
+    .where(eq(deviceTokens.token, token));
+  if (row === undefined) throw new Error('no device_tokens row for token');
+  return row.lastSeenAt;
+}
+
 afterAll(async () => {
   if (createdUserIds.length > 0) {
     // device_tokens rows cascade with their users.
@@ -94,12 +119,81 @@ describe('createDeviceTokenStore', () => {
       expect(await tokenRows(token)).toEqual([{ userId: secondUser, platform: 'android' }]);
     });
 
+    it('refreshes lastSeenAt on a repeated registration', async () => {
+      const userId = await createUser();
+      const token = freshToken();
+      await seedToken(userId, token);
+      await makeStale(token);
+
+      const second = await store.upsert({ userId, token, platform: 'ios' });
+
+      expect(second.isOk()).toBe(true);
+      const refreshed = await lastSeenAt(token);
+      expect(refreshed.getTime()).toBeGreaterThan(STALE_LAST_SEEN.getTime());
+    });
+
     it('maps a constraint failure to an unavailable error', async () => {
       const result = await store.upsert({
         userId: crypto.randomUUID(), // no such user — FK violation
         token: freshToken(),
         platform: 'ios',
       });
+
+      expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+    });
+  });
+
+  describe('touchLastSeen', () => {
+    it('refreshes lastSeenAt for the delivered tokens', async () => {
+      const userId = await createUser();
+      const token = freshToken();
+      await seedToken(userId, token);
+      await makeStale(token);
+
+      const result = await store.touchLastSeen([{ userId, token }]);
+
+      expect(result.isOk()).toBe(true);
+      const refreshed = await lastSeenAt(token);
+      expect(refreshed.getTime()).toBeGreaterThan(STALE_LAST_SEEN.getTime());
+    });
+
+    it('leaves a token that was not delivered to untouched', async () => {
+      const userId = await createUser();
+      const delivered = freshToken();
+      const untouched = freshToken();
+      await seedToken(userId, delivered);
+      await seedToken(userId, untouched);
+      await makeStale(delivered);
+      await makeStale(untouched);
+
+      const result = await store.touchLastSeen([{ userId, token: delivered }]);
+
+      expect(result.isOk()).toBe(true);
+      expect(await lastSeenAt(untouched)).toEqual(STALE_LAST_SEEN);
+    });
+
+    it('never refreshes another user’s token', async () => {
+      const owner = await createUser();
+      const intruder = await createUser();
+      const token = freshToken();
+      await seedToken(owner, token);
+      await makeStale(token);
+
+      const result = await store.touchLastSeen([{ userId: intruder, token }]);
+
+      expect(result.isOk()).toBe(true);
+      expect(await lastSeenAt(token)).toEqual(STALE_LAST_SEEN);
+    });
+
+    it('resolves without a write for an empty ref list', async () => {
+      const result = await store.touchLastSeen([]);
+
+      expect(result.isOk()).toBe(true);
+    });
+
+    it('maps a touch failure to an unavailable error', async () => {
+      // A non-uuid userId fails uuid input parsing inside Postgres.
+      const result = await store.touchLastSeen([{ userId: 'not-a-uuid', token: freshToken() }]);
 
       expect(result._unsafeUnwrapErr().code).toBe('unavailable');
     });
@@ -155,7 +249,34 @@ describe('createDeviceTokenStore', () => {
 
       const result = await store.listTokensForUsers([included]);
 
-      expect(result._unsafeUnwrap()).toEqual([{ userId: included, token: includedToken }]);
+      expect(result._unsafeUnwrap()).toEqual([
+        { platform: 'ios', userId: included, token: includedToken },
+      ]);
+    });
+
+    it('returns a web subscription as an endpoint-plus-keys target', async () => {
+      const userId = await createUser();
+      const endpoint = `https://push.example.com/${crypto.randomUUID()}`;
+      const upserted = await store.upsert({
+        userId,
+        token: endpoint,
+        platform: 'web',
+        p256dh: 'p256dh-key-value',
+        auth: 'auth-secret-value',
+      });
+      upserted._unsafeUnwrap();
+
+      const result = await store.listTokensForUsers([userId]);
+
+      expect(result._unsafeUnwrap()).toEqual([
+        {
+          platform: 'web',
+          userId,
+          endpoint,
+          p256dh: 'p256dh-key-value',
+          auth: 'auth-secret-value',
+        },
+      ]);
     });
 
     it('resolves empty for an empty user list', async () => {

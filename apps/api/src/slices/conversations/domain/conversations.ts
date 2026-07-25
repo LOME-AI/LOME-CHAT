@@ -44,6 +44,12 @@ export interface MembershipView {
   readonly pinned: boolean;
   readonly accepted: boolean;
   readonly visibleFromEpoch: number;
+  /**
+   * The member's durable read cursor. Stored as a bigint column but bounded by
+   * `messages.sequence_number` (int4), so the wire projection is an exact
+   * number the client compares against a message's own sequence.
+   */
+  readonly lastReadSeq: number;
 }
 
 export function membershipView(member: MemberRecord): MembershipView {
@@ -53,6 +59,7 @@ export function membershipView(member: MemberRecord): MembershipView {
     pinned: member.pinned,
     accepted: member.acceptedAt !== null,
     visibleFromEpoch: member.visibleFromEpoch,
+    lastReadSeq: Number(member.lastReadSeq),
   };
 }
 
@@ -190,6 +197,7 @@ export interface ConversationListEntry extends ConversationView {
   readonly pinned: boolean;
   readonly accepted: boolean;
   readonly invitedByUsername: string | null;
+  readonly lastReadSeq: number;
 }
 
 export interface ListConversationsResult {
@@ -244,6 +252,7 @@ export function listConversations(
             pinned: row.pinned,
             accepted: row.acceptedAt !== null,
             invitedByUsername: row.invitedByUsername,
+            lastReadSeq: Number(row.lastReadSeq),
           })
         ),
         nextCursor:

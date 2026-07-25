@@ -25,10 +25,11 @@ first command of a session may start Docker containers; that is normal.
 
 ## Local stack
 
-`pnpm dev` starts: Vite, Wrangler, Postgres (Docker), Neon Proxy
-(WebSocket → Postgres), Redis, Serverless Redis HTTP (Upstash REST emulator),
-and MinIO (R2 emulator). External APIs are mocked locally; no production
-credentials are ever needed.
+`pnpm dev` starts: Vite, Wrangler, the document sandbox origin (static server on
+`HB_SANDBOX_PORT`, serving the runnable-document renderers under their real CSP),
+Postgres (Docker), Neon Proxy (WebSocket → Postgres), Redis, Serverless Redis HTTP
+(Upstash REST emulator), and MinIO (R2 emulator). External APIs are mocked locally;
+no production credentials are ever needed.
 
 Ports are computed per worktree; this checkout's actual values are in the
 generated, git-ignored `.env.scripts` (the `HB_*_PORT` vars).
@@ -41,7 +42,8 @@ single source of truth, so the test environment is identical locally and in CI.
 
 Gates: lint + `arch:check` · typecheck + migration drift (an uncommitted
 `packages/db/drizzle/` diff fails) · duplication (jscpd) · unused (knip) · gitleaks ·
-test (AI calls replay from recorded cassettes; a cold-cache miss records on a real call) · build.
+test (AI calls replay from cassettes while the request is unchanged; a changed or
+uncached request makes one real call and records it in the same run) · build.
 Prettier runs as an ESLint rule, so formatting is covered by the lint gate (CI and
 pre-push). Pre-commit regenerates derived files and re-stages them; pre-push runs
 ESLint, typecheck, and tests (husky).
@@ -75,5 +77,8 @@ edit `README.md` directly.
 - `docs/DESIGN.md` — any UI, visual, or user-facing copy work
 - `docs/PRODUCT.md` — brand, voice, and audience for any copy
 - `docs/CI-CASSETTES.md` — recording or replaying AI-call cassettes
+- `docs/DOCUMENTS.md` — runnable documents: document-panel rendering/execution, the
+  sandbox origin, or the system prompt's document guidance
+- `docs/NOTIFICATIONS.md` — any notification, push, or service-worker work
 - `docs/BILLING.md` — billing domain work
 - `docs/CONTRIBUTING.md` — human onboarding and setup

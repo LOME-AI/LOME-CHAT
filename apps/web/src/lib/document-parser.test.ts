@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
+import { MIN_LINES_FOR_DOCUMENT } from '@hushbox/shared/documents';
 import {
   getLanguageDisplayName,
   getFileExtension,
   extractTitle,
   generateDocumentId,
   getDocumentType,
+  isRunnableDocument,
   shouldExtractAsDocument,
-  MIN_LINES_FOR_DOCUMENT,
 } from './document-parser';
 
 describe('getLanguageDisplayName', () => {
@@ -141,10 +142,35 @@ describe('getDocumentType', () => {
     expect(getDocumentType('tsx')).toBe('react');
   });
 
+  it('returns js for js language', () => {
+    expect(getDocumentType('js')).toBe('js');
+  });
+
+  it('returns js for javascript language', () => {
+    expect(getDocumentType('javascript')).toBe('js');
+  });
+
+  it('returns python for python language', () => {
+    expect(getDocumentType('python')).toBe('python');
+  });
+
   it('returns code for other languages', () => {
     expect(getDocumentType('typescript')).toBe('code');
-    expect(getDocumentType('python')).toBe('code');
     expect(getDocumentType('go')).toBe('code');
+  });
+});
+
+describe('isRunnableDocument', () => {
+  it('is true for the runnable kinds', () => {
+    expect(isRunnableDocument('html')).toBe(true);
+    expect(isRunnableDocument('js')).toBe(true);
+    expect(isRunnableDocument('react')).toBe(true);
+    expect(isRunnableDocument('python')).toBe(true);
+  });
+
+  it('is false for code and mermaid', () => {
+    expect(isRunnableDocument('code')).toBe(false);
+    expect(isRunnableDocument('mermaid')).toBe(false);
   });
 });
 

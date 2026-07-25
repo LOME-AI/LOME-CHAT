@@ -20,6 +20,10 @@
         "src/slices/models/domain/index.ts",
         "src/slices/admin/index.ts",
         "src/slices/admin/domain/index.ts",
+        // The workerd validation project's config: run by `test:workers`, never
+        // imported (the explicit entry list above suppresses knip's default
+        // config-file detection for this workspace).
+        "vitest.workers.config.ts",
       ],
       "project": ["src/**/*.ts"],
       // The slice template is scaffolding, not code. The telemetry port file is
@@ -35,6 +39,20 @@
     },
     "apps/crawler-view": {
       "project": ["src/**/*.{ts,tsx}"],
+    },
+    "apps/sandbox": {
+      // Assets-only worker: serve.ts/build.ts are entries via the dev/build
+      // scripts. wrangler is a deploy-time binary (`wrangler deploy` in CI), not
+      // a JS import — the wrangler plugin does not mark it used for an
+      // assets-only worker (no `main` entry), so declare it explicitly.
+      //
+      // The serve/build script entries are auto-detected from package.json
+      // scripts. The two bootstrap.ts files are esbuild entry points the build
+      // scripts resolve by string path (path.join(dir, 'bootstrap.ts')), so knip
+      // cannot trace them from the import graph — declared here by contract.
+      "entry": ["src/render/bootstrap.ts", "src/python/bootstrap.ts"],
+      "project": ["src/**/*.ts"],
+      "ignoreDependencies": ["wrangler"],
     },
     "packages/shared": {
       "project": ["src/**/*.ts"],
@@ -57,7 +75,20 @@
     },
     "packages/ui": {
       "project": ["src/**/*.{ts,tsx}"],
-      "ignoreDependencies": ["onnxruntime-web"],
+      // No source file imports onnxruntime-common; it is declared to pin the
+      // copy the bundlers resolve. @huggingface/transformers' browser build
+      // (reached via kokoro-js in the TTS worker) externalizes a bare
+      // `onnxruntime-common` import and re-exports its `Tensor` class — the one
+      // the engine passes into inference — but transformers' own dependency set
+      // does not contain that package, so resolution falls through to whichever
+      // copy pnpm hoists, and this declaration is what decides it. The version
+      // is exact-pinned (no range) to the one transformers' own
+      // onnxruntime-web dependency pins, so the externalized `Tensor` matches
+      // the `Tensor` inlined in the onnxruntime runtime that consumes it; a
+      // range would silently drift the shipped worker on any install.
+      // Unrelated to the self-hosted /ort/ runtime assets, which
+      // `ort-assets-plugin.ts` reads out of transformers' own dist.
+      "ignoreDependencies": ["onnxruntime-common"],
     },
     "packages/config": {
       // Tooling entry points: topic-named arch rule files and the eslint
@@ -98,7 +129,9 @@
   },
   // The quarantined /legacy/ corpus sits at the repo root (not a workspace);
   // knip's root workspace would otherwise scan it. It is out of every gate.
-  "ignore": [".claude/**", "legacy/**"],
+  // docs/plans/runs/ holds subagent-driven-dev run records and throwaway
+  // spike artifacts — run history, not source to analyze for unused exports.
+  "ignore": [".claude/**", "legacy/**", "docs/plans/runs/**"],
   "ignoreDependencies": [
     // ESLint output formatter — invoked via CLI (`lint:summary` = `eslint
     // --format summary`), never imported, so knip can't see the reference.

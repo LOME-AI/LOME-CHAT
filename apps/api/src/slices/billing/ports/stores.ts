@@ -49,6 +49,10 @@ export type BillingModality = Modality;
 
 export interface UsageRecordInput {
   readonly userId: string;
+  /** The sender's user id (member turn); mutually exclusive with senderLinkId. */
+  readonly senderUserId?: string;
+  /** The sender's link id (link-guest turn); mutually exclusive with senderUserId. */
+  readonly senderLinkId?: string;
   readonly contentItemId: string;
   readonly runId: string;
   /** The serving model and provider as plain strings — no FK into the catalog. */
@@ -372,17 +376,41 @@ export interface BillingStores {
   /**
    * Owner-facing per-member cap write: upsert the durable member-budget row's
    * `budgetNanoUsd`, PRESERVING the cumulative `spentNanoUsd` (never resets
-   * spend). A config write, not settlement — it runs on the caller's request
-   * transaction (`DbWriter`, not `SettlementTx`) and returns the typed error
-   * channel so it composes inside a `byKey` mutation. Single-writer of
-   * `member_budgets`: the conversations budget-management route composes this
-   * helper rather than reaching billing's table.
+   * spend). A cap below the accrued spend is refused ATOMICALLY — the
+   * conflict-path update carries a `spent <= cap` WHERE guard, so there is no
+   * check-then-act window against a concurrent settlement accrual —
+   * answering `'below-spent'` with the stored row untouched. A config write,
+   * not settlement — it runs on the caller's request transaction (`DbWriter`,
+   * not `SettlementTx`) and returns the typed error channel so it composes
+   * inside a `byKey` mutation. Single-writer of `member_budgets`: the
+   * conversations budget-management route composes this helper rather than
+   * reaching billing's table.
    */
   setMemberBudgetCapWithinTx(
     tx: DbWriter,
     memberId: string,
     capNanoUsd: bigint
-  ): ResultAsync<void, DomainError>;
+  ): ResultAsync<'applied' | 'below-spent', DomainError>;
+  /**
+   * Membership-lifecycle budget-row removal (BILLING §Group Funding 4):
+   * deletes the member's durable budget row inside the caller's departure
+   * transaction. Absent row is the idempotent no-op. Single-writer of
+   * `member_budgets`: the conversations removal/leave paths compose this
+   * helper rather than reaching billing's table.
+   */
+  deleteMemberBudgetWithinTx(tx: DbWriter, memberId: string): ResultAsync<void, DomainError>;
+  /**
+   * The conversation's accrued spend, read UNDER A ROW LOCK (`FOR UPDATE`,
+   * materializing a zero row first when none exists) so a cap-vs-spend
+   * validation in the caller's transaction cannot race a concurrent
+   * settlement accrual — the settlement's spending upsert blocks until the
+   * caller commits. Lock order matches settlement (spending row before the
+   * conversations row), so the two never deadlock.
+   */
+  lockConversationSpentWithinTx(
+    tx: DbWriter,
+    conversationId: string
+  ): ResultAsync<bigint, DomainError>;
   readUsageRecord(db: Database, id: string): ResultAsync<UsageRecordRow | null, DomainError>;
   /**
    * Per-model spend aggregation for one user (`SUM(cost)` + counts grouped by

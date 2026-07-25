@@ -15,7 +15,8 @@ import {
   wallets,
 } from '@hushbox/db';
 import { generateKeyPair } from '@hushbox/crypto';
-import { applyMarkup, usdToNanoUsd } from '../../slices/billing/index.js';
+import { applyMarkup } from '@hushbox/shared';
+import { usdToNanoUsd } from '../../slices/billing/index.js';
 import { createDevConversation } from './factories.js';
 import { seedPaymentsHistory, seedUsageHistory } from './seed-billing-history.js';
 import type { PaymentSpec, UsageSpec } from './seed-billing-history.js';
@@ -153,7 +154,7 @@ function usageSpecs(memberId: string): UsageSpec[] {
       modelId: 'anthropic/claude-opus-4.6',
       providerName: 'anthropic',
       modality: 'text',
-      baseCostNanoUsd: usdToNanoUsd(0.01),
+      billableCostNanoUsd: applyMarkup(usdToNanoUsd(0.01)),
       tokens: { inputTokens: 500, outputTokens: 300 },
       createdAt: daysAgo(25),
     },
@@ -162,7 +163,7 @@ function usageSpecs(memberId: string): UsageSpec[] {
       modelId: 'openai/gpt-4o',
       providerName: 'openai',
       modality: 'text',
-      baseCostNanoUsd: usdToNanoUsd(0.005),
+      billableCostNanoUsd: applyMarkup(usdToNanoUsd(0.005)),
       tokens: { inputTokens: 200, outputTokens: 100, cachedInputTokens: 50 },
       createdAt: daysAgo(10),
       memberBudget: { memberId, budgetNanoUsd: usdToNanoUsd(50) },
@@ -244,8 +245,8 @@ describe('seedUsageHistory', () => {
     );
 
     const specs = usageSpecs(fixture.ownerMemberId);
-    const chargedU1 = applyMarkup(specs[0]!.baseCostNanoUsd);
-    const chargedU2 = applyMarkup(specs[1]!.baseCostNanoUsd);
+    const chargedU1 = specs[0]!.billableCostNanoUsd;
+    const chargedU2 = specs[1]!.billableCostNanoUsd;
     const totalCharged = chargedU1 + chargedU2;
 
     const result = await seedUsageHistory(
@@ -372,7 +373,7 @@ describe('seed producers are idempotent', () => {
         modelId: 'openai/gpt-4o',
         providerName: 'openai',
         modality: 'text',
-        baseCostNanoUsd: usdToNanoUsd(0.002),
+        billableCostNanoUsd: applyMarkup(usdToNanoUsd(0.002)),
         tokens: { inputTokens: 100, outputTokens: 50 },
         generationId: 'gen-seed-1',
         createdAt: daysAgo(5),

@@ -186,6 +186,13 @@ export const conversationResponseSchema = z.object({
 export type ConversationResponse = z.infer<typeof conversationResponseSchema>;
 
 /**
+ * The caller's read cursor: the highest message sequence they have acknowledged
+ * in this conversation. Zero means nothing read (sequences start at one), which
+ * is also the safe default for a payload that predates the field.
+ */
+const lastReadSeqSchema = z.number().int().nonnegative().default(0);
+
+/**
  * Schema for a conversation list item in GET /conversations responses.
  * Extends base conversation with membership acceptance state.
  *
@@ -199,6 +206,7 @@ export const conversationListItemSchema = conversationResponseSchema.extend({
   privilege: memberPrivilegeSchema,
   muted: z.boolean().default(false),
   pinned: z.boolean().default(false),
+  lastReadSeq: lastReadSeqSchema,
 });
 
 export type ConversationListItem = z.infer<typeof conversationListItemSchema>;
@@ -342,6 +350,7 @@ export const membershipViewSchema = z.object({
   pinned: z.boolean(),
   accepted: z.boolean(),
   visibleFromEpoch: z.number().int().min(1),
+  lastReadSeq: lastReadSeqSchema,
 });
 
 export type MembershipView = z.infer<typeof membershipViewSchema>;

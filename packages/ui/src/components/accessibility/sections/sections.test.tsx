@@ -2,7 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { ACCESSIBILITY_PREFERENCES_DEFAULTS, type AccessibilityPreferences } from '@hushbox/shared';
+import {
+  ACCESSIBILITY_PREFERENCES_DEFAULTS,
+  TTS_MODEL_DOWNLOAD_MB,
+  type AccessibilityPreferences,
+} from '@hushbox/shared';
+
+// Built from the shared figure so the widget disclosure cannot silently drift
+// from the blog disclosure (both source the number from TTS_MODEL_DOWNLOAD_MB).
+const DOWNLOAD_DISCLOSURE = new RegExp(`${TTS_MODEL_DOWNLOAD_MB.toString()} MB, one-time download`);
 
 const storeState: {
   prefs: AccessibilityPreferences;
@@ -339,7 +347,7 @@ describe('AudioSection', () => {
     render(<AudioSection />);
     expect(screen.getByRole('button', { name: /^Mute all sounds: / })).not.toBeNull();
     expect(screen.getByRole('button', { name: /^Read chat replies aloud: / })).not.toBeNull();
-    expect(screen.getByText(/88 MB, one-time download/)).not.toBeNull();
+    expect(screen.getByText(DOWNLOAD_DISCLOSURE)).not.toBeNull();
     expect(
       screen.getByText(/Runs entirely on your device\. No audio or text ever leaves this device/)
     ).not.toBeNull();
@@ -354,7 +362,7 @@ describe('AudioSection', () => {
     storeState.prefs = { ...ACCESSIBILITY_PREFERENCES_DEFAULTS, ttsEnabled: true };
     render(<AudioSection />);
     expect(screen.getByRole('button', { name: /^Read chat replies aloud: / })).not.toBeNull();
-    expect(screen.getByText(/88 MB, one-time download/)).not.toBeNull();
+    expect(screen.getByText(DOWNLOAD_DISCLOSURE)).not.toBeNull();
   });
 
   it('does not render placeholder "Read page" / "Read selection" buttons', () => {
@@ -421,10 +429,10 @@ describe('AudioSection', () => {
     expect(ttsPreloadVoiceMock).not.toHaveBeenCalled();
   });
 
-  it('download-size disclosure shows the q8/WASM size (~88 MB) unconditionally', async () => {
+  it('download-size disclosure shows the verified q8/WASM size unconditionally', async () => {
     render(<AudioSection />);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.getByText(/88 MB, one-time download/)).not.toBeNull();
+    expect(screen.getByText(DOWNLOAD_DISCLOSURE)).not.toBeNull();
     expect(screen.queryByText(/330 MB/)).toBeNull();
   });
 

@@ -17,12 +17,25 @@
 // single IIFE chunk — dynamic imports inside a worker would require
 // `worker.format: 'es'` config, which we're avoiding.
 
-import { KokoroTTS } from 'kokoro-js';
+import { KokoroTTS, env } from 'kokoro-js';
+
+import { TTS_MODEL_DOWNLOAD_BYTES, TTS_ORT_WASM_PATH } from '@hushbox/shared';
 
 import type { WorkerInbound, WorkerOutbound } from './tts-worker-protocol';
 
+// Pin onnxruntime-web's WASM location so the deployed CSP can enclose every
+// fetch the model download makes. Its default is a third-party jsdelivr CDN
+// URL; pointing it at a same-origin path (where the build self-hosts the
+// matching .wasm/.mjs) keeps the runtime same-origin with no CDN host in the
+// policy. kokoro-js re-exports the @huggingface/transformers `env` as a thin
+// wrapper exposing ONLY this `wasmPaths` setter — there is no `env.backends`
+// tree to reach through. The model host itself is not pinned here: transformers
+// already defaults to https://huggingface.co, which the SPA connect-src
+// allowlist (TTS_MODEL_CONNECT_SRC) covers.
+env.wasmPaths = TTS_ORT_WASM_PATH;
+
 const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
-// q8 on WASM keeps the download to ~80 MB (vs ~330 MB at fp32). The CPU
+// q8 on WASM keeps the download to ~90 MB (vs ~330 MB at fp32). The CPU
 // can't take advantage of full-precision math anyway, and the worker pool
 // delivers comparable throughput on WASM — fp32/WebGPU support was removed.
 const DTYPE = 'q8' as const;
@@ -41,6 +54,7 @@ interface KokoroTtsInstance {
 
 interface KokoroProgressEvent {
   status?: string;
+  file?: string;
   loaded?: number;
   total?: number;
 }
@@ -64,6 +78,28 @@ export function createWorkerHandler(ctx: WorkerContext): (msg: WorkerInbound) =>
   }
 
   async function handleLoad(requestId: string): Promise<void> {
+    // transformers reports {loaded,total} PER FILE, and the hub files download
+    // concurrently: config/tokenizer JSON (a few KB), the voice embedding, and
+    // the q8 weights (99.4% of the bytes). Forwarding one file's pair makes the
+    // bar read 100% the instant the first JSON lands, then drop to ~0% when the
+    // weights start. The worker is the only layer that still has file identity
+    // — the worker protocol carries none — so the download-wide sum is formed
+    // here, which also keeps the accessibility widget's byte readout, rate, and
+    // ETA counting one download instead of restarting per file.
+    const bytesByFile = new Map<string | undefined, { loaded: number; total: number }>();
+
+    function aggregate(): { loaded: number; total: number } {
+      let loaded = 0;
+      let total = 0;
+      for (const file of bytesByFile.values()) {
+        loaded += file.loaded;
+        total += file.total;
+      }
+      // Floor the denominator with the known first-listen size so files the hub
+      // has not announced yet cannot inflate the percentage.
+      return { loaded, total: Math.max(total, TTS_MODEL_DOWNLOAD_BYTES) };
+    }
+
     try {
       tts = await (
         KokoroTTS.from_pretrained as unknown as (
@@ -79,15 +115,15 @@ export function createWorkerHandler(ctx: WorkerContext): (msg: WorkerInbound) =>
         device: DEVICE,
         progress_callback: (event) => {
           if (typeof event.loaded === 'number' && typeof event.total === 'number') {
-            ctx.postMessage({
-              type: 'loadProgress',
-              requestId,
-              loaded: event.loaded,
-              total: event.total,
-            });
+            bytesByFile.set(event.file, { loaded: event.loaded, total: event.total });
+            ctx.postMessage({ type: 'loadProgress', requestId, ...aggregate() });
           }
         },
       });
+      // The floored denominator would otherwise leave consumers a few percent
+      // short of complete for the whole warmup.
+      const { total } = aggregate();
+      ctx.postMessage({ type: 'loadProgress', requestId, loaded: total, total });
       ctx.postMessage({ type: 'loadDone', requestId });
     } catch (error) {
       ctx.postMessage({

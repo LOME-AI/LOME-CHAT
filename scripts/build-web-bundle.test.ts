@@ -44,6 +44,7 @@ describe('build-web-bundle', () => {
       generateEnv: vi.fn<BuildWebBundleDeps['generateEnv']>(),
       exec: vi.fn<BuildWebBundleDeps['exec']>(),
       merge: vi.fn<BuildWebBundleDeps['merge']>(),
+      verify: vi.fn<BuildWebBundleDeps['verify']>(),
     });
     let deps: ReturnType<typeof makeDeps>;
 
@@ -95,6 +96,19 @@ describe('build-web-bundle', () => {
         'tsx',
         'scripts/generate-headers.ts',
       ]);
+    });
+
+    it('verifies the merged web dist after merging', async () => {
+      await buildWebBundle('e2e', '/repo', { NODE_ENV: 'development' }, deps);
+      expect(deps.verify).toHaveBeenCalledWith({ distributionDir: '/repo/apps/web/dist' });
+    });
+
+    it('does not generate headers when verification fails', async () => {
+      deps.verify.mockRejectedValueOnce(new Error('bundle verification failed'));
+      await expect(buildWebBundle('prod', '/repo', {}, deps)).rejects.toThrow(
+        'bundle verification failed'
+      );
+      expect(deps.exec).toHaveBeenCalledTimes(1);
     });
 
     it('does not merge or generate headers when the build fails', async () => {

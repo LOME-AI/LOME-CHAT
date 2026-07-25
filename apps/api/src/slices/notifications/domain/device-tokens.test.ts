@@ -4,6 +4,8 @@ import { unavailableError } from '../../../lib/errors/index.js';
 import {
   registerDeviceToken,
   registerDeviceTokenSchema,
+  registerWebSubscription,
+  registerWebSubscriptionSchema,
   unregisterDeviceToken,
 } from './device-tokens.js';
 import type { DeviceTokenRegistration, DeviceTokenStore } from '../ports/index.js';
@@ -13,6 +15,7 @@ function storeWith(overrides: Partial<DeviceTokenStore>): DeviceTokenStore {
     upsert: () => okAsync(),
     deleteByToken: () => okAsync(null),
     listTokensForUsers: () => okAsync([]),
+    touchLastSeen: () => okAsync(),
     ...overrides,
   };
 }
@@ -60,6 +63,75 @@ describe('registerDeviceToken', () => {
     const result = await registerDeviceToken(store, 'user-1', {
       token: 'tok-1',
       platform: 'ios',
+    });
+
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+});
+
+describe('registerWebSubscriptionSchema', () => {
+  const valid = {
+    endpoint: 'https://push.example.com/sub/abc',
+    keys: { p256dh: 'p256dh-value', auth: 'auth-value' },
+  };
+
+  it('accepts a well-formed subscription', () => {
+    expect(registerWebSubscriptionSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('rejects a non-URL endpoint', () => {
+    expect(
+      registerWebSubscriptionSchema.safeParse({ ...valid, endpoint: 'not-a-url' }).success
+    ).toBe(false);
+  });
+
+  it('rejects a missing key', () => {
+    expect(
+      registerWebSubscriptionSchema.safeParse({ endpoint: valid.endpoint, keys: { p256dh: 'x' } })
+        .success
+    ).toBe(false);
+  });
+
+  it('rejects an unknown top-level key', () => {
+    expect(registerWebSubscriptionSchema.safeParse({ ...valid, platform: 'web' }).success).toBe(
+      false
+    );
+  });
+});
+
+describe('registerWebSubscription', () => {
+  it('upserts a web row keyed by endpoint with the subscription keys', async () => {
+    const seen: DeviceTokenRegistration[] = [];
+    const store = storeWith({
+      upsert: (registration) => {
+        seen.push(registration);
+        return okAsync();
+      },
+    });
+
+    const result = await registerWebSubscription(store, 'user-1', {
+      endpoint: 'https://push.example.com/sub/abc',
+      keys: { p256dh: 'p256dh-value', auth: 'auth-value' },
+    });
+
+    expect(result.isOk()).toBe(true);
+    expect(seen).toEqual([
+      {
+        userId: 'user-1',
+        token: 'https://push.example.com/sub/abc',
+        platform: 'web',
+        p256dh: 'p256dh-value',
+        auth: 'auth-value',
+      },
+    ]);
+  });
+
+  it('propagates a store failure', async () => {
+    const store = storeWith({ upsert: () => errAsync(unavailableError('insert failed')) });
+
+    const result = await registerWebSubscription(store, 'user-1', {
+      endpoint: 'https://push.example.com/sub/abc',
+      keys: { p256dh: 'p256dh-value', auth: 'auth-value' },
     });
 
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');

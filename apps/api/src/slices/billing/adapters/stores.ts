@@ -234,6 +234,8 @@ export function createBillingStores(): BillingStores {
         .insert(usageRecords)
         .values({
           userId: input.userId,
+          ...(input.senderUserId === undefined ? {} : { senderUserId: input.senderUserId }),
+          ...(input.senderLinkId === undefined ? {} : { senderLinkId: input.senderLinkId }),
           contentItemId: input.contentItemId,
           runId: input.runId,
           modelId: input.modelId,
@@ -520,7 +522,11 @@ export function createBillingStores(): BillingStores {
     setMemberBudgetCapWithinTx(tx, memberId, capNanoUsd) {
       // Upsert the owner-set cap only; spentNanoUsd defaults to 0 on the insert
       // path and is untouched on conflict, so a cap change never clobbers the
-      // cumulative spend the settlement writer accrues.
+      // cumulative spend the settlement writer accrues. The conflict path is
+      // WHERE-guarded (`spent <= new cap`) and the statement RETURNs the row it
+      // wrote: zero rows back means the guard refused — a cap below the
+      // accrued spend — with the stored row untouched. Atomic by construction:
+      // the guard and the write are one statement, never check-then-act.
       return fromPromise(
         tx
           .insert(memberBudgets)
@@ -528,9 +534,47 @@ export function createBillingStores(): BillingStores {
           .onConflictDoUpdate({
             target: [memberBudgets.memberId],
             set: { budgetNanoUsd: capNanoUsd, updatedAt: sql`now()` },
-          }),
+            setWhere: sql`${memberBudgets.spentNanoUsd} <= ${capNanoUsd}`,
+          })
+          .returning({ memberId: memberBudgets.memberId }),
+        storeFailure
+      ).map((rows): 'applied' | 'below-spent' => (rows.length > 0 ? 'applied' : 'below-spent'));
+    },
+
+    deleteMemberBudgetWithinTx(tx, memberId) {
+      // Absent row = already done (the idempotent no-op) — no rows-affected
+      // assertion, matching at-least-once retry semantics.
+      return fromPromise(
+        tx.delete(memberBudgets).where(eq(memberBudgets.memberId, memberId)),
         storeFailure
       ).map((): void => undefined);
+    },
+
+    lockConversationSpentWithinTx(tx, conversationId) {
+      // Materialize a zero-spend row when none exists (row absence already
+      // means "spent 0" to every reader), then read it FOR UPDATE so the
+      // caller's cap-vs-spend validation holds the same lock a concurrent
+      // settlement's spending upsert needs — serializing the two. Lock order
+      // (spending row, then the conversations row the caller updates) matches
+      // settlement's, so no deadlock is possible.
+      return fromPromise(
+        tx
+          .insert(conversationSpending)
+          .values({ conversationId, spentNanoUsd: 0n })
+          .onConflictDoNothing({ target: [conversationSpending.conversationId] }),
+        storeFailure
+      )
+        .andThen(() =>
+          fromPromise(
+            tx
+              .select({ spentNanoUsd: conversationSpending.spentNanoUsd })
+              .from(conversationSpending)
+              .where(eq(conversationSpending.conversationId, conversationId))
+              .for('update'),
+            storeFailure
+          )
+        )
+        .map((rows) => rows[0]?.spentNanoUsd ?? 0n);
     },
 
     readUsageRecord(db: Database, id: string) {

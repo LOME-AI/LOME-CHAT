@@ -96,6 +96,7 @@ const OWNER_MEMBERSHIP: ConversationMembership = {
   pinned: false,
   accepted: true,
   visibleFromEpoch: 1,
+  lastReadSeq: 0,
 };
 
 /** Stable empty reference so an unqueued conversation never re-renders consumers. */

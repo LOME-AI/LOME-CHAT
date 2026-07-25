@@ -11,15 +11,18 @@
     "./cipher-wall/engine": "./src/components/cipher-wall/cipher-wall-engine.ts",
     "./cipher-wall/hook": "./src/components/cipher-wall/use-cipher-wall.ts",
     "./accessibility": "./src/components/accessibility/index.ts",
+    "./accessibility/tts-download-bar": "./src/components/accessibility/tts-download-bar.tsx",
     "./accessibility/styles": "./src/components/accessibility/styles/index.css",
     "./accessibility/init-script": "./src/components/accessibility/lib/init-script.ts",
     "./accessibility/lib": "./src/components/accessibility/lib/index.ts",
     "./accessibility/lib/sentence-chunker": "./src/components/accessibility/lib/sentence-chunker.ts",
+    "./accessibility/lib/document-reader": "./src/components/accessibility/lib/document-reader.ts",
     "./accessibility/lib/tts-stream-feeder": "./src/components/accessibility/lib/tts-stream-feeder.ts",
     "./accessibility/lib/tts-engine": "./src/components/accessibility/lib/tts-engine.ts",
     "./accessibility/store": "./src/components/accessibility/store/index.ts",
     "./banner": "./src/components/banner/index.ts",
-    "./banner/styles": "./src/components/banner/banner.css"
+    "./banner/styles": "./src/components/banner/banner.css",
+    "./blog-reader": "./src/components/blog-reader/index.ts"
   },
   "scripts": {
     "lint": "eslint .",
@@ -49,7 +52,7 @@
     "framer-motion": "^12.40.0",
     "kokoro-js": "^1.2.1",
     "lucide-react": "^0.577.0",
-    "onnxruntime-web": "^1.26.0",
+    "onnxruntime-common": "1.22.0-dev.20250409-89f8206ba4",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
     "vaul": "^1.1.2",

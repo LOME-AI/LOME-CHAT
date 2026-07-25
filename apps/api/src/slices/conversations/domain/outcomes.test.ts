@@ -27,6 +27,7 @@ describe('refusalToWire', () => {
     [{ refusal: 'cannot-remove-owner' }, ERROR_CODES.CANNOT_REMOVE_OWNER, 403],
     [{ refusal: 'cannot-remove-self' }, ERROR_CODES.CANNOT_REMOVE_SELF, 400],
     [{ refusal: 'cannot-change-own-privilege' }, ERROR_CODES.CANNOT_CHANGE_OWN_PRIVILEGE, 403],
+    [{ refusal: 'budget-below-spent' }, ERROR_CODES.BUDGET_BELOW_SPENT, 400],
     [{ refusal: 'fork-limit', limit: 5 }, ERROR_CODES.FORK_LIMIT_REACHED, 400],
     [{ refusal: 'fork-name-taken' }, ERROR_CODES.FORK_NAME_TAKEN, 409],
     [

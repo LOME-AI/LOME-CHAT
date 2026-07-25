@@ -58,6 +58,7 @@ API_URL = "https://api.hushbox.ai"
 FRONTEND_URL = "https://hushbox.ai"
 MARKETING_URL = "https://hushbox.ai"
 ADMIN_URL = "https://admin.hushbox.ai"
+VAPID_SUBJECT = "mailto:notifications@hushbox.ai"
 R2_BUCKET_MEDIA = "hushbox-media"
 TELEMETRY_SINKS = "console,sentry"
 
@@ -79,6 +80,9 @@ TELEMETRY_SINKS = "console,sentry"
 # - OPENROUTER_API_KEY
 # - FCM_PROJECT_ID
 # - FCM_SERVICE_ACCOUNT_JSON
+# - VAPID_PUBLIC_KEY
+# - VAPID_PRIVATE_KEY
+# - NOTIFICATION_TAG_SECRET
 # - HELCIM_API_TOKEN
 # - LINEAR_API_KEY_READ
 # - HELCIM_WEBHOOK_VERIFIER

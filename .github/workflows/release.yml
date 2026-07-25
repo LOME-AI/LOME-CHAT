@@ -111,10 +111,23 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
+      # The whole-workspace build assembles the sandbox origin, whose dist ships
+      # the self-hosted Pyodide assets (~26 MB, gitignored) pulled from a pinned
+      # CDN by the `fetch-pyodide` turbo task that `build` depends on. Cache them
+      # on the fetch script's pins; on a hit the fetch task's idempotency guard
+      # skips the download.
+      - name: Cache Pyodide assets
+        uses: useblacksmith/cache@v5
+        with:
+          path: apps/sandbox/public/pyodide
+          key: pyodide-${{ hashFiles('apps/sandbox/scripts/fetch-pyodide.sh') }}
       - name: Build web
         run: pnpm build
         # BEGIN GENERATED: build-env-web-release
         env:
+          ESM_CDN_URL: https://esm.sh
+          VITE_SANDBOX_ORIGIN_URL: https://sandbox.hushbox.ai
+          VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
           VITE_API_URL: https://api.hushbox.ai
           VITE_HELCIM_JS_TOKEN: ${{ secrets.VITE_HELCIM_JS_TOKEN_PRODUCTION }}
           VITE_PLATFORM: web
@@ -125,11 +138,14 @@ jobs:
         run: pnpm tsx scripts/merge-marketing-into-web.ts
       - name: Generate _headers (CSP hashes per marketing route)
         run: pnpm tsx scripts/generate-headers.ts
+        # VITE_API_URL must match the value the marketing build used above so the
+        # generated connect-src CSP allows the API origin the client bundles
+        # actually fetch from.
+        # BEGIN GENERATED: headers-env
         env:
-          # Must match the VITE_API_URL the marketing build used above so the
-          # generated connect-src CSP allows the API origin the client bundles
-          # actually fetch from.
           VITE_API_URL: https://api.hushbox.ai
+          SANDBOX_ORIGIN_URL: https://sandbox.hushbox.ai
+        # END GENERATED: headers-env
       - name: Upload web build artifact
         uses: actions/upload-artifact@v6
         with:

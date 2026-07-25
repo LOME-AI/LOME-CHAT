@@ -1346,6 +1346,60 @@ describe('conversationListItemSchema', () => {
     });
     expect(result.pinned).toBe(false);
   });
+
+  it('carries the caller read cursor', () => {
+    const result = conversationListItemSchema.parse({
+      id: 'conv-1',
+      userId: 'user-1',
+      title: 'base64title1',
+      currentEpoch: 1,
+      titleEpochNumber: 1,
+      nextSequence: 5,
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+      accepted: true,
+      invitedByUsername: null,
+      privilege: 'owner',
+      lastReadSeq: 4,
+    });
+    expect(result.lastReadSeq).toBe(4);
+  });
+
+  it('defaults the read cursor to nothing read', () => {
+    const result = conversationListItemSchema.parse({
+      id: 'conv-1',
+      userId: 'user-1',
+      title: 'base64title1',
+      currentEpoch: 1,
+      titleEpochNumber: 1,
+      nextSequence: 5,
+      createdAt: '2024-01-01T00:00:00Z',
+      updatedAt: '2024-01-01T00:00:00Z',
+      accepted: true,
+      invitedByUsername: null,
+      privilege: 'owner',
+    });
+    expect(result.lastReadSeq).toBe(0);
+  });
+
+  it('rejects a negative read cursor', () => {
+    expect(() =>
+      conversationListItemSchema.parse({
+        id: 'conv-1',
+        userId: 'user-1',
+        title: 'base64title1',
+        currentEpoch: 1,
+        titleEpochNumber: 1,
+        nextSequence: 5,
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+        accepted: true,
+        invitedByUsername: null,
+        privilege: 'owner',
+        lastReadSeq: -1,
+      })
+    ).toThrow();
+  });
 });
 
 describe('listConversationsResponseSchema', () => {
@@ -1433,6 +1487,24 @@ describe('getConversationResponseSchema', () => {
       membership: validMembership,
     });
     expect(result.forks).toEqual([]);
+  });
+
+  it('carries the caller read cursor on the membership', () => {
+    const result = getConversationResponseSchema.parse({
+      conversation: validConversation,
+      membership: { ...validMembership, lastReadSeq: 12 },
+      forks: [],
+    });
+    expect(result.membership.lastReadSeq).toBe(12);
+  });
+
+  it('defaults the membership read cursor to nothing read', () => {
+    const result = getConversationResponseSchema.parse({
+      conversation: validConversation,
+      membership: validMembership,
+      forks: [],
+    });
+    expect(result.membership.lastReadSeq).toBe(0);
   });
 
   it('carries the unaccepted membership state', () => {

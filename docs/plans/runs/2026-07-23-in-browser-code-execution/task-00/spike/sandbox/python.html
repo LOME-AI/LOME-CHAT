@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Python host (sandbox origin)</title>
+  </head>
+  <body>
+    <script type="module">
+      // Runs inside the cross-origin, sandboxed (allow-scripts only) iframe.
+      // Opaque origin. SPIKE FINDING: a module worker (which Pyodide 314 requires)
+      // cannot be spawned from a blob:null URL in an opaque-origin document
+      // (verified: classic-blob works, module-blob fails; both work at a real
+      // origin). So Pyodide runs on the iframe's MAIN THREAD. "Stop" is the parent
+      // removing/reloading this iframe (parent owns the element) — no worker needed.
+      const send = (m) => parent.postMessage(m, '*');
+      const diag = (text) => send({ type: 'diag', text: String(text) });
+      window.addEventListener('error', (e) => diag('window.error: ' + (e.message || e.error)));
+      window.addEventListener('unhandledrejection', (e) => diag('unhandledrejection: ' + (e.reason && e.reason.stack || e.reason)));
+      const base = location.origin; // sandbox origin — where pyodide assets live
+
+      let pyodide = null;
+
+      async function run(requestId, code) {
+        const t0 = performance.now();
+        if (!pyodide) {
+          send({ type: 'loading', requestId, phase: 'import-loader' });
+          const { loadPyodide } = await import(`${base}/pyodide/pyodide.mjs`);
+          send({ type: 'loading', requestId, phase: 'init-runtime' });
+          pyodide = await loadPyodide({ indexURL: `${base}/pyodide/` });
+        }
+        const loadMs = Math.round(performance.now() - t0);
+
+        send({ type: 'loading', requestId, phase: 'load-packages' });
+        await pyodide.loadPackagesFromImports(code);
+
+        send({ type: 'loading', requestId, phase: 'execute' });
+        const globals = pyodide.toPy({}); // fresh globals per run
+        let pngB64 = null;
+        pyodide.setStdout({
+          batched: (s) => {
+            const i = s.indexOf('PNG_B64:');
+            if (i >= 0) pngB64 = s.slice(i + 'PNG_B64:'.length).trim();
+            else send({ type: 'console', requestId, stream: 'stdout', text: s });
+          },
+        });
+        pyodide.setStderr({ batched: (s) => send({ type: 'console', requestId, stream: 'stderr', text: s }) });
+
+        await pyodide.runPythonAsync(code, { globals });
+        globals.destroy();
+
+        const outputs = [];
+        if (pngB64) outputs.push({ type: 'image/png', data: pngB64 });
+        send({ type: 'result', requestId, outputs, loadMs });
+      }
+
+      window.addEventListener('message', async (ev) => {
+        const msg = ev.data;
+        if (!msg || msg.type !== 'init') return;
+        try {
+          await run(msg.requestId, msg.code);
+        } catch (e) {
+          send({ type: 'error', requestId: msg.requestId, code: 'python_error', message: (e && e.stack) || String(e) });
+        }
+      });
+
+      send({ type: 'ready' });
+    </script>
+  </body>
+</html>

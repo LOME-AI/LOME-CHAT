@@ -9,7 +9,8 @@
   },
   "scripts": {
     "dev": "tsx ../../scripts/wrangler-dev.ts",
-    "test": "tsx ../../scripts/with-env.ts tsx ../../scripts/run-package-tests.ts",
+    "test": "tsx ../../scripts/with-env.ts tsx ../../scripts/run-package-tests.ts && pnpm run test:workers",
+    "test:workers": "tsx ../../scripts/with-env.ts vitest run --config vitest.workers.config.ts",
     "test:watch": "tsx ../../scripts/with-env.ts vitest",
     "lint": "eslint .",
     "typecheck": "tsgo --noEmit"
@@ -36,6 +37,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.15",
     "@cloudflare/workers-types": "^4.20260612.1",
     "@hushbox/config": "workspace:*",
     "typescript": "^5.9.3",

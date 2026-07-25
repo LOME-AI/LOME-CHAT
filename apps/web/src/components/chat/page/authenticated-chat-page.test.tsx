@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import * as React from 'react';
 import { setEpochKey, clearEpochKeyCache } from '@/lib/epoch-key-cache';
 import { AuthenticatedChatPage } from '@/components/chat/page/authenticated-chat-page';
+import { notificationChannel } from '@/lib/notification-channel';
 import type { Message } from '@/lib/api';
 
 const mockNavigate = vi.fn();
@@ -38,8 +39,23 @@ vi.mock('@tanstack/react-query', () => ({
 
 // useAuthenticatedChat reads the effective reasoning selection; the real hook
 // pulls the model catalog through react-query, which this file mocks away.
+vi.mock('@/lib/notification-channel', () => ({
+  notificationChannel: { clearDelivered: vi.fn(() => Promise.resolve()) },
+}));
+
 vi.mock('@/hooks/chat/use-reasoning-effort', () => ({
   useReasoningEffort: () => ({ effective: undefined }),
+}));
+
+const mockAdvanceReadCursor = vi.fn();
+
+// The real hook reads the conversation list and writes through react-query,
+// both of which this file mocks away; the wiring worth pinning here is which
+// conversation the page hands it.
+vi.mock('@/hooks/notifications/use-read-cursor', () => ({
+  useAdvanceReadCursor: (conversationId: string | null): void => {
+    mockAdvanceReadCursor(conversationId);
+  },
 }));
 
 interface MockChatLayoutProps {
@@ -931,6 +947,22 @@ describe('AuthenticatedChatPage', () => {
 
       expect(mockUseConversation).toHaveBeenCalledWith('conv-456');
       expect(mockUseMessages).toHaveBeenCalledWith('conv-456');
+    });
+
+    it('dismisses the delivered notifications of the conversation on screen', () => {
+      setupMocks({ conversationData: { id: 'conv-456', title: 'Test Chat' } });
+
+      render(<AuthenticatedChatPage routeConversationId="conv-456" />);
+
+      expect(vi.mocked(notificationChannel.clearDelivered)).toHaveBeenCalledWith(['conv-456']);
+    });
+
+    it('acknowledges the reader for the conversation on screen', () => {
+      setupMocks({ conversationData: { id: 'conv-456', title: 'Test Chat' } });
+
+      render(<AuthenticatedChatPage routeConversationId="conv-456" />);
+
+      expect(mockAdvanceReadCursor).toHaveBeenCalledWith('conv-456');
     });
 
     it('renders ChatLayout with isDecrypting while fetching', () => {

@@ -2,10 +2,20 @@ import * as React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { nanoPricePer1k, type Model } from '@hushbox/shared';
+import { nanoPricePer1k, TEST_ID_BUILDERS, type Model } from '@hushbox/shared';
 import { TouchDeviceOverrideContext } from '@hushbox/ui';
 import { useModelStore } from '@/stores/model';
 import { ModelSelectorModal } from '@/components/chat/model-selector/model-selector-modal';
+import { MODEL_BELOW_FLOOR_REASON } from '@/components/chat/model-selector/model-list-item';
+
+const { mockUseModelFloor } = vi.hoisted(() => ({ mockUseModelFloor: vi.fn() }));
+
+// The floor hook pulls the billing query stack (spendable, budgets, tier)
+// into the modal tree; the modal's own behavior under test only needs the
+// per-model verdict, so the hook is mocked at the module seam.
+vi.mock('@/hooks/billing/use-prompt-budget', () => ({
+  useModelFloor: (...args: unknown[]) => mockUseModelFloor(...args) as unknown,
+}));
 
 function withTouchOverride(override: boolean | null, children: React.ReactNode): React.JSX.Element {
   return <TouchDeviceOverrideContext value={override}>{children}</TouchDeviceOverrideContext>;
@@ -126,6 +136,7 @@ describe('ModelSelectorModal', () => {
     switchToSingle();
     // Reset isMobile to desktop default so per-test overrides don't bleed.
     await setIsMobile(false);
+    mockUseModelFloor.mockReturnValue({ isPending: false, isBelowFloor: () => false });
   });
 
   it('renders all models when open', () => {
@@ -3094,6 +3105,176 @@ describe('ModelSelectorModal', () => {
         />
       );
       expect(screen.getAllByPlaceholderText('Search models')).toHaveLength(1);
+    });
+  });
+
+  describe('affordability floor greying', () => {
+    const LLAMA_ID = 'meta-llama/llama-3.1-70b-instruct';
+
+    function greyLlama(): void {
+      mockUseModelFloor.mockReturnValue({
+        isPending: false,
+        isBelowFloor: (model: Model) => model.id === LLAMA_ID,
+      });
+    }
+
+    it('greys a below-floor model with the reason exposed to assistive tech', () => {
+      greyLlama();
+      render(
+        <ModelSelectorModal
+          open={true}
+          onOpenChange={vi.fn()}
+          models={mockModels}
+          selectedIds={new Set(['openai/gpt-4-turbo'])}
+          onSelect={vi.fn()}
+        />
+      );
+
+      const row = screen.getByTestId(TEST_ID_BUILDERS.modelItem(LLAMA_ID));
+      expect(row).toHaveAttribute('data-below-floor', 'true');
+      const button = row.querySelector('button[aria-disabled="true"]');
+      expect(button).not.toBeNull();
+      const reasonId = button?.getAttribute('aria-describedby') ?? '';
+      expect(document.querySelector(`[id="${reasonId}"]`)?.textContent).toBe(
+        MODEL_BELOW_FLOOR_REASON
+      );
+      // Other rows stay untouched.
+      expect(
+        screen.getByTestId(TEST_ID_BUILDERS.modelItem('openai/gpt-4-turbo'))
+      ).not.toHaveAttribute('data-below-floor');
+    });
+
+    it('blocks selecting a below-floor model', async () => {
+      greyLlama();
+      const user = userEvent.setup();
+      const onSelect = vi.fn();
+      const onOpenChange = vi.fn();
+      render(
+        <ModelSelectorModal
+          open={true}
+          onOpenChange={onOpenChange}
+          models={mockModels}
+          selectedIds={new Set(['openai/gpt-4-turbo'])}
+          onSelect={onSelect}
+        />
+      );
+
+      await user.click(screen.getByText('Llama 3.1 70B'));
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(onOpenChange).not.toHaveBeenCalledWith(false);
+
+      // A funded model still commits normally.
+      await user.click(screen.getByText('Claude 3.5 Sonnet'));
+      expect(onSelect).toHaveBeenCalledWith([
+        { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet' },
+      ]);
+    });
+
+    it('keeps the premium lock separate: a premium-locked model shows the paywall, never the floor grey', async () => {
+      mockUseModelFloor.mockReturnValue({ isPending: false, isBelowFloor: () => true });
+      const user = userEvent.setup();
+      const onPremiumClick = vi.fn();
+      render(
+        <ModelSelectorModal
+          open={true}
+          onOpenChange={vi.fn()}
+          models={mockModels}
+          selectedIds={new Set()}
+          onSelect={vi.fn()}
+          premiumIds={new Set(['openai/gpt-4-turbo'])}
+          canAccessPremium={false}
+          onPremiumClick={onPremiumClick}
+        />
+      );
+
+      const premiumRow = screen.getByTestId(TEST_ID_BUILDERS.modelItem('openai/gpt-4-turbo'));
+      expect(premiumRow).not.toHaveAttribute('data-below-floor');
+      await user.click(screen.getByText('GPT-4 Turbo'));
+      expect(onPremiumClick).toHaveBeenCalledWith('openai/gpt-4-turbo');
+    });
+
+    it('lets a below-floor model already in the pending selection be removed', async () => {
+      switchToMulti();
+      greyLlama();
+      const user = userEvent.setup();
+      render(
+        <ModelSelectorModal
+          open={true}
+          onOpenChange={vi.fn()}
+          models={mockModels}
+          selectedIds={new Set(['openai/gpt-4-turbo', LLAMA_ID])}
+          onSelect={vi.fn()}
+        />
+      );
+
+      expect(screen.getByTestId(TEST_ID_BUILDERS.modelItem(LLAMA_ID))).toHaveAttribute(
+        'data-selected',
+        'true'
+      );
+      await user.click(screen.getByText('Llama 3.1 70B'));
+      expect(screen.getByTestId(TEST_ID_BUILDERS.modelItem(LLAMA_ID))).toHaveAttribute(
+        'data-selected',
+        'false'
+      );
+    });
+
+    it('still refuses to add a below-floor model that is not already selected', async () => {
+      switchToMulti();
+      greyLlama();
+      const user = userEvent.setup();
+      render(
+        <ModelSelectorModal
+          open={true}
+          onOpenChange={vi.fn()}
+          models={mockModels}
+          selectedIds={new Set(['openai/gpt-4-turbo'])}
+          onSelect={vi.fn()}
+        />
+      );
+
+      await user.click(screen.getByText('Llama 3.1 70B'));
+      expect(screen.getByTestId(TEST_ID_BUILDERS.modelItem(LLAMA_ID))).toHaveAttribute(
+        'data-selected',
+        'false'
+      );
+    });
+
+    it('still refuses to commit the selected below-floor model in single mode', async () => {
+      greyLlama();
+      const user = userEvent.setup();
+      const onSelect = vi.fn();
+      const onOpenChange = vi.fn();
+      render(
+        <ModelSelectorModal
+          open={true}
+          onOpenChange={onOpenChange}
+          models={mockModels}
+          selectedIds={new Set([LLAMA_ID])}
+          onSelect={onSelect}
+        />
+      );
+
+      await user.click(screen.getByText('Llama 3.1 70B'));
+      expect(onSelect).not.toHaveBeenCalled();
+      expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    });
+
+    it('threads the group funding context into the floor hook', () => {
+      render(
+        <ModelSelectorModal
+          open={true}
+          onOpenChange={vi.fn()}
+          models={mockModels}
+          selectedIds={new Set()}
+          onSelect={vi.fn()}
+          floorGroup={{ conversationId: 'conv-1', currentUserPrivilege: 'write' }}
+        />
+      );
+
+      expect(mockUseModelFloor).toHaveBeenCalledWith({
+        isAuthenticated: true,
+        group: { conversationId: 'conv-1', currentUserPrivilege: 'write' },
+      });
     });
   });
 });

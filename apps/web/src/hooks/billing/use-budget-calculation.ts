@@ -1,7 +1,6 @@
 import * as React from 'react';
 import {
   affordability,
-  applyMarkup,
   computePromptCapacity,
   estimateTokensForTier,
   evaluateManifest,
@@ -20,9 +19,9 @@ import { useSpendable } from '@/hooks/billing/use-spendable.js';
 const DEBOUNCE_MS = 150;
 
 export interface BudgetModelPricing {
-  /** BASE (pre-markup) nano-USD input rate per token. */
+  /** Billable nano-USD input rate per token (fees baked at catalog ingestion). */
   inputPerTokenNano: bigint;
-  /** BASE (pre-markup) nano-USD output rate per token. */
+  /** Billable nano-USD output rate per token (fees baked at catalog ingestion). */
   outputPerTokenNano: bigint;
   /** Model's maximum context length in tokens. */
   contextLength: number;
@@ -31,7 +30,7 @@ export interface BudgetModelPricing {
 export interface UseBudgetCalculationInput {
   /** Character count for: system prompt + history + current message */
   promptCharacterCount: number;
-  /** Models to include in budget calculation (BASE nano rates). */
+  /** Models to include in budget calculation (billable nano rates). */
   models: BudgetModelPricing[];
   /** Whether the user is authenticated */
   isAuthenticated: boolean;
@@ -111,22 +110,18 @@ function buildRequest(input: UseBudgetCalculationInput, tier: UserTier): Billabl
 
 /**
  * The effective per-output-token rate `affordability` prices with — the
- * marked-up model output rate plus the raw (pass-through storage) output
+ * billable model output rate plus the raw (pass-through storage) output
  * rate — re-derived from the manifest through the shared fold
- * (`evaluateManifest` at 1 vs 0 output tokens isolates each variable
- * subtotal, and `applyMarkup` is the same call `affordability` applies to
- * it). Kept a derivation, never a re-typed formula, so a manifest shape
- * change cannot silently drift this rate from the affordability solve.
+ * (`evaluateManifest` at 1 vs 0 output tokens isolates the variable
+ * subtotal; rates are billable at ingestion, so no fee math applies). Kept a
+ * derivation, never a re-typed formula, so a manifest shape change cannot
+ * silently drift this rate from the affordability solve.
  */
 function effectivePerOutputTokenRateNano(manifest: Manifest): bigint {
-  const markedUpVariable =
-    evaluateManifest(manifest, 1n, { scope: 'provider-only' }) -
-    evaluateManifest(manifest, 0n, { scope: 'provider-only' });
-  const rawVariable =
+  return (
     evaluateManifest(manifest, 1n, { scope: 'all-in' }) -
-    evaluateManifest(manifest, 0n, { scope: 'all-in' }) -
-    markedUpVariable;
-  return applyMarkup(markedUpVariable) + rawVariable;
+    evaluateManifest(manifest, 0n, { scope: 'all-in' })
+  );
 }
 
 /**

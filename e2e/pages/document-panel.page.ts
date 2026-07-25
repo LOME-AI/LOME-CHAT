@@ -1,8 +1,16 @@
-import { type Page, type Locator } from '@playwright/test';
+import { type Page, type Locator, type FrameLocator } from '@playwright/test';
 import { TEST_IDS } from '@hushbox/shared';
 import { expect } from '../helpers/expect.js';
 import { TIMEOUTS } from '../config/timeouts.js';
 import type { ChatPage } from './chat.page.js';
+
+/**
+ * The lifecycle values the panel mirrors into `#document-render-status`.
+ * `rendered` is a real html/js/react paint; `complete` is a settled python run
+ * (a `result`); `error` is a surfaced failure. Keeps the runnable-document
+ * proofs keyed on app-emitted state rather than any wall-clock wait.
+ */
+export type DocumentRenderStatus = 'rendered' | 'complete' | 'error';
 
 export class DocumentPanelPage {
   readonly page: Page;
@@ -120,5 +128,57 @@ export class DocumentPanelPage {
   async getPanelWidth(): Promise<number> {
     const box = await this.panel.boundingBox();
     return box?.width ?? 0;
+  }
+
+  // --- Runnable documents (html/js/react/python) ---
+  //
+  // A runnable document executes inside the cross-origin sandbox iframe the app
+  // embeds. `#document-render-status` is the app-DOM lifecycle mirror the panel
+  // exposes (a11y + the Playwright/Maestro proofs); the iframe carries a `title`
+  // and its content lives under `#document-root`. These are the app's real
+  // selectors, not the containment harness — the product flow drives the actual
+  // panel.
+
+  /** The panel's lifecycle status element; `data-status` flips only on real bridge events. */
+  renderStatus(): Locator {
+    return this.page.locator('#document-render-status');
+  }
+
+  /** Wait until the render-status element reports `status` (a genuine bridge lifecycle transition). */
+  async expectRenderStatus(
+    status: DocumentRenderStatus,
+    timeout: number = TIMEOUTS.ASSERT
+  ): Promise<void> {
+    await expect(this.renderStatus()).toHaveAttribute('data-status', status, { timeout });
+  }
+
+  /** The sandbox iframe's document as a FrameLocator, so content assertions reach inside it. */
+  sandboxFrame(): FrameLocator {
+    return this.panel.locator('iframe').contentFrame();
+  }
+
+  /** Python-only: the explicit Run trigger (html/js/react auto-render, python waits for Run). */
+  runButton(): Locator {
+    return this.panel.getByRole('button', { name: 'Run', exact: true });
+  }
+
+  /** Python-only: Stop tears the frame down, killing even a main-thread run. */
+  stopButton(): Locator {
+    return this.panel.getByRole('button', { name: 'Stop', exact: true });
+  }
+
+  /** The `aria-live` console strip that streams program stdout/stderr. */
+  consoleOutput(): Locator {
+    return this.panel.getByRole('log', { name: 'Program output' });
+  }
+
+  /** A matplotlib (or other) PNG output rendered via `<Img>`. */
+  figureOutput(): Locator {
+    return this.panel.getByRole('img', { name: 'Generated figure' });
+  }
+
+  /** The readable error card shown instead of a blank frame on any document failure. */
+  errorCard(): Locator {
+    return this.panel.getByRole('alert');
   }
 }

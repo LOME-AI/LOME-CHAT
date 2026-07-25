@@ -7,10 +7,13 @@ import {
   nanoUSD,
   outputCharsPerTokenForTier,
 } from '@hushbox/shared';
-import { applyMarkup } from '../../billing/index.js';
-import { callBaseNanoUsd } from './estimate.js';
+import { applyMarkup } from '@hushbox/shared';
+import { callBillableNanoUsd } from './estimate.js';
 import { CLASSIFIER_CHARS_PER_TOKEN } from './smart-model-candidates.js';
-import { TRIAL_MESSAGE_COST_CAP_NANO_USD, trialMessageBaseNanoUsd } from './trial-eligibility.js';
+import {
+  TRIAL_MESSAGE_COST_CAP_NANO_USD,
+  trialMessageBillableNanoUsd,
+} from './trial-eligibility.js';
 import { buildTrialSmartModelCandidates } from './trial-smart-model-candidates.js';
 import type { Modality, ModelDescriptor, Pricing } from '@hushbox/shared';
 
@@ -110,7 +113,7 @@ function classifierReserveBase(
   );
   const reserveChars = MAX_CLASSIFIER_CONTEXT_CHARS + overheadChars;
   const inputTokens = Math.ceil(reserveChars / CLASSIFIER_CHARS_PER_TOKEN);
-  const provider = callBaseNanoUsd(classifier.pricing, {
+  const provider = callBillableNanoUsd(classifier.pricing, {
     kind: 'tokens',
     inputTokens,
     outputTokens: CLASSIFIER_OUTPUT_TOKEN_CAP,
@@ -195,8 +198,8 @@ describe('buildTrialSmartModelCandidates', () => {
     // the input token count: a fixed base at zero input plus a fixed increment per
     // input token (2 chars). Measure both from the real pricer, then solve for the
     // largest whole-token send whose reserve + message base still fits the 1¢ cap.
-    const base0 = trialMessageBaseNanoUsd(CHEAP, '', [])._unsafeUnwrap();
-    const perInputToken = trialMessageBaseNanoUsd(CHEAP, 'xx', [])._unsafeUnwrap() - base0;
+    const base0 = trialMessageBillableNanoUsd(CHEAP, '', [])._unsafeUnwrap();
+    const perInputToken = trialMessageBillableNanoUsd(CHEAP, 'xx', [])._unsafeUnwrap() - base0;
     const maxTokens = Number((TRIAL_MESSAGE_COST_CAP_NANO_USD - reserve - base0) / perInputToken);
 
     const kept = buildTrialSmartModelCandidates({
@@ -219,8 +222,8 @@ describe('buildTrialSmartModelCandidates', () => {
   it('prices the full resent history into each candidate’s message base', () => {
     const decoys = dearDecoys();
     const reserve = classifierReserveBase(CHEAP, [CHEAP]);
-    const base0 = trialMessageBaseNanoUsd(CHEAP, '', [])._unsafeUnwrap();
-    const perInputToken = trialMessageBaseNanoUsd(CHEAP, 'xx', [])._unsafeUnwrap() - base0;
+    const base0 = trialMessageBillableNanoUsd(CHEAP, '', [])._unsafeUnwrap();
+    const perInputToken = trialMessageBillableNanoUsd(CHEAP, 'xx', [])._unsafeUnwrap() - base0;
     const maxTokens = Number((TRIAL_MESSAGE_COST_CAP_NANO_USD - reserve - base0) / perInputToken);
     // The same cap-boundary send, split across history and the prompt (each side
     // maxTokens chars → maxTokens input tokens total): still kept at the boundary,
@@ -299,7 +302,7 @@ describe('buildTrialSmartModelCandidates', () => {
     expect(result?.candidates).toHaveLength(1);
   });
 
-  it('exposes the BASE classifier reserve it filtered against (never marked up)', () => {
+  it('exposes the billable classifier reserve it filtered against (no fee applied on top)', () => {
     const result = buildTrialSmartModelCandidates({
       descriptors: [CHEAP, MID, ...dearDecoys()],
       nowMs: NOW_MS,
@@ -307,7 +310,7 @@ describe('buildTrialSmartModelCandidates', () => {
       history: [],
     });
     const expected = classifierReserveBase(CHEAP, [CHEAP, MID]);
-    expect(result?.classifierWorstCaseBaseNanoUsd).toBe(expected);
-    expect(result?.classifierWorstCaseBaseNanoUsd).not.toBe(applyMarkup(expected));
+    expect(result?.classifierWorstCaseNanoUsd).toBe(expected);
+    expect(result?.classifierWorstCaseNanoUsd).not.toBe(applyMarkup(expected));
   });
 });

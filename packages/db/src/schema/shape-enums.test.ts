@@ -142,6 +142,10 @@ describe('pgEnums', () => {
     expect(walletTypeEnum.enumValues).toEqual(['purchased', 'free']);
   });
 
+  it('declares device platforms including web push', () => {
+    expect(devicePlatformEnum.enumValues).toEqual(['ios', 'android', 'web']);
+  });
+
   it('derives newsletter-status values from the single shared NEWSLETTER_STATUSES source', () => {
     expect(newsletterStatusEnum.enumValues).toEqual([...NEWSLETTER_STATUSES]);
   });

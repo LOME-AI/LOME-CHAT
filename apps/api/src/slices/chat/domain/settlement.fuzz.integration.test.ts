@@ -17,11 +17,8 @@ import {
   wallets,
 } from '@hushbox/db';
 import { createFencedSettlementHook, keyRowCompletion } from '../../workflows/index.js';
-import {
-  applyMarkup,
-  createBillingStores,
-  STORAGE_COST_PER_CHARACTER_NANO,
-} from '../../billing/index.js';
+import { applyMarkup } from '@hushbox/shared';
+import { createBillingStores, STORAGE_COST_PER_CHARACTER_NANO } from '../../billing/index.js';
 import { claimKeyRow, failKeyRow } from '../../../lib/idempotency/index.js';
 import { okAsync } from '../../../lib/result/index.js';
 import { createChatStores } from '../adapters/stores.js';
@@ -336,7 +333,7 @@ function requestWithCost(runKey: string, baseCost: bigint): SettlementRequest {
         providerName: PROVIDER_NAME,
         modality: 'text',
         generationId: 'gen-1',
-        baseCostNanoUsd: baseCost,
+        billableCostNanoUsd: applyMarkup(baseCost),
         isEstimated: false,
       },
     ],

@@ -2,8 +2,8 @@
  * The ONE prompt measurement shared by the client composer preview and the
  * server's admission budget: both count the identical prompt the language
  * adapter sends — the built system prompt (`buildTurnSystemPrompt` output,
- * base preamble + optional custom instructions), every resent history turn's
- * content, and the current input. Counts are UTF-16 code units (`.length`),
+ * base preamble + runnable-documents guidance + optional custom instructions),
+ * every resent history turn's content, and the current input. Counts are UTF-16 code units (`.length`),
  * the same unit storage billing counts stored content in.
  */
 

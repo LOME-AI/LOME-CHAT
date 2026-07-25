@@ -645,7 +645,7 @@ class RunExecution {
       // display chip reads "the routing pipeline ran", never "the classifier
       // billed", so a failed-and-fell-back classifier still badges the answer.
       this.pushCharge(key, billing, {
-        baseCostNanoUsd: success.costNanoUsd,
+        billableCostNanoUsd: success.costNanoUsd,
         isEstimated: success.isEstimated ?? false,
         smartModelRan: success.smartModelRan === true,
       });
@@ -655,7 +655,7 @@ class RunExecution {
     // the node's own; their costs were accrued mid-node via ctx.accrue.
     for (const auxiliary of success.auxiliaryCharges ?? []) {
       this.pushCharge(`${key}#${auxiliary.keySuffix}`, auxiliary.billing, {
-        baseCostNanoUsd: auxiliary.baseCostNanoUsd,
+        billableCostNanoUsd: auxiliary.billableCostNanoUsd,
         isEstimated: auxiliary.isEstimated,
       });
     }
@@ -665,7 +665,7 @@ class RunExecution {
     key: string,
     billing: NodeBillingMetadata,
     facts: {
-      readonly baseCostNanoUsd: bigint;
+      readonly billableCostNanoUsd: bigint;
       readonly isEstimated: boolean;
       readonly smartModelRan?: boolean;
     }
@@ -676,7 +676,7 @@ class RunExecution {
       providerName: billing.providerName,
       modality: billing.modality,
       ...(billing.generationId === undefined ? {} : { generationId: billing.generationId }),
-      baseCostNanoUsd: facts.baseCostNanoUsd,
+      billableCostNanoUsd: facts.billableCostNanoUsd,
       isEstimated: facts.isEstimated,
       ...(billing.tokens === undefined ? {} : { tokens: billing.tokens }),
       ...(billing.media === undefined ? {} : { media: billing.media }),

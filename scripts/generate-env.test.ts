@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateEnvFiles, updateWorkflows, parseArgs, escapeEnvValue } from './generate-env.js';
@@ -310,6 +310,7 @@ local_protocol = "http"
       expect(content).toContain('HB_IDLE_DAEMON_PORT="7700"');
       expect(content).toContain('HB_ADMIN_PORT="7000"');
       expect(content).toContain('HB_CRAWLER_VIEW_PORT="7200"');
+      expect(content).toContain('HB_SANDBOX_PORT="7400"');
     });
 
     it('applies worktree detection like development mode', () => {
@@ -559,6 +560,17 @@ old content
       const content = readCiYml();
       expect(content).not.toContain('secrets.VITE_APP_VERSION');
     });
+
+    it('emits ESM_CDN_URL for the sandbox origin build', () => {
+      createCiYml(`name: CI
+# BEGIN GENERATED: build-env
+old content
+# END GENERATED: build-env`);
+
+      updateWorkflows(TEST_DIR_CI);
+
+      expect(readCiYml()).toMatch(/^\s*ESM_CDN_URL: https:\/\/esm\.sh$/m);
+    });
   });
 
   describe('headers-env section', () => {
@@ -585,6 +597,17 @@ old content
       const content = readCiYml();
       expect(content).not.toContain('VITE_HELCIM_JS_TOKEN');
       expect(content).not.toContain('VITE_APP_VERSION');
+    });
+
+    it('emits SANDBOX_ORIGIN_URL for the CSP frame-src directive', () => {
+      createCiYml(`name: CI
+# BEGIN GENERATED: headers-env
+old content
+# END GENERATED: headers-env`);
+
+      updateWorkflows(TEST_DIR_CI);
+
+      expect(readCiYml()).toMatch(/^\s*SANDBOX_ORIGIN_URL: https:\/\/sandbox\.hushbox\.ai$/m);
     });
   });
 
@@ -615,6 +638,17 @@ old content
 
       const content = readCiYml();
       expect(content).toContain('VITE_APP_VERSION: ${{ needs.version.outputs.version }}');
+    });
+
+    it('omits ESM_CDN_URL from the web-only bundle build', () => {
+      createCiYml(`name: CI
+# BEGIN GENERATED: build-env-mobile
+old content
+# END GENERATED: build-env-mobile`);
+
+      updateWorkflows(TEST_DIR_CI);
+
+      expect(readCiYml()).not.toContain('ESM_CDN_URL');
     });
   });
 
@@ -1109,6 +1143,7 @@ local_protocol = "http"
       expect(content).toContain('HB_IDLE_DAEMON_PORT="7700"');
       expect(content).toContain('HB_ADMIN_PORT="7000"');
       expect(content).toContain('HB_CRAWLER_VIEW_PORT="7200"');
+      expect(content).toContain('HB_SANDBOX_PORT="7400"');
     });
   });
 
@@ -1295,6 +1330,20 @@ describe('build-env variants', () => {
       const content = readWorkflow('release.yml');
       expect(content).toContain('VITE_APP_VERSION: ${{ needs.prepare-version.outputs.version }}');
     });
+
+    it('emits ESM_CDN_URL for the sandbox origin build', () => {
+      createWorkflow(
+        'release.yml',
+        `name: Release
+        # BEGIN GENERATED: build-env-web-release
+        old content
+        # END GENERATED: build-env-web-release`
+      );
+
+      updateWorkflows(TEST_DIR_VARIANTS);
+
+      expect(readWorkflow('release.yml')).toMatch(/^\s*ESM_CDN_URL: https:\/\/esm\.sh$/m);
+    });
   });
 
   describe('shared values across variants', () => {
@@ -1395,5 +1444,64 @@ describe('build-env variants', () => {
       const ci = readWorkflow('ci.yml');
       expect(ci).toContain('VITE_API_URL:');
     });
+  });
+
+  describe('headers-env in release.yml', () => {
+    it('emits SANDBOX_ORIGIN_URL for the CSP frame-src directive', () => {
+      createWorkflow(
+        'release.yml',
+        `name: Release
+        # BEGIN GENERATED: headers-env
+        old content
+        # END GENERATED: headers-env`
+      );
+
+      updateWorkflows(TEST_DIR_VARIANTS);
+
+      expect(readWorkflow('release.yml')).toMatch(
+        /^\s*SANDBOX_ORIGIN_URL: https:\/\/sandbox\.hushbox\.ai$/m
+      );
+    });
+
+    it('does not leak build secrets into the headers step', () => {
+      createWorkflow(
+        'release.yml',
+        `name: Release
+        # BEGIN GENERATED: headers-env
+        old content
+        # END GENERATED: headers-env`
+      );
+
+      updateWorkflows(TEST_DIR_VARIANTS);
+
+      const content = readWorkflow('release.yml');
+      expect(content).not.toContain('VITE_HELCIM_JS_TOKEN');
+      expect(content).not.toContain('ESM_CDN_URL');
+    });
+  });
+});
+
+describe('generate-headers.ts steps', () => {
+  // generate-headers.ts fail-fasts on VITE_API_URL and SANDBOX_ORIGIN_URL, and the
+  // steps that run it do so directly rather than through scripts/with-env.ts — so the
+  // workflow env block is their only source, and a hand-written one silently rots the
+  // next time the registry changes. Every such step must draw from the generator.
+  it('draws its env from the generator in every workflow that runs it', () => {
+    const workflowDir = path.resolve(__dirname, '../.github/workflows');
+    const running = readdirSync(workflowDir)
+      .filter((file) => file.endsWith('.yml'))
+      .map((file) => ({ file, text: readFileSync(path.join(workflowDir, file), 'utf8') }))
+      .filter(({ text }) => text.includes('scripts/generate-headers.ts'));
+
+    expect(running.length).toBeGreaterThan(0);
+    for (const { file, text } of running) {
+      expect(
+        // Free-standing comments may sit between the run line and the marker.
+        /run: pnpm tsx scripts\/generate-headers\.ts\n(?:[ \t]*#.*\n)*[ \t]*# BEGIN GENERATED: headers-env\n[ \t]*env:/.test(
+          text
+        ),
+        `${file} runs generate-headers.ts with an env block the generator does not own`
+      ).toBe(true);
+    }
   });
 });

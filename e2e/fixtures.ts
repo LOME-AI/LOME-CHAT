@@ -265,6 +265,10 @@ const ALWAYS_ALLOWED_PROTOCOLS: ReadonlySet<string> = new Set(['data:', 'blob:']
  * - minio: the R2/S3 emulator; presigned GET URLs are fetched by the browser.
  * - admin: the admin SPA dev server (the admin project's page origin); its
  *   `/api/*` vite proxy is also the admin suite's browser-side API origin.
+ * - sandbox: the document sandbox origin — the app embeds its renderer pages in
+ *   an iframe, and those pages fetch their own assets (config/bundle, Pyodide
+ *   wasm/wheels) from the same origin. Without it the sandbox frame is a
+ *   non-allowlisted host and the allowlist would abort it.
  */
 function allowedLocalPorts(): ReadonlySet<string> {
   return new Set([
@@ -273,6 +277,7 @@ function allowedLocalPorts(): ReadonlySet<string> {
     requireEnv('HB_API_PORT'),
     requireEnv('HB_MINIO_API_PORT'),
     requireEnv('HB_ADMIN_PORT'),
+    requireEnv('HB_SANDBOX_PORT'),
   ]);
 }
 

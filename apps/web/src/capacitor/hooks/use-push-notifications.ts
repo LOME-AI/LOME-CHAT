@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { PushNotifications } from '@capacitor/push-notifications';
-import { isNative } from '../platform.js';
+import { FCM } from '@capacitor-community/fcm';
+import { isNative, getPlatform } from '../platform.js';
 
 interface PushCallbacks {
   /** Called when FCM registration token is received. Send to `POST /notifications/device-tokens`. */
@@ -10,11 +11,20 @@ interface PushCallbacks {
 }
 
 /**
- * Registers for push notifications on native platforms.
- *
- * Requests permission, registers with FCM (Android) / APNs via FCM proxy (iOS),
- * and listens for token and notification tap events.
+ * Listens for push token and notification-tap events on native platforms.
  * No-op on web.
+ *
+ * It deliberately neither asks for permission nor registers for remote
+ * notifications: both belong to the notification channel, which raises the
+ * permission question only from an explicit user action. The listeners must be
+ * attached before anything calls `PushNotifications.register()`, or the
+ * `registration` event that carries the token is missed.
+ *
+ * On Android the `registration` event already carries the FCM token. On iOS it
+ * carries the raw APNs token, which the FCM HTTP v1 API rejects; the coexisting
+ * `@capacitor-community/fcm` plugin exchanges it for the FCM token via
+ * `FCM.getToken()` (which requires `PushNotifications.register()` to have run
+ * first, so the APNs token is available to Firebase).
  */
 export function usePushNotifications(callbacks?: PushCallbacks): void {
   const callbacksRef = useRef(callbacks);
@@ -23,15 +33,19 @@ export function usePushNotifications(callbacks?: PushCallbacks): void {
   useEffect(() => {
     if (!isNative()) return;
 
-    const state = { cancelled: false };
-
-    void (async () => {
-      const result = await PushNotifications.requestPermissions();
-      if (state.cancelled || result.receive !== 'granted') return;
-      await PushNotifications.register();
-    })();
-
     const registrationListener = PushNotifications.addListener('registration', (token) => {
+      if (getPlatform() === 'ios') {
+        void (async () => {
+          try {
+            const { token: fcmToken } = await FCM.getToken();
+            callbacksRef.current?.onTokenReceived?.(fcmToken);
+          } catch (error) {
+            // Best-effort: a missing FCM token just means no push this session.
+            console.error('Failed to resolve FCM token on iOS:', error);
+          }
+        })();
+        return;
+      }
       callbacksRef.current?.onTokenReceived?.(token.value);
     });
 
@@ -45,7 +59,6 @@ export function usePushNotifications(callbacks?: PushCallbacks): void {
     );
 
     return () => {
-      state.cancelled = true;
       void (async () => {
         const handle = await registrationListener;
         await handle.remove();

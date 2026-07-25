@@ -20,6 +20,7 @@ import { useRealtimeSync } from '@/hooks/realtime/use-realtime-sync.js';
 import { useRemoteStreaming } from '@/hooks/realtime/use-remote-streaming.js';
 import { useTypingIndicators } from '@/hooks/realtime/use-typing-indicators.js';
 import { useAdminLinkName } from '@/hooks/realtime/use-link-name.js';
+import { useConversationActivity } from '@/hooks/notifications/use-conversation-activity.js';
 import { getCurrentEpoch, getEpochKey, subscribe, getSnapshot } from '@/lib/epoch-key-cache.js';
 import { leaveConversation } from '@/lib/leave-conversation.js';
 import { executeWithRotation } from '@/lib/rotation.js';
@@ -84,6 +85,7 @@ export function useGroupChat(
   );
   const ws = useConversationWebSocket(isGroup && !accessRevoked ? conversationId : null);
   const presenceMap = usePresence(ws);
+  useConversationActivity(ws, callerId ?? null);
   useRealtimeSync(ws, conversationId, callerId ?? null);
   const remoteStreamingMessages = useRemoteStreaming(ws);
   const typingUserIds = useTypingIndicators(ws);

@@ -7,12 +7,11 @@ import {
   estimateTokensForTier,
   nanoUSD,
 } from '@hushbox/shared';
-import { applyMarkup } from '../../billing/index.js';
-import { callBaseNanoUsd, estimateRunCeilingNanoUsd } from './estimate.js';
+import { callBillableNanoUsd, estimateRunCeilingNanoUsd } from './estimate.js';
 import {
   CLASSIFIER_CHARS_PER_TOKEN,
   buildSmartModelCandidates,
-  classifierWorstCaseBaseNanoUsd,
+  classifierWorstCaseNanoUsd,
   pickEffortClassifier,
 } from './smart-model-candidates.js';
 import type { Modality, ModelDescriptor, Pricing } from '@hushbox/shared';
@@ -22,6 +21,7 @@ function descriptorOf(params: {
   readonly inputRate: bigint;
   readonly outputRate: bigint;
   readonly contextLength?: number | undefined;
+  readonly maxOutputTokens?: number | undefined;
   readonly outputs?: readonly Modality[];
   readonly description?: string;
 }): ModelDescriptor {
@@ -37,7 +37,10 @@ function descriptorOf(params: {
     outputs: [...(params.outputs ?? ['text'])],
     parameters: {},
     behaviors: ['streaming'],
-    limits: params.contextLength === undefined ? {} : { contextLength: params.contextLength },
+    limits: {
+      ...(params.contextLength === undefined ? {} : { contextLength: params.contextLength }),
+      ...(params.maxOutputTokens === undefined ? {} : { maxOutputTokens: params.maxOutputTokens }),
+    },
     pricing,
     zdrReachable: true,
     releasedAt: 1_700_000_000,
@@ -86,7 +89,7 @@ function classifierReserve(
   );
   // Rates are billable at ingestion — the shared gate's reserve is the raw
   // provider fold, no fee math.
-  return callBaseNanoUsd(classifier.pricing, {
+  return callBillableNanoUsd(classifier.pricing, {
     kind: 'tokens',
     inputTokens,
     outputTokens: CLASSIFIER_OUTPUT_TOKEN_CAP,
@@ -105,7 +108,7 @@ function turnCeiling(descriptor: ModelDescriptor): bigint {
 
 const HUGE_BALANCE = 10n ** 15n;
 
-describe('classifierWorstCaseBaseNanoUsd', () => {
+describe('classifierWorstCaseNanoUsd', () => {
   it('derives classifier input tokens from the shared estimateTokensForTier helper', () => {
     const classifier = descriptorOf({ id: 'cls/model', inputRate: 1000n, outputRate: 2000n });
     const catalog = [classifier];
@@ -118,7 +121,7 @@ describe('classifierWorstCaseBaseNanoUsd', () => {
     );
     const expectedBase =
       BigInt(expectedInputTokens) * 1000n + BigInt(CLASSIFIER_OUTPUT_TOKEN_CAP) * 2000n;
-    expect(classifierWorstCaseBaseNanoUsd(classifier, catalog)).toBe(expectedBase);
+    expect(classifierWorstCaseNanoUsd(classifier, catalog)).toBe(expectedBase);
   });
 });
 
@@ -301,6 +304,25 @@ describe('buildSmartModelCandidates', () => {
     expect(rich?.candidates[0]?.maxOutputTokens).toBe(7900);
   });
 
+  it('bounds a rich-wallet candidate cap by the catalog maxOutputTokens completion bound', () => {
+    // Same wide-context model, huge wallet: without the key the cap is the full
+    // remaining context; with it, the provider completion bound wins — the
+    // server Smart Model path carries `limits.maxOutputTokens` end-to-end.
+    const CAPPED = descriptorOf({
+      id: 'capped/model',
+      inputRate: 2n,
+      outputRate: 3n,
+      contextLength: 8000,
+      maxOutputTokens: 1500,
+    });
+    const rich = buildSmartModelCandidates({
+      descriptors: [CAPPED],
+      balanceNanoUsd: HUGE_BALANCE,
+      promptInputTokens: 100,
+    });
+    expect(rich?.candidates[0]?.maxOutputTokens).toBe(1500);
+  });
+
   it('exposes the classifier worst-case reserve it filtered against', () => {
     const result = buildSmartModelCandidates({
       descriptors: [CHEAP, MID],
@@ -339,9 +361,9 @@ describe('pickEffortClassifier', () => {
     const pick = pickEffortClassifier([BIG, MID, CHEAP], BIG);
     expect(pick).toEqual({
       classifierModelId: 'cheap/model',
-      // pickEffortClassifier still applies the transitional markup wrapper
-      // (deleted by the port-conversion task).
-      classifierWorstCaseNanoUsd: applyMarkup(classifierReserve(CHEAP, [BIG])),
+      // The reserve is the classifier line item's own billable figure — rates
+      // are billable at ingestion, so no further fee math applies.
+      classifierWorstCaseNanoUsd: classifierReserve(CHEAP, [BIG]),
     });
   });
 

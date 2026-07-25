@@ -8,7 +8,7 @@ import {
   serializeReasoningText,
   textTag,
 } from '@hushbox/shared';
-import { usdToNanoUsd } from '../../billing/index.js';
+import { providerUsdToBillableNanoUsd } from '../../billing/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { createValueStore } from '../engine/value-store.js';
@@ -227,11 +227,11 @@ const VIDEO: MediaValue = {
   metadata: {},
 };
 
-/** Wires the real (injected) money conversion so tests read like production. */
+/** Wires the real (injected) port charge conversion so tests read like production. */
 function runExec(
-  deps: Omit<Parameters<typeof createModelCallExecution>[0], 'usdToNanoUsd'>
+  deps: Omit<Parameters<typeof createModelCallExecution>[0], 'usdToBillableNanoUsd'>
 ): ReturnType<typeof createModelCallExecution> {
-  return createModelCallExecution({ usdToNanoUsd, ...deps });
+  return createModelCallExecution({ usdToBillableNanoUsd: providerUsdToBillableNanoUsd, ...deps });
 }
 
 describe('createModelCallExecution', () => {
@@ -257,10 +257,10 @@ describe('createModelCallExecution', () => {
       ['hi'],
       makeCtx((event) => emitted.push(event))
     );
-    // 0.000001 USD → 1000 nano base; the fake estimate (50n) is not consulted.
+    // 0.000001 USD → 1000 nano → 1150n billable; the fake estimate (50n) is not consulted.
     expect(result._unsafeUnwrap()).toEqual({
       value: 'hello',
-      costNanoUsd: usdToNanoUsd(0.000_001),
+      costNanoUsd: providerUsdToBillableNanoUsd(0.000_001),
       isEstimated: false,
       billing: TEXT_BILLING,
     });
@@ -284,7 +284,7 @@ describe('createModelCallExecution', () => {
     // billing facts are identical to an unlabeled stream.
     expect(result._unsafeUnwrap()).toEqual({
       value: 'hello',
-      costNanoUsd: usdToNanoUsd(0.000_001),
+      costNanoUsd: providerUsdToBillableNanoUsd(0.000_001),
       isEstimated: false,
       billing: TEXT_BILLING,
     });
@@ -391,7 +391,7 @@ describe('createModelCallExecution', () => {
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
     expect(result._unsafeUnwrap()).toEqual({
       value: video,
-      costNanoUsd: usdToNanoUsd(0.000_002),
+      costNanoUsd: providerUsdToBillableNanoUsd(0.000_002),
       isEstimated: false,
       billing: { modelId: 'answer-model', providerName: 'p', modality: 'video' },
     });
@@ -527,7 +527,7 @@ describe('createModelCallExecution', () => {
     // The terminal generation id is the final step's (the finish carries none).
     expect(result._unsafeUnwrap()).toEqual({
       value: '',
-      costNanoUsd: usdToNanoUsd(0.000_003),
+      costNanoUsd: providerUsdToBillableNanoUsd(0.000_003),
       isEstimated: false,
       billing: { ...TEXT_BILLING, generationId: 'gen-1' },
     });
@@ -548,7 +548,7 @@ describe('createModelCallExecution', () => {
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
     expect(result._unsafeUnwrap()).toEqual({
       value: 'a',
-      costNanoUsd: usdToNanoUsd(0.000_003),
+      costNanoUsd: providerUsdToBillableNanoUsd(0.000_003),
       isEstimated: false,
       billing: { ...TEXT_BILLING, generationId: 'gen-2' },
     });
@@ -1053,7 +1053,7 @@ describe('createModelCallExecution — stop/deadline abort settles the streamed 
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
     expect(result._unsafeUnwrap()).toEqual({
       value: 'a',
-      costNanoUsd: usdToNanoUsd(0.000_001),
+      costNanoUsd: providerUsdToBillableNanoUsd(0.000_001),
       isEstimated: false,
       billing: { ...TEXT_BILLING_NO_TOKENS, generationId: 'gen-0' },
     });
@@ -1098,7 +1098,7 @@ describe('createModelCallExecution — stop/deadline abort settles the streamed 
     });
     const result = await exec.run(modelCallNode(), ['hi'], makeCtx());
     expect(result._unsafeUnwrap()).toMatchObject({
-      costNanoUsd: usdToNanoUsd(0.000_001),
+      costNanoUsd: providerUsdToBillableNanoUsd(0.000_001),
       isEstimated: false,
     });
   });

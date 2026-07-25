@@ -13,6 +13,7 @@ describe('DocumentCard', () => {
     title: 'MyComponent',
     content: 'const x = 1;',
     lineCount: 20,
+    isStreaming: false,
     ...overrides,
   });
 
@@ -22,6 +23,7 @@ describe('DocumentCard', () => {
     title: 'MyComponent',
     content: 'const x = 1;',
     lineCount: 20,
+    isStreaming: false,
   });
 
   beforeEach(() => {
@@ -127,6 +129,20 @@ describe('DocumentCard', () => {
       expect(card.querySelector('[data-testid="react-icon"]')).toBeInTheDocument();
     });
 
+    it('renders code icon for js documents', () => {
+      render(<DocumentCard document={createDocument({ type: 'js', language: 'javascript' })} />);
+
+      const card = screen.getByTestId('document-card');
+      expect(card.querySelector('[data-testid="code-icon"]')).toBeInTheDocument();
+    });
+
+    it('renders code icon for python documents', () => {
+      render(<DocumentCard document={createDocument({ type: 'python', language: 'python' })} />);
+
+      const card = screen.getByTestId('document-card');
+      expect(card.querySelector('[data-testid="code-icon"]')).toBeInTheDocument();
+    });
+
     it('renders open arrow icon', () => {
       render(<DocumentCard document={createDocument()} />);
 
@@ -217,6 +233,87 @@ describe('DocumentCard', () => {
 
       expect(useDocumentStore.getState().activeDocumentId).toBe('doc-complete');
       expect(useDocumentStore.getState().activeDocument?.title).toBe('Graph Diagram');
+    });
+
+    it('keeps the user selection when re-anchoring', async () => {
+      const user = userEvent.setup();
+      const partial = createDocument({ id: 'doc-partial' });
+      const complete = createDocument({ id: 'doc-complete' });
+
+      const { rerender } = render(<DocumentCard document={partial} />);
+      await user.click(screen.getByTestId('document-card'));
+      const selectionId = useDocumentStore.getState().activeSelectionId;
+
+      rerender(<DocumentCard document={complete} />);
+
+      expect(useDocumentStore.getState().activeSelectionId).toBe(selectionId);
+    });
+
+    it('re-anchors when the message settles without changing the id', async () => {
+      const user = userEvent.setup();
+      const streaming = createDocument({ id: 'doc-same', isStreaming: true });
+      const settled = createDocument({ id: 'doc-same' });
+
+      const { rerender } = render(<DocumentCard document={streaming} />);
+      await user.click(screen.getByTestId('document-card'));
+      expect(useDocumentStore.getState().activeDocument?.isStreaming).toBe(true);
+
+      rerender(<DocumentCard document={settled} />);
+
+      expect(useDocumentStore.getState().activeDocument?.isStreaming).toBe(false);
+    });
+
+    it('re-publishes the settled streaming state after the card remounts', async () => {
+      // The message list virtualizes, so a card can unmount while its document
+      // stays open in the panel. On remount it must publish what it now knows.
+      const user = userEvent.setup();
+      const streaming = createDocument({ id: 'doc-same', isStreaming: true });
+      const settled = createDocument({ id: 'doc-same' });
+
+      const { unmount } = render(<DocumentCard document={streaming} />);
+      await user.click(screen.getByTestId('document-card'));
+      unmount();
+
+      render(<DocumentCard document={settled} />);
+
+      expect(useDocumentStore.getState().activeDocument?.isStreaming).toBe(false);
+    });
+
+    it('re-claims the panel after remounting with content that grew while it was gone', async () => {
+      // Virtualization can unmount a card whose document is open. By the time it
+      // comes back the content hash names a state the panel never saw, so an id
+      // comparison matches nothing and the panel would sit on the stale copy.
+      const user = userEvent.setup();
+      const streaming = createDocument({
+        id: 'doc-early',
+        content: 'const x = 1;',
+        isStreaming: true,
+      });
+
+      const { unmount } = render(<DocumentCard document={streaming} />);
+      await user.click(screen.getByTestId('document-card'));
+      unmount();
+
+      const grown = createDocument({ id: 'doc-later', content: 'const x = 1;\nconst y = 2;' });
+      render(<DocumentCard document={grown} />);
+
+      expect(useDocumentStore.getState().activeDocument?.content).toBe(grown.content);
+      expect(useDocumentStore.getState().activeDocument?.isStreaming).toBe(false);
+    });
+
+    it('does not let an unrelated document claim the panel on mount', async () => {
+      const user = userEvent.setup();
+      const open_ = createDocument({ id: 'doc-open', content: 'const x = 1;' });
+
+      const { unmount } = render(<DocumentCard document={open_} />);
+      await user.click(screen.getByTestId('document-card'));
+      unmount();
+
+      render(
+        <DocumentCard document={createDocument({ id: 'doc-other', content: 'let z = 3;' })} />
+      );
+
+      expect(useDocumentStore.getState().activeDocument?.id).toBe('doc-open');
     });
 
     it('does not claim active when a different document is active', () => {

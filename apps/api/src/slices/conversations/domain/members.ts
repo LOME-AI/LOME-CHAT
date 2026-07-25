@@ -275,8 +275,18 @@ export interface RemoveMemberParams {
   readonly rotation: RotationBody;
 }
 
+/**
+ * Membership-lifecycle budget-row removal (BILLING §Group Funding 4): billing's
+ * `deleteMemberBudgetWithinTx`, bound by the route into the SAME `byKey`
+ * transaction as the departure writes, so the budget row dies atomically with
+ * the membership — never a cleanup sweep. Billing stays the single writer of
+ * `member_budgets`; this slice only composes the published helper.
+ */
+export type MemberBudgetDeleter = (memberId: string) => ResultAsync<void, DomainError>;
+
 export function removeMember(
   stores: ConversationsStores,
+  deleteBudget: MemberBudgetDeleter,
   params: RemoveMemberParams
 ): ResultAsync<RemoveMemberOutcome, DomainError> {
   const { conversationId, memberId, callerUserId, rotation } = params;
@@ -298,7 +308,7 @@ export function removeMember(
             currentEpoch: conversation.currentEpoch,
           });
         }
-        return executeRemoval(stores, params, gate.targetUserId);
+        return executeRemoval(stores, deleteBudget, params, gate.targetUserId);
       });
     });
   });
@@ -307,10 +317,11 @@ export function removeMember(
 /** The gated removal writes: the shared departure rotation, shaped for removal. */
 function executeRemoval(
   stores: ConversationsStores,
+  deleteBudget: MemberBudgetDeleter,
   params: RemoveMemberParams,
   targetUserId: string
 ): ResultAsync<RemoveMemberOutcome, DomainError> {
-  return rotateOutDeparture(stores, {
+  return rotateOutDeparture(stores, deleteBudget, {
     conversationId: params.conversationId,
     memberId: params.memberId,
     leavingUserId: targetUserId,
@@ -329,11 +340,13 @@ function executeRemoval(
 
 /**
  * The shared departure write (removal and voluntary leave): plan the wrap
- * set minus the leaver, mark the row left, rotate the epoch — all under the
- * caller's conversation lock.
+ * set minus the leaver, mark the row left, delete the leaver's budget row
+ * (membership lifecycle owns budget rows — BILLING §Group Funding 4), rotate
+ * the epoch — all under the caller's conversation lock.
  */
 function rotateOutDeparture(
   stores: ConversationsStores,
+  deleteBudget: MemberBudgetDeleter,
   params: {
     readonly conversationId: string;
     readonly memberId: string;
@@ -350,7 +363,9 @@ function rotateOutDeparture(
       if (left === null) {
         throw new Error('conversations: active member vanished under the conversation lock');
       }
-      return applyRotation(stores, { conversationId, rotation, plan });
+      return deleteBudget(memberId).andThen(() =>
+        applyRotation(stores, { conversationId, rotation, plan })
+      );
     });
   });
 }
@@ -426,6 +441,7 @@ export interface LeaveParams {
  */
 export function leaveConversation(
   stores: ConversationsStores,
+  deleteBudget: MemberBudgetDeleter,
   params: LeaveParams
 ): ResultAsync<LeaveOutcome, DomainError> {
   const { conversationId, callerUserId, rotation } = params;
@@ -441,7 +457,12 @@ export function leaveConversation(
           currentEpoch: conversation.currentEpoch,
         });
       }
-      return memberLeave(stores, { conversationId, callerUserId, memberId: caller.id, rotation });
+      return memberLeave(stores, deleteBudget, {
+        conversationId,
+        callerUserId,
+        memberId: caller.id,
+        rotation,
+      });
     });
   });
 }
@@ -449,6 +470,7 @@ export function leaveConversation(
 /** A non-owner's exit: the shared departure rotation, shaped for leave. */
 function memberLeave(
   stores: ConversationsStores,
+  deleteBudget: MemberBudgetDeleter,
   params: {
     readonly conversationId: string;
     readonly callerUserId: string;
@@ -456,7 +478,7 @@ function memberLeave(
     readonly rotation: RotationBody;
   }
 ): ResultAsync<LeaveOutcome, DomainError> {
-  return rotateOutDeparture(stores, {
+  return rotateOutDeparture(stores, deleteBudget, {
     conversationId: params.conversationId,
     memberId: params.memberId,
     leavingUserId: params.callerUserId,
@@ -542,6 +564,34 @@ export function setPinnedTransition(
         })
         .map((updated) => (updated ? { pinned: params.pinned } : null)),
     onZeroRows: () => okAsync<PinOutcome, DomainError>({ refusal: 'not-found' }),
+  };
+}
+
+export type ReadCursorOutcome = Outcome<{ lastReadSeq: number }>;
+
+/**
+ * Acknowledges reading up to a sequence. The store write is monotonic, so the
+ * answer is the row's committed cursor — a replayed or out-of-order lower
+ * acknowledgement converges on the higher value instead of regressing it.
+ */
+export function advanceLastReadSeqTransition(
+  stores: ConversationsStores,
+  params: {
+    readonly conversationId: string;
+    readonly callerUserId: string;
+    readonly lastReadSeq: number;
+  }
+): ByTransitionParams<ReadCursorOutcome, DomainError> {
+  return {
+    transition: () =>
+      stores.members
+        .advanceLastReadSeq({
+          conversationId: params.conversationId,
+          userId: params.callerUserId,
+          lastReadSeq: BigInt(params.lastReadSeq),
+        })
+        .map((row) => (row === null ? null : { lastReadSeq: Number(row.lastReadSeq) })),
+    onZeroRows: () => okAsync<ReadCursorOutcome, DomainError>({ refusal: 'not-found' }),
   };
 }
 

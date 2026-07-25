@@ -3,7 +3,7 @@ import { chargeWithinTx } from '../../billing/index.js';
 import type { SettlementCharge, SettlementHook, SettlementRequest } from '@hushbox/shared';
 import type { Database } from '@hushbox/db';
 import type { KeyRowFence, SettlementTx } from '../../../lib/idempotency/index.js';
-import type { BillingStores, ChargeInput } from '../../billing/index.js';
+import type { BillingStores, ChargeInput, ChargeSender } from '../../billing/index.js';
 
 /**
  * The settlement-hook plumbing: the generic fenced runner every definition's
@@ -90,6 +90,14 @@ export function keyRowCompletion(response: unknown): KeyRowCompletion {
 export interface ChargeContext {
   readonly walletId: string;
   readonly userId: string;
+  /**
+   * The turn's SENDER principal, stamped on every charge of the run beside
+   * the attributed user (`userId`). They diverge on a link-guest turn —
+   * `userId` is the OWNER, the guest has no users row. On a user turn `userId`
+   * is the sending member, owner-funded or not: owner funding moves only the
+   * charged wallet. Both are self on a solo turn.
+   */
+  readonly sender: ChargeSender;
   readonly runId: string;
   readonly now: Date;
   readonly contentItemIdFor: (key: string) => string | undefined;
@@ -151,10 +159,10 @@ function anchorContentItemId(
 
 /**
  * Builds the `ChargeInput` from a per-generation record and the run context:
- * the model facts and base (pre-markup) cost from the record, who-pays and the
- * run grouping from the context, and the DB-idempotency key derived from
- * `(runId, key)` — unique per generation per run. The 15% markup lands once,
- * downstream in `chargeWithinTx`.
+ * the model facts and billable cost from the record, who-pays and the run
+ * grouping from the context, and the DB-idempotency key derived from
+ * `(runId, key)` — unique per generation per run. The cost is charged as-is —
+ * fees were applied at the seams, never here or downstream.
  */
 function chargeInputFor(
   charge: SettlementCharge,
@@ -164,13 +172,14 @@ function chargeInputFor(
   return {
     walletId: context.walletId,
     userId: context.userId,
+    sender: context.sender,
     runId: context.runId,
     contentItemId,
     modelId: charge.modelId,
     providerName: charge.providerName,
     modality: charge.modality,
     ...(charge.generationId === undefined ? {} : { generationId: charge.generationId }),
-    baseCostNanoUsd: charge.baseCostNanoUsd,
+    billableCostNanoUsd: charge.billableCostNanoUsd,
     storageFeeNanoUsd: charge.storageFeeNanoUsd ?? 0n,
     isEstimated: charge.isEstimated,
     ...(charge.tokens === undefined ? {} : { tokens: charge.tokens }),

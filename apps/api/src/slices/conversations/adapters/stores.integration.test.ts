@@ -390,6 +390,91 @@ describe('listForConversation privilege projection', () => {
   });
 });
 
+describe('read-cursor write', () => {
+  async function seedMember(): Promise<{ userId: string; conversationId: string }> {
+    const seeded = await seedUserAndConversation();
+    await db.insert(conversationMembers).values({
+      conversationId: seeded.conversationId,
+      userId: seeded.userId,
+      privilege: 'owner',
+      visibleFromEpoch: 1,
+    });
+    return seeded;
+  }
+
+  it('advances the cursor to a higher sequence', async () => {
+    const { userId, conversationId } = await seedMember();
+    const advanced = await stores.members.advanceLastReadSeq({
+      conversationId,
+      userId,
+      lastReadSeq: 7n,
+    });
+    expect(advanced._unsafeUnwrap()).toEqual({ lastReadSeq: 7n });
+  });
+
+  it('keeps the higher cursor when the same write replays', async () => {
+    const { userId, conversationId } = await seedMember();
+    const firstWrite = await stores.members.advanceLastReadSeq({
+      conversationId,
+      userId,
+      lastReadSeq: 12n,
+    });
+    firstWrite._unsafeUnwrap();
+    const replay = await stores.members.advanceLastReadSeq({
+      conversationId,
+      userId,
+      lastReadSeq: 12n,
+    });
+    expect(replay._unsafeUnwrap()).toEqual({ lastReadSeq: 12n });
+  });
+
+  it('never regresses the cursor on an out-of-order lower write', async () => {
+    const { userId, conversationId } = await seedMember();
+    const firstWrite = await stores.members.advanceLastReadSeq({
+      conversationId,
+      userId,
+      lastReadSeq: 30n,
+    });
+    firstWrite._unsafeUnwrap();
+    const stale = await stores.members.advanceLastReadSeq({
+      conversationId,
+      userId,
+      lastReadSeq: 4n,
+    });
+    expect(stale._unsafeUnwrap()).toEqual({ lastReadSeq: 30n });
+  });
+
+  it('answers null for a caller with no active membership', async () => {
+    const { conversationId } = await seedMember();
+    const other = await seedUserAndConversation();
+    const missing = await stores.members.advanceLastReadSeq({
+      conversationId,
+      userId: other.userId,
+      lastReadSeq: 3n,
+    });
+    expect(missing._unsafeUnwrap()).toBeNull();
+  });
+
+  it('never advances another member of the same conversation', async () => {
+    const { userId, conversationId } = await seedMember();
+    const bystander = await seedUserAndConversation();
+    await db.insert(conversationMembers).values({
+      conversationId,
+      userId: bystander.userId,
+      privilege: 'write',
+      visibleFromEpoch: 1,
+    });
+    const ownWrite = await stores.members.advanceLastReadSeq({
+      conversationId,
+      userId,
+      lastReadSeq: 9n,
+    });
+    ownWrite._unsafeUnwrap();
+    const untouched = await stores.members.activeByUser(conversationId, bystander.userId);
+    expect(untouched._unsafeUnwrap()?.lastReadSeq).toBe(0n);
+  });
+});
+
 describe('conversation budget exposure', () => {
   it('surfaces the configured per-conversation budget on the record', async () => {
     const { userId } = await seedUserAndConversation();

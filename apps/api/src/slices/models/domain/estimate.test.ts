@@ -1,14 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ERROR_CODES, MAX_SEARCH_TOOL_CALLS, SEARCH_COST_PER_CALL, nanoUSD } from '@hushbox/shared';
-import { applyMarkup, usdToNanoUsd } from '../../billing/index.js';
+import { ERROR_CODES, nanoUSD } from '@hushbox/shared';
 import {
-  WORST_CASE_SEARCH_RESERVATION_NANO_USD,
-  callBaseNanoUsd,
-  estimateCallNanoUsd,
+  callBillableNanoUsd,
   estimateRunCeilingNanoUsd,
   mediaCallUsageFor,
-  priceMediaBaseNanoUsd,
-  priceUsageBaseNanoUsd,
+  priceMediaBillableNanoUsd,
+  priceUsageBillableNanoUsd,
 } from './estimate.js';
 import type { Pricing, Usage } from '@hushbox/shared';
 import type { CallUsage, DeclaredCeiling } from './estimate.js';
@@ -22,59 +19,41 @@ const TOKEN_USAGE: CallUsage = { kind: 'tokens', inputTokens: 1000, outputTokens
 
 const CEILING: DeclaredCeiling = { maxFanOutWidth: 3, maxSteps: 4, maxIterations: 2 };
 
-describe('WORST_CASE_SEARCH_RESERVATION_NANO_USD', () => {
-  it('is MAX_SEARCH_TOOL_CALLS × the per-call rate, marked up once', () => {
-    // The pre-flight web-search reservation, single-sourced from the shared
-    // search constants — the nano-USD bigint analogue of legacy
-    // `worstCaseSearchCost()` (MAX_SEARCH_TOOL_CALLS × SEARCH_COST_PER_CALL, fee
-    // inflated). Admission adds it to a web-search turn's ceiling.
-    expect(WORST_CASE_SEARCH_RESERVATION_NANO_USD).toBe(
-      applyMarkup(BigInt(MAX_SEARCH_TOOL_CALLS) * usdToNanoUsd(SEARCH_COST_PER_CALL))
-    );
-    // 10 × $0.005 = $0.05 = 50_000_000 nano base; billing's 15% markup lands once.
-    expect(WORST_CASE_SEARCH_RESERVATION_NANO_USD).toBe(57_500_000n);
-  });
+describe('callBillableNanoUsd', () => {
+  it('prices token usage from the billable catalog rates as a pure sum (no fee math)', () => {
+    const result = callBillableNanoUsd(TOKEN_PRICING, TOKEN_USAGE);
 
-  it('is a positive amount (never a silent zero reservation)', () => {
-    expect(WORST_CASE_SEARCH_RESERVATION_NANO_USD > 0n).toBe(true);
-  });
-});
-
-describe('estimateCallNanoUsd', () => {
-  it('prices token usage from the catalog per-token rates with the markup applied', () => {
-    const result = estimateCallNanoUsd(TOKEN_PRICING, TOKEN_USAGE);
-
-    // 1000 × 2500 + 200 × 10000 = 4_500_000 base; billing's 15% markup lands once.
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(4_500_000n));
-    expect(result._unsafeUnwrap()).toBe(5_175_000n);
+    // 1000 × 2500 + 200 × 10000 = 4_500_000 — rates are billable at ingestion,
+    // so the fold applies no further markup.
+    expect(result._unsafeUnwrap()).toBe(4_500_000n);
   });
 
   it('prices media units from a flat catalog rate', () => {
-    const result = estimateCallNanoUsd(
+    const result = callBillableNanoUsd(
       { perSecond: nanoUSD(5_000_000n) },
       { kind: 'media', rateKey: 'perSecond', units: 8 }
     );
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(40_000_000n));
+    expect(result._unsafeUnwrap()).toBe(40_000_000n);
   });
 
   it('prices media units from a per-dimension pricing matrix', () => {
-    const result = estimateCallNanoUsd(
+    const result = callBillableNanoUsd(
       { perSecondByResolution: { '720p': nanoUSD(40_000_000n) } },
       { kind: 'media', rateKey: 'perSecondByResolution', dimensionKey: '720p', units: 2 }
     );
 
-    expect(result._unsafeUnwrap()).toBe(applyMarkup(80_000_000n));
+    expect(result._unsafeUnwrap()).toBe(80_000_000n);
   });
 
   it('rejects token usage when a per-token rate is missing (never a silent zero)', () => {
-    const result = estimateCallNanoUsd({ inputPerToken: nanoUSD(2500n) }, TOKEN_USAGE);
+    const result = callBillableNanoUsd({ inputPerToken: nanoUSD(2500n) }, TOKEN_USAGE);
 
     expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 
   it('rejects negative token counts', () => {
-    const result = estimateCallNanoUsd(TOKEN_PRICING, {
+    const result = callBillableNanoUsd(TOKEN_PRICING, {
       kind: 'tokens',
       inputTokens: -1,
       outputTokens: 0,
@@ -84,7 +63,7 @@ describe('estimateCallNanoUsd', () => {
   });
 
   it('rejects fractional token counts', () => {
-    const result = estimateCallNanoUsd(TOKEN_PRICING, {
+    const result = callBillableNanoUsd(TOKEN_PRICING, {
       kind: 'tokens',
       inputTokens: 1.5,
       outputTokens: 0,
@@ -94,13 +73,13 @@ describe('estimateCallNanoUsd', () => {
   });
 
   it('rejects a media rate key absent from the catalog pricing', () => {
-    const result = estimateCallNanoUsd({}, { kind: 'media', rateKey: 'perImage', units: 1 });
+    const result = callBillableNanoUsd({}, { kind: 'media', rateKey: 'perImage', units: 1 });
 
     expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 
   it('rejects a matrix rate addressed without a dimension key', () => {
-    const result = estimateCallNanoUsd(
+    const result = callBillableNanoUsd(
       { perSecondByResolution: { '720p': nanoUSD(40_000_000n) } },
       { kind: 'media', rateKey: 'perSecondByResolution', units: 1 }
     );
@@ -109,7 +88,7 @@ describe('estimateCallNanoUsd', () => {
   });
 
   it('rejects a dimension key absent from the pricing matrix', () => {
-    const result = estimateCallNanoUsd(
+    const result = callBillableNanoUsd(
       { perSecondByResolution: { '720p': nanoUSD(40_000_000n) } },
       { kind: 'media', rateKey: 'perSecondByResolution', dimensionKey: '512x512', units: 1 }
     );
@@ -118,7 +97,7 @@ describe('estimateCallNanoUsd', () => {
   });
 
   it('rejects a dimension key addressed at a flat rate', () => {
-    const result = estimateCallNanoUsd(
+    const result = callBillableNanoUsd(
       { perSecond: nanoUSD(5_000_000n) },
       { kind: 'media', rateKey: 'perSecond', dimensionKey: '720p', units: 1 }
     );
@@ -127,7 +106,7 @@ describe('estimateCallNanoUsd', () => {
   });
 
   it('rejects non-positive media units', () => {
-    const result = estimateCallNanoUsd(
+    const result = callBillableNanoUsd(
       { perSecond: nanoUSD(5_000_000n) },
       { kind: 'media', rateKey: 'perSecond', units: 0 }
     );
@@ -137,7 +116,7 @@ describe('estimateCallNanoUsd', () => {
 });
 
 describe('estimateRunCeilingNanoUsd', () => {
-  it('prices the declared ceiling: per-call base times width, steps, and iterations', () => {
+  it('prices the declared ceiling: per-call billable cost times width, steps, and iterations', () => {
     const result = estimateRunCeilingNanoUsd(TOKEN_PRICING, TOKEN_USAGE, CEILING);
 
     // 4_500_000 billable per call × 3 × 4 × 2 = 108_000_000 — rates are already
@@ -182,62 +161,32 @@ describe('estimateRunCeilingNanoUsd', () => {
   });
 });
 
-describe('callBaseNanoUsd', () => {
-  it('prices token usage as BASE, without the markup', () => {
-    const base = callBaseNanoUsd(TOKEN_PRICING, TOKEN_USAGE);
-
-    // 1000 × 2500 + 200 × 10000 = 4_500_000 base — no markup applied.
-    expect(base._unsafeUnwrap()).toBe(4_500_000n);
-  });
-
-  it('prices media units as BASE, without the markup', () => {
-    const base = callBaseNanoUsd(
-      { perSecond: nanoUSD(5_000_000n) },
-      { kind: 'media', rateKey: 'perSecond', units: 8 }
-    );
-
-    expect(base._unsafeUnwrap()).toBe(40_000_000n);
-  });
-
-  it('returns strictly less than the marked-up estimate, by exactly the markup', () => {
-    const base = callBaseNanoUsd(TOKEN_PRICING, TOKEN_USAGE)._unsafeUnwrap();
-    const marked = estimateCallNanoUsd(TOKEN_PRICING, TOKEN_USAGE)._unsafeUnwrap();
-
-    expect(base).toBeLessThan(marked);
-    expect(applyMarkup(base)).toBe(marked);
-  });
-
-  it('surfaces a missing per-token rate as a validation error', () => {
-    const base = callBaseNanoUsd({ inputPerToken: nanoUSD(2500n) }, TOKEN_USAGE);
-
-    expect(base._unsafeUnwrapErr().code).toBe('validation');
-  });
-});
-
-describe('priceUsageBaseNanoUsd', () => {
+describe('priceUsageBillableNanoUsd', () => {
   const USAGE: Usage = { inputTokens: 1000, outputTokens: 200 };
 
-  it('prices observed usage as BASE, without the markup', () => {
-    const base = priceUsageBaseNanoUsd(TOKEN_PRICING, USAGE);
+  it('prices observed usage at the billable catalog rates with no further fee', () => {
+    const result = priceUsageBillableNanoUsd(TOKEN_PRICING, USAGE);
 
-    expect(base._unsafeUnwrap()).toBe(4_500_000n);
+    expect(result._unsafeUnwrap()).toBe(4_500_000n);
   });
 
-  it('does not apply the markup — base is the marked-up amount divided out', () => {
-    const base = priceUsageBaseNanoUsd(TOKEN_PRICING, USAGE)._unsafeUnwrap();
-    const marked = estimateCallNanoUsd(TOKEN_PRICING, {
+  it('agrees exactly with the call pricer over the same token counts', () => {
+    const fromUsage = priceUsageBillableNanoUsd(TOKEN_PRICING, USAGE)._unsafeUnwrap();
+    const fromCall = callBillableNanoUsd(TOKEN_PRICING, {
       kind: 'tokens',
       inputTokens: 1000,
       outputTokens: 200,
     })._unsafeUnwrap();
 
-    expect(base).toBeLessThan(marked);
-    expect(applyMarkup(base)).toBe(marked);
+    expect(fromUsage).toBe(fromCall);
   });
 
   it('does not add reasoning tokens on top of the output leg (a subset already in outputTokens)', () => {
-    const withReasoning = priceUsageBaseNanoUsd(TOKEN_PRICING, { ...USAGE, reasoningTokens: 50 });
-    const withoutReasoning = priceUsageBaseNanoUsd(TOKEN_PRICING, USAGE);
+    const withReasoning = priceUsageBillableNanoUsd(TOKEN_PRICING, {
+      ...USAGE,
+      reasoningTokens: 50,
+    });
+    const withoutReasoning = priceUsageBillableNanoUsd(TOKEN_PRICING, USAGE);
 
     // outputTokens (200) already includes the 50 reasoning tokens, so the
     // output leg prices at 200 × 10000, never 250 × — 1000 × 2500 + 200 × 10000.
@@ -247,15 +196,15 @@ describe('priceUsageBaseNanoUsd', () => {
   });
 
   it('ignores cached input tokens (a subset already counted at the full input rate)', () => {
-    const base = priceUsageBaseNanoUsd(TOKEN_PRICING, { ...USAGE, cachedInputTokens: 400 });
+    const result = priceUsageBillableNanoUsd(TOKEN_PRICING, { ...USAGE, cachedInputTokens: 400 });
 
-    expect(base._unsafeUnwrap()).toBe(4_500_000n);
+    expect(result._unsafeUnwrap()).toBe(4_500_000n);
   });
 
   it('surfaces a missing per-token rate as a validation error', () => {
-    const base = priceUsageBaseNanoUsd({ inputPerToken: nanoUSD(2500n) }, USAGE);
+    const result = priceUsageBillableNanoUsd({ inputPerToken: nanoUSD(2500n) }, USAGE);
 
-    expect(base._unsafeUnwrapErr().code).toBe('validation');
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 });
 
@@ -370,60 +319,60 @@ describe('mediaCallUsageFor', () => {
   });
 });
 
-describe('priceMediaBaseNanoUsd', () => {
-  it('prices an image call at the flat per-image catalog rate, pre-markup', () => {
-    const base = priceMediaBaseNanoUsd({ perImage: nanoUSD(40_000_000n) }, 'image', {});
+describe('priceMediaBillableNanoUsd', () => {
+  it('prices an image call at the flat per-image billable catalog rate, charged as-is', () => {
+    const result = priceMediaBillableNanoUsd({ perImage: nanoUSD(40_000_000n) }, 'image', {});
 
-    expect(base._unsafeUnwrap()).toBe(40_000_000n);
+    expect(result._unsafeUnwrap()).toBe(40_000_000n);
   });
 
   it('refuses a multi-image call instead of pricing n artifacts', () => {
-    const base = priceMediaBaseNanoUsd({ perImage: nanoUSD(40_000_000n) }, 'image', { n: 2 });
+    const result = priceMediaBillableNanoUsd({ perImage: nanoUSD(40_000_000n) }, 'image', { n: 2 });
 
-    expect(base._unsafeUnwrapErr().code).toBe('validation');
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 
-  it('prices a video call from the per-resolution matrix, pre-markup', () => {
-    const base = priceMediaBaseNanoUsd(
+  it('prices a video call from the per-resolution billable matrix', () => {
+    const result = priceMediaBillableNanoUsd(
       { perSecondByResolution: { '720p': nanoUSD(98_800_000n) } },
       'video',
       { resolution: '720p', durationSeconds: 4 }
     );
 
-    expect(base._unsafeUnwrap()).toBe(395_200_000n);
+    expect(result._unsafeUnwrap()).toBe(395_200_000n);
   });
 
   it('fails closed on a resolution absent from the pricing matrix', () => {
-    const base = priceMediaBaseNanoUsd(
+    const result = priceMediaBillableNanoUsd(
       { perSecondByResolution: { '720p': nanoUSD(98_800_000n) } },
       'video',
       { resolution: '4k', durationSeconds: 4 }
     );
 
-    expect(base._unsafeUnwrapErr().code).toBe('validation');
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 
   it('fails closed on an unpriced image model', () => {
-    expect(priceMediaBaseNanoUsd({}, 'image', {})._unsafeUnwrapErr().code).toBe('validation');
+    expect(priceMediaBillableNanoUsd({}, 'image', {})._unsafeUnwrapErr().code).toBe('validation');
   });
 
   it("fails closed on the inherited-key resolution '__proto__' (never a throw)", () => {
-    const base = priceMediaBaseNanoUsd(
+    const result = priceMediaBillableNanoUsd(
       { perSecondByResolution: { '720p': nanoUSD(98_800_000n) } },
       'video',
       { resolution: '__proto__', durationSeconds: 4 }
     );
 
-    expect(base._unsafeUnwrapErr().code).toBe('validation');
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 
   it("fails closed on the inherited-key resolution 'constructor' (never a throw)", () => {
-    const base = priceMediaBaseNanoUsd(
+    const result = priceMediaBillableNanoUsd(
       { perSecondByResolution: { '720p': nanoUSD(98_800_000n) } },
       'video',
       { resolution: 'constructor', durationSeconds: 4 }
     );
 
-    expect(base._unsafeUnwrapErr().code).toBe('validation');
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 });

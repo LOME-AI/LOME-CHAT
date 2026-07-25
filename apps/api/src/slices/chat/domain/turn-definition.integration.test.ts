@@ -15,7 +15,8 @@ import { createBillingStores } from '../../billing/index.js';
 import { createConversationsStores } from '../../conversations/index.js';
 import { withModelCatalogLock } from '../../models/__tests__/model-catalog-lock.js';
 import { resolveTurnContext } from './turn-context.js';
-import { buildTurnDefinition } from './turn-definition.js';
+import { buildMultiModelTurnDefinition, buildTurnDefinition } from './turn-definition.js';
+import type { ModelReasoning } from '@hushbox/shared';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
@@ -34,6 +35,7 @@ const BYTES = new Uint8Array([3, 3, 3]);
 // isolation delete, so a concurrent run never drops this suite's model.
 const MODEL = `chat-route-ceiling/${crypto.randomUUID().slice(0, 8)}`;
 const REASONING_MODEL = `chat-route-ceiling/${crypto.randomUUID().slice(0, 8)}`;
+const variantModelIds: string[] = [];
 const createdUserIds: string[] = [];
 const createdConversationIds: string[] = [];
 
@@ -53,11 +55,13 @@ afterAll(async () => {
   if (createdUserIds.length > 0) {
     await db.delete(users).where(inArray(users.id, createdUserIds));
   }
-  await db.delete(modelCatalog).where(inArray(modelCatalog.modelId, [MODEL, REASONING_MODEL]));
+  await db
+    .delete(modelCatalog)
+    .where(inArray(modelCatalog.modelId, [MODEL, REASONING_MODEL, ...variantModelIds]));
   await db.$client.end();
 });
 
-/** Base rates 2500 / 10_000 nano-USD per token, context window 128_000. */
+/** Billable rates 2500 / 10_000 nano-USD per token, context window 128_000. */
 async function seedModel(): Promise<void> {
   await db
     .insert(modelCatalog)
@@ -101,6 +105,38 @@ async function seedReasoningModel(): Promise<void> {
         releasedAt: 1_600_000_000,
         fetchedAt: 0,
         reasoning: { supportedEfforts: null },
+      },
+    })
+    .onConflictDoNothing();
+}
+
+/** A fresh catalog id for one variant model, tracked for cleanup. */
+function openModel(): string {
+  const id = `chat-route-ceiling/${crypto.randomUUID().slice(0, 8)}`;
+  variantModelIds.push(id);
+  return id;
+}
+
+/** Same rates/window as {@link seedModel} with the given reasoning metadata. */
+async function seedVariantModel(modelId: string, reasoning?: ModelReasoning): Promise<void> {
+  await db
+    .insert(modelCatalog)
+    .values({
+      modelId,
+      descriptor: {
+        id: modelId,
+        provider: 'p',
+        version: '2',
+        inputs: ['text'],
+        outputs: ['text'],
+        parameters: {},
+        behaviors: ['streaming'],
+        limits: { contextLength: 128_000 },
+        pricing: { inputPerToken: '2500', outputPerToken: '10000' },
+        zdrReachable: true,
+        releasedAt: 1_600_000_000,
+        fetchedAt: 0,
+        ...(reasoning === undefined ? {} : { reasoning }),
       },
     })
     .onConflictDoNothing();
@@ -168,11 +204,12 @@ async function builtAnswerParams(balanceNanoUsd: bigint): Promise<Record<string,
 
 describe('the chat turn path output-token ceiling', () => {
   it('builds a low-balance payer a capped modelCall (the legacy budget derivation)', async () => {
-    // $0.10 balance: estInput = ceil(11/4) = 3; fixed = 3×2875 + 11×300 =
-    // 11_925; variable = 11_500 + 600 = 12_100; effective = 100_000_000 +
-    // 500_000_000 cushion → maxOutputTokens = floor(599_988_075/12_100) = 49_585.
+    // $0.10 balance: estInput = ceil(11/4) = 3; billable rates 2500/10_000;
+    // fixed = 3×2500 + 11×300 = 10_800; variable = 10_000 + 600 = 10_600;
+    // effective = 100_000_000 + 500_000_000 cushion →
+    // maxOutputTokens = floor(599_989_200/10_600) = 56_602.
     const params = await builtAnswerParams(100_000_000n);
-    expect(params).toEqual({ maxOutputTokens: 49_585 });
+    expect(params).toEqual({ maxOutputTokens: 56_602 });
   });
 
   it('omits the ceiling for a rich payer whose budget covers the context window', async () => {
@@ -218,6 +255,118 @@ describe('the reasoning turn build fail-fasts', () => {
   });
 });
 
+describe('multi-model effort resolution (union choice set, per-model downgrade)', () => {
+  const RICH = {
+    promptCharacterCount: 'hello world'.length,
+    funding: { kind: 'purchased', remainingNanoUsd: 100_000_000_000n },
+  } as const;
+
+  /** Every sibling's wire, in selected order, for a multi-model text build. */
+  async function siblingWires(
+    models: readonly { readonly id: string; readonly reasoning?: ModelReasoning }[],
+    reasoningEffort: 'lite' | 'low' | 'medium' | 'high' | 'max' | 'none'
+  ): Promise<unknown[]> {
+    const result = await withModelCatalogLock(redis, async () => {
+      for (const model of models) await seedVariantModel(model.id, model.reasoning);
+      return buildMultiModelTurnDefinition(
+        { db, telemetry: silentTelemetry },
+        models.map((model) => model.id),
+        { budget: RICH, reasoningEffort }
+      );
+    });
+    return result
+      ._unsafeUnwrap()
+      .nodes.filter((node) => node.type === 'modelCall')
+      .map((node) => node.params['reasoning']);
+  }
+
+  it('resolves a level a sibling lacks per model instead of refusing the whole turn', async () => {
+    // The union offers Low (the open-ladder sibling); the High-only sibling has
+    // nothing at or below it and can disable, so it runs reasoning-off — where
+    // the every-model unanimity rule used to 400 the build.
+    const wires = await siblingWires(
+      [
+        { id: openModel(), reasoning: { supportedEfforts: null } },
+        { id: openModel(), reasoning: { supportedEfforts: ['high'] } },
+      ],
+      'low'
+    );
+    expect(wires).toEqual([{ effort: 'low' }, { enabled: false }]);
+  });
+
+  it('runs a mandatory sibling at its LOWEST rung when the choice sits below its ladder', async () => {
+    const wires = await siblingWires(
+      [
+        { id: openModel(), reasoning: { supportedEfforts: null } },
+        { id: openModel(), reasoning: { supportedEfforts: ['hi', 'lo'], mandatory: true } },
+      ],
+      'lite'
+    );
+    expect(wires).toEqual([{ effort: 'minimal' }, { effort: 'lo' }]);
+  });
+
+  it('wires the union pick verbatim on every sibling that offers it', async () => {
+    const wires = await siblingWires(
+      [
+        { id: openModel(), reasoning: { supportedEfforts: null } },
+        { id: openModel(), reasoning: { supportedEfforts: ['hi', 'lo'] } },
+      ],
+      'high'
+    );
+    expect(wires).toEqual([{ effort: 'high' }, { effort: 'hi' }]);
+  });
+
+  it('leaves a non-reasoning sibling wire-silent (no entry, no refusal)', async () => {
+    const wires = await siblingWires(
+      [{ id: openModel(), reasoning: { supportedEfforts: null } }, { id: openModel() }],
+      'medium'
+    );
+    expect(wires).toEqual([{ effort: 'medium' }, undefined]);
+  });
+
+  it('refuses a choice outside the union option set with a typed validation error', async () => {
+    const models = [
+      { id: openModel(), reasoning: { supportedEfforts: ['high'] } },
+      { id: openModel(), reasoning: { supportedEfforts: ['high'] } },
+    ];
+    const result = await withModelCatalogLock(redis, async () => {
+      for (const model of models) await seedVariantModel(model.id, model.reasoning);
+      return buildMultiModelTurnDefinition(
+        { db, telemetry: silentTelemetry },
+        models.map((model) => model.id),
+        { budget: RICH, reasoningEffort: 'low' }
+      );
+    });
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('keeps the single-model explicit refusal: an unoffered level still 400s', async () => {
+    const model = openModel();
+    const result = await withModelCatalogLock(redis, async () => {
+      await seedVariantModel(model, { supportedEfforts: ['high'] });
+      return buildTurnDefinition({ db, telemetry: silentTelemetry }, model, {
+        budget: RICH,
+        reasoningEffort: 'low',
+      });
+    });
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it("picks the sole real choice for 'auto' on a Min-only model (no classifier, no reserve)", async () => {
+    const model = openModel();
+    const result = await withModelCatalogLock(redis, async () => {
+      await seedVariantModel(model, { supportedEfforts: ['none'] });
+      return buildTurnDefinition({ db, telemetry: silentTelemetry }, model, {
+        budget: RICH,
+        reasoningEffort: 'auto',
+      });
+    });
+    const answer = result._unsafeUnwrap().nodes.find((node) => node.type === 'modelCall');
+    if (answer?.type !== 'modelCall') throw new Error('answer node missing from the definition');
+    expect(answer.params['reasoning']).toEqual({ enabled: false });
+  });
+});
+
 describe("the hard-off ('none') turn build", () => {
   async function noneAnswerParams(
     options: Parameters<typeof buildTurnDefinition>[2]
@@ -243,7 +392,7 @@ describe("the hard-off ('none') turn build", () => {
         funding: { kind: 'purchased', remainingNanoUsd: 100_000_000n },
       },
     });
-    expect(params).toEqual({ maxOutputTokens: 49_585, reasoning: { enabled: false } });
+    expect(params).toEqual({ maxOutputTokens: 56_602, reasoning: { enabled: false } });
   });
 
   it('builds a budget-less (trial) hard-off turn uncapped, like a plain trial turn', async () => {

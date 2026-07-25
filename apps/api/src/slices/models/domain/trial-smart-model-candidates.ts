@@ -8,7 +8,7 @@ import {
 import {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   trialEligibility,
-  trialMessageBaseNanoUsd,
+  trialMessageBillableNanoUsd,
 } from './trial-eligibility.js';
 import type { SmartModelCandidateEntry } from './smart-model-candidates.js';
 import type { ChatHistoryMessage, ModelDescriptor } from '@hushbox/shared';
@@ -17,7 +17,7 @@ import type { ChatHistoryMessage, ModelDescriptor } from '@hushbox/shared';
  * The Smart Model candidate list for one TRIAL send: every exposed,
  * engine-runnable text model that passes the trial eligibility gate
  * (non-premium: below the price quartile, old enough, affordable on the
- * minimal-exchange leg), sorted ascending by combined per-token base price,
+ * minimal-exchange leg), sorted ascending by combined per-token billable rate,
  * with the cheapest doubling as the classifier model (and the runtime
  * fallback) — the same classifier chain as the paid list.
  *
@@ -26,15 +26,15 @@ import type { ChatHistoryMessage, ModelDescriptor } from '@hushbox/shared';
  * - Trial has NO wallet, so there is no balance read. The fixed 1¢
  *   per-message ceiling (`TRIAL_MESSAGE_COST_CAP_NANO_USD`) plays the role
  *   the wallet balance plays for a paid send.
- * - Everything is PRE-MARKUP cost — the trial cap's established basis (see
- *   `trial-eligibility.ts`) — so the classifier reserve here is the UNMARKED
- *   worst case, unlike the paid filter's marked-up reserve which gates a
- *   customer-facing balance. Both the reserve and the per-message base now
- *   include their pass-through R2 STORAGE (tier `trial`), matching legacy
- *   `calculateTrialBudget`; storage is pre-markup by construction.
+ * - Everything is BILLABLE (all-in) cost — the trial cap's basis (see
+ *   `trial-eligibility.ts`) and the same basis the paid filter's classifier
+ *   reserve gates a customer-facing balance with. Both the reserve and the
+ *   per-message cost include their pass-through R2 STORAGE (tier `trial`),
+ *   matching legacy `calculateTrialBudget`; storage is pass-through by
+ *   construction (it never marks up).
  * - A candidate is kept iff
- *     classifier worst-case reserve + the ACTUAL message's base cost ≤ 1¢,
- *   where the message base is `trialMessageBaseNanoUsd` (the full resent
+ *     classifier worst-case reserve + the ACTUAL message's billable cost ≤ 1¢,
+ *   where the message cost is `trialMessageBillableNanoUsd` (the full resent
  *   history plus the prompt as input + storage, the fixed minimum output
  *   allocation + its storage) — the cap prices the classifier + answer
  *   combination per candidate, so the send stays under the ceiling whichever
@@ -58,10 +58,10 @@ export interface TrialSmartModelCandidatesInput {
 export interface TrialSmartModelCandidates {
   /** The cheapest eligible candidate — the classifier model and runtime fallback. */
   readonly classifierModelId: string;
-  /** Eligible candidates whose send fits the cap, ascending by base price. */
+  /** Eligible candidates whose send fits the cap, ascending by billable rate. */
   readonly candidates: readonly SmartModelCandidateEntry[];
-  /** The BASE classifier reserve every candidate's cap check included. */
-  readonly classifierWorstCaseBaseNanoUsd: bigint;
+  /** The BILLABLE classifier reserve every candidate's cap check included. */
+  readonly classifierWorstCaseNanoUsd: bigint;
 }
 
 export function buildTrialSmartModelCandidates(
@@ -77,9 +77,9 @@ export function buildTrialSmartModelCandidates(
   const classifier = eligibleSorted[0];
   if (classifier === undefined) return null;
 
-  // The trial reserve is the classifier's pre-markup provider cost PLUS its
+  // The trial reserve is the classifier's billable provider cost PLUS its
   // pass-through storage (tier `trial` output ratio) — the same storage legacy
-  // `calculateTrialBudget` folded into the 1¢ gate. Summed raw (storage never
+  // `calculateTrialBudget` folded into the 1¢ gate. Summed as-is (storage never
   // marks up); undefined when the classifier lacks a per-token rate.
   const reserveItems = classifierReserveLineItems(
     classifier,
@@ -98,16 +98,16 @@ export function buildTrialSmartModelCandidates(
   if (reserve >= TRIAL_MESSAGE_COST_CAP_NANO_USD) return null;
 
   const affordable = eligibleSorted.filter((descriptor) => {
-    const messageBase = trialMessageBaseNanoUsd(descriptor, input.prompt, input.history);
-    /* v8 ignore next -- unreachable: trialEligibility already gated isPriceableForTrial (both per-token rates present), so trialMessageBaseNanoUsd cannot error for an eligible descriptor; kept fail-closed */
-    if (messageBase.isErr()) return false;
-    return reserve + messageBase.value <= TRIAL_MESSAGE_COST_CAP_NANO_USD;
+    const messageCost = trialMessageBillableNanoUsd(descriptor, input.prompt, input.history);
+    /* v8 ignore next -- unreachable: trialEligibility already gated isPriceableForTrial (both per-token rates present), so trialMessageBillableNanoUsd cannot error for an eligible descriptor; kept fail-closed */
+    if (messageCost.isErr()) return false;
+    return reserve + messageCost.value <= TRIAL_MESSAGE_COST_CAP_NANO_USD;
   });
   if (affordable.length === 0) return null;
 
   return {
     classifierModelId: classifier.id,
     candidates: affordable.map((descriptor) => candidateEntry(descriptor)),
-    classifierWorstCaseBaseNanoUsd: reserve,
+    classifierWorstCaseNanoUsd: reserve,
   };
 }

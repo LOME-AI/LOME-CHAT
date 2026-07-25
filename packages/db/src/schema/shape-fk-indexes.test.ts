@@ -20,6 +20,8 @@ const NOT_NULL_PARTIAL_INDEXES = new Set([
   'usage_records_user_id_idx',
   'usage_records_content_item_id_idx',
   'usage_records_conversation_id_idx',
+  'usage_records_sender_user_id_idx',
+  'usage_records_sender_link_id_idx',
   'conversation_members_link_id_idx',
   'conversation_members_invited_by_user_id_idx',
   'conversation_forks_tip_message_id_idx',

@@ -1,9 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import {
   LOCAL_NEON_DEV_CONFIG,
+  conversationMembers,
+  conversationSpending,
+  conversations,
   createDb,
   ledgerEntries,
+  memberBudgets,
   payments,
   users,
   wallets,
@@ -21,6 +25,7 @@ const db = createDb(DATABASE_URL, { neonDev: LOCAL_NEON_DEV_CONFIG });
 const stores = createBillingStores();
 const createdWalletIds: string[] = [];
 const createdUserIds: string[] = [];
+const createdConversationIds: string[] = [];
 const BYTES = new Uint8Array([1, 2, 3]);
 let userCounter = 0;
 
@@ -71,6 +76,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (createdConversationIds.length > 0) {
+    // conversation_members, member_budgets, and conversation_spending cascade.
+    await db.delete(conversations).where(inArray(conversations.id, createdConversationIds));
+  }
   if (createdUserIds.length > 0) {
     await db.delete(payments).where(inArray(payments.userId, createdUserIds));
   }
@@ -386,5 +395,99 @@ describe('guarded ledger leg insert', () => {
     await expect(
       runSettlement(db, (tx) => stores.insertLedgerLegsIfAbsentWithinTx(tx, []))
     ).rejects.toThrow(/at least one leg/);
+  });
+});
+
+describe('member-budget lifecycle writes', () => {
+  async function seedMember(): Promise<{ conversationId: string; memberId: string }> {
+    const ownerId = await seedUser();
+    const conversationId = crypto.randomUUID();
+    await db.insert(conversations).values({ id: conversationId, userId: ownerId, title: BYTES });
+    createdConversationIds.push(conversationId);
+    const rows = await db
+      .insert(conversationMembers)
+      .values({
+        conversationId,
+        userId: ownerId,
+        privilege: 'write',
+        visibleFromEpoch: 1,
+        acceptedAt: new Date(),
+      })
+      .returning({ id: conversationMembers.id });
+    const memberId = rows[0]?.id;
+    if (memberId === undefined) throw new Error('member seed failed');
+    return { conversationId, memberId };
+  }
+
+  async function readBudgetRow(
+    memberId: string
+  ): Promise<{ budgetNanoUsd: bigint; spentNanoUsd: bigint } | undefined> {
+    const rows = await db
+      .select({
+        budgetNanoUsd: memberBudgets.budgetNanoUsd,
+        spentNanoUsd: memberBudgets.spentNanoUsd,
+      })
+      .from(memberBudgets)
+      .where(eq(memberBudgets.memberId, memberId));
+    return rows[0];
+  }
+
+  it('applies a fresh cap insert and reports applied', async () => {
+    const { memberId } = await seedMember();
+    const outcome = await stores.setMemberBudgetCapWithinTx(db, memberId, 500n);
+    expect(outcome._unsafeUnwrap()).toBe('applied');
+    expect(await readBudgetRow(memberId)).toEqual({ budgetNanoUsd: 500n, spentNanoUsd: 0n });
+  });
+
+  it('rejects a cap below the accrued spend atomically, leaving the stored cap untouched', async () => {
+    const { memberId } = await seedMember();
+    await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 900n, spentNanoUsd: 700n });
+    const outcome = await stores.setMemberBudgetCapWithinTx(db, memberId, 699n);
+    expect(outcome._unsafeUnwrap()).toBe('below-spent');
+    expect(await readBudgetRow(memberId)).toEqual({ budgetNanoUsd: 900n, spentNanoUsd: 700n });
+  });
+
+  it('applies a cap exactly equal to the accrued spend (boundary), preserving spend', async () => {
+    const { memberId } = await seedMember();
+    await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 900n, spentNanoUsd: 700n });
+    const outcome = await stores.setMemberBudgetCapWithinTx(db, memberId, 700n);
+    expect(outcome._unsafeUnwrap()).toBe('applied');
+    expect(await readBudgetRow(memberId)).toEqual({ budgetNanoUsd: 700n, spentNanoUsd: 700n });
+  });
+
+  it('deletes the member-budget row, and deleting an absent row is the idempotent no-op', async () => {
+    const { memberId } = await seedMember();
+    await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 900n, spentNanoUsd: 100n });
+    const first = await stores.deleteMemberBudgetWithinTx(db, memberId);
+    expect(first.isOk()).toBe(true);
+    expect(await readBudgetRow(memberId)).toBeUndefined();
+    const second = await stores.deleteMemberBudgetWithinTx(db, memberId);
+    expect(second.isOk()).toBe(true);
+  });
+});
+
+describe('conversation-spend locked read', () => {
+  it('reads zero for a conversation that never spent, materializing a lockable row', async () => {
+    const ownerId = await seedUser();
+    const conversationId = crypto.randomUUID();
+    await db.insert(conversations).values({ id: conversationId, userId: ownerId, title: BYTES });
+    createdConversationIds.push(conversationId);
+    const spent = await stores.lockConversationSpentWithinTx(db, conversationId);
+    expect(spent._unsafeUnwrap()).toBe(0n);
+    const rows = await db
+      .select({ spentNanoUsd: conversationSpending.spentNanoUsd })
+      .from(conversationSpending)
+      .where(eq(conversationSpending.conversationId, conversationId));
+    expect(rows[0]?.spentNanoUsd).toBe(0n);
+  });
+
+  it('reads the accrued spend without clobbering it', async () => {
+    const ownerId = await seedUser();
+    const conversationId = crypto.randomUUID();
+    await db.insert(conversations).values({ id: conversationId, userId: ownerId, title: BYTES });
+    createdConversationIds.push(conversationId);
+    await db.insert(conversationSpending).values({ conversationId, spentNanoUsd: 1234n });
+    const spent = await stores.lockConversationSpentWithinTx(db, conversationId);
+    expect(spent._unsafeUnwrap()).toBe(1234n);
   });
 });

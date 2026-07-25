@@ -30,7 +30,8 @@ import { createLinkResolutionAdapter } from '../../adapters/link-resolution.js';
 import {
   createDeviceTokenStore,
   createMockPushSender,
-  sendPushForNewMessage,
+  createNotificationPreferencesStore,
+  notifyEvent,
 } from '../notifications/index.js';
 import { createChatManifest } from './index.js';
 import { createChatStores } from './adapters/stores.js';
@@ -1277,6 +1278,85 @@ describe('chat route: POST /chat', () => {
     expect(await res.json()).toEqual({ code: 'VALIDATION' });
   });
 
+  it('refuses pinned + auto with the typed classifier code when no engine can be priced (503)', async () => {
+    // BILLING §Effort 5/8d: auto needs a classifier once the model offers two
+    // or more choices; with no priceable engine the send fails with its own
+    // code (explicit levels stay usable) — never a silent static pick.
+    const model = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    // Exposed (non-empty pricing) but with no complete per-token rate pair, so
+    // no classifier call can be priced. It also sorts CHEAPEST, so it is the
+    // classifier pick for the whole catalog — and it is dropped immediately
+    // after the send, or every later auto turn would inherit the refusal.
+    await seedGateModel(model, {
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+      pricing: { inputPerToken: '2' },
+    });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    try {
+      const res = await post(
+        fakeRealtime(STARTED),
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model,
+          reasoningEffort: 'auto',
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }
+      );
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({ code: 'CLASSIFIER_UNAVAILABLE' });
+    } finally {
+      await withSuiteCatalogLock(async () => {
+        await db.delete(modelCatalog).where(eq(modelCatalog.modelId, model));
+      });
+    }
+  });
+
+  it('accepts a level only ONE selected model offers on a multi-model send (201)', async () => {
+    // The union choice set: the High-only sibling resolves to hard off rather
+    // than 400ing the whole build (the old every-model unanimity rule).
+    const openModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    const highOnly = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    await seedGateModel(openModel, {
+      reasoning: { supportedEfforts: null },
+      limits: { contextLength: 1_000_000 },
+    });
+    await seedGateModel(highOnly, {
+      reasoning: { supportedEfforts: ['high'] },
+      limits: { contextLength: 1_000_000 },
+    });
+    const userId = await seedUser();
+    const conversationId = await seedConversation(userId, true);
+    await seedPurchasedWallet(userId);
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: openModel,
+        models: [openModel, highOnly],
+        reasoningEffort: 'low',
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      }
+    );
+    expect(res.status).toBe(201);
+    const siblings = captured[0]?.nodes.filter((node) => node.type === 'modelCall') ?? [];
+    expect(siblings.map((node) => node.params['reasoning'])).toEqual([
+      { effort: 'low' },
+      { enabled: false },
+    ]);
+  });
+
   it('builds pinned + auto as a single-candidate effort-dimension smartModel node (201)', async () => {
     const model = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
     await seedGateModel(model, {
@@ -1381,11 +1461,12 @@ describe('chat route: POST /chat', () => {
     const answer = captured[0]?.nodes.find((node) => node.type === 'modelCall');
     if (answer?.type !== 'modelCall') throw new Error('expected a captured modelCall node');
     expect(answer.tools).toEqual(['webSearch']);
-    // `auto` resolves placeholder-style on this path (medium first).
-    expect(answer.params['reasoning']).toEqual({ effort: 'medium' });
+    // No classifier stage runs on this path yet and no static preference
+    // order exists, so a multi-choice `auto` sends no reasoning wire at all.
+    expect(answer.params['reasoning']).toBeUndefined();
   });
 
-  it('keeps multi-model + auto as N modelCall siblings with placeholder wires (no composite)', async () => {
+  it('keeps multi-model + auto as N modelCall siblings with no reasoning wire (no composite)', async () => {
     // The fan-out has no classifier stage: if this turn ever became a
     // smartModel composite, the sibling generations would be dropped.
     const modelA = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
@@ -1423,10 +1504,9 @@ describe('chat route: POST /chat', () => {
     expect(captured[0]?.nodes.some((node) => node.type === 'smartModel')).toBe(false);
     const siblings = captured[0]?.nodes.filter((node) => node.type === 'modelCall') ?? [];
     expect(siblings).toHaveLength(2);
-    expect(siblings.map((node) => node.params['reasoning'])).toEqual([
-      { effort: 'medium' },
-      { max_tokens: REASONING_BUDGET_TOKENS_BY_EFFORT.medium },
-    ]);
+    // The fan-out has no classifier stage yet and no static preference order
+    // exists, so a multi-choice `auto` leaves every sibling reasoning-free.
+    expect(siblings.map((node) => node.params['reasoning'])).toEqual([undefined, undefined]);
   });
 
   it('refuses an explicit reasoning effort on a media turn with 400', async () => {
@@ -4525,7 +4605,7 @@ describe('chat routes: client-supplied history threading', () => {
   it('admits a trial send whose short history stays within the 1¢ cap', async () => {
     // The known-eligible cheap model: a short history adds a handful of input
     // tokens, nowhere near the cap (the exact price boundary is unit-tested on
-    // trialMessageBaseNanoUsd).
+    // trialMessageBillableNanoUsd).
     await seedModel();
     const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
       model: MODEL,
@@ -5262,19 +5342,19 @@ describe('chat route: POST /chat/:conversationId/message (user-only send)', () =
     ];
     const membership: MembershipReader = { listActiveUserMembers: () => okAsync(members) };
     const notify: NotifyNewMessage = ({ conversationId: cid, senderUserId, presentUserIds }) =>
-      sendPushForNewMessage(
+      notifyEvent(
         {
           membership,
-          presence: { presence: () => okAsync(presentUserIds) },
+          preferences: createNotificationPreferencesStore(db),
           deviceTokens: createDeviceTokenStore(db),
           push: mockPush,
           logger: noopTelemetry(),
         },
         {
+          category: 'message',
           conversationId: cid,
-          senderUserId,
-          title: 'New message',
-          body: 'You have a new message in a conversation.',
+          actorUserId: senderUserId,
+          presentUserIds,
         }
       ).match(
         () => {
@@ -5299,7 +5379,11 @@ describe('chat route: POST /chat/:conversationId/message (user-only send)', () =
 
     const sent = mockPush.getSentMessages();
     expect(sent).toHaveLength(1);
-    expect(sent[0]?.recipients.map((recipient) => recipient.token)).toEqual([absentToken]);
+    expect(
+      sent[0]?.recipients.map((recipient) =>
+        recipient.platform === 'web' ? recipient.endpoint : recipient.token
+      )
+    ).toEqual([absentToken]);
   });
 
   it('still answers 200 and commits when the push capability rejects', async () => {

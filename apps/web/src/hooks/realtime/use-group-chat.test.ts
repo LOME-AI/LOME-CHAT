@@ -131,6 +131,7 @@ import { getCurrentEpoch, getEpochKey, getSnapshot } from '@/lib/epoch-key-cache
 import { useRemoteStreaming } from '@/hooks/realtime/use-remote-streaming.js';
 import { useTypingIndicators } from '@/hooks/realtime/use-typing-indicators.js';
 import { useConversationWebSocket } from '@/hooks/realtime/use-conversation-websocket.js';
+import { useNotificationActivityStore } from '@/stores/notification-activity.js';
 
 describe('useGroupChat', () => {
   beforeEach(() => {
@@ -746,6 +747,36 @@ describe('useGroupChat', () => {
     renderHook(() => useGroupChat('conv-1', 'u1'));
 
     expect(mockUseRealtimeSync).toHaveBeenCalledWith(mockWs, 'conv-1', 'u1');
+  });
+
+  it('counts a message from another member as activity while the user is away', () => {
+    let onMessage: ((event: { conversationId: string; senderId?: string }) => void) | undefined;
+    const mockWs = {
+      on: vi.fn(
+        (
+          type: string,
+          listener: (event: { conversationId: string; senderId?: string }) => void
+        ) => {
+          if (type === 'message:new') onMessage = listener;
+          return () => {};
+        }
+      ),
+      send: vi.fn(),
+      close: vi.fn(),
+    };
+    vi.mocked(useConversationWebSocket).mockReturnValue(
+      mockWs as unknown as ReturnType<typeof useConversationWebSocket>
+    );
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    useNotificationActivityStore.setState({ unreadCount: 0 });
+
+    renderHook(() => useGroupChat('conv-1', 'u1'));
+    act(() => {
+      onMessage?.({ conversationId: 'conv-1', senderId: 'u2' });
+    });
+
+    expect(useNotificationActivityStore.getState().unreadCount).toBe(1);
+    vi.mocked(document.hasFocus).mockRestore();
   });
 
   it('calls useRemoteStreaming with the shared ws', () => {

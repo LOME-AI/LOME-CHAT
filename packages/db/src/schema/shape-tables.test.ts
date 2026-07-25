@@ -55,6 +55,7 @@ const ALL_TABLES: Record<string, PgTable> = {
   device_tokens: schema.deviceTokens,
   custom_instructions: schema.customInstructions,
   preferences: schema.preferences,
+  notification_preferences: schema.notificationPreferences,
   verification_tokens: schema.verificationTokens,
   account_deletion_events: schema.accountDeletionEvents,
 };
@@ -247,6 +248,39 @@ describe('usage_records', () => {
 
   it('survives user deletion via SET NULL (financial retention)', () => {
     expect(findForeignKey(schema.usageRecords, ['user_id']).onDelete).toBe('set null');
+  });
+
+  it('records a member sender via a nullable users FK severed on deletion', () => {
+    const c = column(schema.usageRecords, 'sender_user_id');
+    expect(c.getSQLType()).toBe('uuid');
+    expect(c.notNull).toBe(false);
+    expect(findForeignKey(schema.usageRecords, ['sender_user_id']).onDelete).toBe('set null');
+  });
+
+  it('records a link-guest sender via a nullable shared_links FK severed on link deletion', () => {
+    const c = column(schema.usageRecords, 'sender_link_id');
+    expect(c.getSQLType()).toBe('uuid');
+    expect(c.notNull).toBe(false);
+    const fk = findForeignKey(schema.usageRecords, ['sender_link_id']);
+    expect(fk.onDelete).toBe('set null');
+    expect(
+      foreignKeyShapes(schema.usageRecords).some((f) => f.foreignTable === 'shared_links')
+    ).toBe(true);
+  });
+
+  it('indexes both sender columns partially (IS NOT NULL) for sender-keyed queries', () => {
+    expect(findIndex(schema.usageRecords, 'usage_records_sender_user_id_idx')).toEqual({
+      name: 'usage_records_sender_user_id_idx',
+      unique: false,
+      partial: true,
+      columns: ['sender_user_id'],
+    });
+    expect(findIndex(schema.usageRecords, 'usage_records_sender_link_id_idx')).toEqual({
+      name: 'usage_records_sender_link_id_idx',
+      unique: false,
+      partial: true,
+      columns: ['sender_link_id'],
+    });
   });
 
   it('indexes created_at for windowed public-stats aggregate scans', () => {
@@ -502,6 +536,24 @@ describe('conversation_members', () => {
       'conversation_members_identity_or_left_check'
     );
   });
+
+  it('leaves muted an unqualified boolean (no duration schema)', () => {
+    const c = column(schema.conversationMembers, 'muted');
+    expect(c.getSQLType()).toBe('boolean');
+    expect(c.notNull).toBe(true);
+    expect(hasDefault(schema.conversationMembers, 'muted')).toBe(true);
+    expect(getTableConfig(schema.conversationMembers).columns.map((col) => col.name)).not.toContain(
+      'muted_until'
+    );
+  });
+
+  it('carries a durable read cursor defaulting to nothing-read', () => {
+    const c = column(schema.conversationMembers, 'last_read_seq');
+    expect(c.getSQLType()).toBe('bigint');
+    expect(c.dataType).toBe('bigint');
+    expect(c.notNull).toBe(true);
+    expect(hasDefault(schema.conversationMembers, 'last_read_seq')).toBe(true);
+  });
 });
 
 describe('conversation_forks', () => {
@@ -690,6 +742,24 @@ describe('device_tokens', () => {
   it('cascades with its user', () => {
     expect(findForeignKey(schema.deviceTokens, ['user_id']).onDelete).toBe('cascade');
   });
+
+  it('carries nullable web-push key columns', () => {
+    expect(column(schema.deviceTokens, 'p256dh').getSQLType()).toBe('text');
+    expect(column(schema.deviceTokens, 'p256dh').notNull).toBe(false);
+    expect(column(schema.deviceTokens, 'auth').getSQLType()).toBe('text');
+    expect(column(schema.deviceTokens, 'auth').notNull).toBe(false);
+  });
+
+  it('binds web-push key presence to the web platform via a check', () => {
+    expect(checkNames(schema.deviceTokens)).toContain('device_tokens_web_keys_present');
+  });
+
+  it('stamps last-seen for reactive staleness retention', () => {
+    const c = column(schema.deviceTokens, 'last_seen_at');
+    expect(c.getSQLType()).toBe('timestamp with time zone');
+    expect(c.notNull).toBe(true);
+    expect(hasDefault(schema.deviceTokens, 'last_seen_at')).toBe(true);
+  });
 });
 
 describe('custom_instructions', () => {
@@ -718,6 +788,39 @@ describe('preferences', () => {
     expect(c.getSQLType()).toBe('jsonb');
     expect(c.notNull).toBe(true);
     expect(hasDefault(schema.preferences, 'accessibility')).toBe(true);
+  });
+});
+
+describe('notification_preferences', () => {
+  it('keeps one preferences row per user', () => {
+    const c = column(schema.notificationPreferences, 'user_id');
+    expect(c.isUnique).toBe(true);
+    expect(findForeignKey(schema.notificationPreferences, ['user_id']).onDelete).toBe('cascade');
+  });
+
+  it('defaults every category toggle on so a missing row means all-enabled', () => {
+    for (const name of ['global_enabled', 'messages', 'run_completion', 'membership']) {
+      const c = column(schema.notificationPreferences, name);
+      expect(c.getSQLType()).toBe('boolean');
+      expect(c.notNull).toBe(true);
+      expect(hasDefault(schema.notificationPreferences, name)).toBe(true);
+    }
+  });
+
+  it('holds nullable quiet-hours window and timezone', () => {
+    expect(column(schema.notificationPreferences, 'quiet_hours_start_minutes').getSQLType()).toBe(
+      'integer'
+    );
+    expect(column(schema.notificationPreferences, 'quiet_hours_start_minutes').notNull).toBe(false);
+    expect(column(schema.notificationPreferences, 'quiet_hours_end_minutes').notNull).toBe(false);
+    expect(column(schema.notificationPreferences, 'timezone').getSQLType()).toBe('text');
+    expect(column(schema.notificationPreferences, 'timezone').notNull).toBe(false);
+  });
+
+  it('coheres quiet hours with both-or-neither and timezone checks', () => {
+    const checks = checkNames(schema.notificationPreferences);
+    expect(checks).toContain('notification_preferences_quiet_hours_both_or_neither');
+    expect(checks).toContain('notification_preferences_quiet_hours_timezone');
   });
 });
 

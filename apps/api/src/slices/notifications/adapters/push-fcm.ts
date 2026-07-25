@@ -6,7 +6,16 @@ import { unavailableError } from '../../../lib/errors/index.js';
 import type { Database } from '@hushbox/db';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
-import type { PushDelivery, PushMessage, PushRecipient, PushSender } from '../ports/index.js';
+import type {
+  PushDelivery,
+  PushDeviceRef,
+  PushMessage,
+  PushRecipient,
+  PushSender,
+} from '../ports/index.js';
+
+/** The native (FCM/APNs) partition of a message — web targets go elsewhere. */
+type NativeRecipient = Extract<PushRecipient, { platform: 'ios' | 'android' }>;
 
 const FCM_SEND_URL = 'https://fcm.googleapis.com/v1/projects';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -199,13 +208,33 @@ export function createFcmPushSender(config: FcmPushSenderConfig): PushSender {
     const accessToken = await getAccessToken(account, fetchImpl);
     const url = `${FCM_SEND_URL}/${config.projectId}/messages:send`;
 
+    const native = message.recipients.filter(
+      (recipient): recipient is NativeRecipient => recipient.platform !== 'web'
+    );
+    const collapse = message.collapseKey;
+    // The Android shade entry is addressed by the raw conversationId, because
+    // the client clears a read conversation by reading a delivered
+    // notification's tag. That exposes nothing the alias protects: the same
+    // message's data payload already carries the id, so FCM sees it either
+    // way. The alias stays on the transport collapse fields, where the Web
+    // Push `Topic` header — whose payload is encrypted — would otherwise leak.
+    const shadeTag = message.data?.['conversationId'];
     const results = await Promise.allSettled(
-      message.recipients.map(async (recipient) => {
+      native.map(async (recipient) => {
         const body = {
           message: {
             token: recipient.token,
             notification: { title: message.title, body: message.body },
             ...(message.data === undefined ? {} : { data: message.data }),
+            ...(collapse === undefined
+              ? {}
+              : {
+                  android: {
+                    collapse_key: collapse,
+                    ...(shadeTag === undefined ? {} : { notification: { tag: shadeTag } }),
+                  },
+                  apns: { headers: { 'apns-collapse-id': collapse } },
+                }),
           },
         };
 
@@ -228,7 +257,8 @@ export function createFcmPushSender(config: FcmPushSenderConfig): PushSender {
 
     let successCount = 0;
     let failureCount = 0;
-    const deadTokens: PushRecipient[] = [];
+    const deliveredTokens: PushDeviceRef[] = [];
+    const deadTokens: PushDeviceRef[] = [];
     for (const result of results) {
       // A rejected settlement is a network/transport throw, not a token verdict.
       if (result.status === 'rejected') {
@@ -237,11 +267,18 @@ export function createFcmPushSender(config: FcmPushSenderConfig): PushSender {
       }
       if (result.value.delivered) {
         successCount++;
+        deliveredTokens.push({
+          userId: result.value.recipient.userId,
+          token: result.value.recipient.token,
+        });
         continue;
       }
       failureCount++;
       if (result.value.dead) {
-        deadTokens.push(result.value.recipient);
+        deadTokens.push({
+          userId: result.value.recipient.userId,
+          token: result.value.recipient.token,
+        });
       }
     }
 
@@ -252,13 +289,18 @@ export function createFcmPushSender(config: FcmPushSenderConfig): PushSender {
       });
     }
 
-    return { successCount, failureCount, deadTokens };
+    return { successCount, failureCount, deliveredTokens, deadTokens };
   }
 
   return {
     send(message: PushMessage): ResultAsync<PushDelivery, DomainError> {
       if (message.recipients.length === 0) {
-        return okAsync({ successCount: 0, failureCount: 0, deadTokens: [] });
+        return okAsync({
+          successCount: 0,
+          failureCount: 0,
+          deliveredTokens: [],
+          deadTokens: [],
+        });
       }
       return fromPromise(deliver(message), (cause) =>
         unavailableError('push delivery failed', cause)

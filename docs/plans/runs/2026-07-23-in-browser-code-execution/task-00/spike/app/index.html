@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spike App (parent origin)</title>
+    <script>
+      window.__SANDBOX_ORIGIN__ = 'SANDBOX_ORIGIN_PLACEHOLDER';
+    </script>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 12px; }
+      .leg { border: 1px solid #ccc; padding: 8px; margin: 8px 0; }
+      .status { font-weight: bold; }
+      #render-frame, #python-frame { width: 320px; height: 220px; border: 1px solid #999; }
+      #py-image { max-width: 320px; }
+      pre { white-space: pre-wrap; font-size: 11px; max-height: 120px; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>In-browser code execution spike — parent app page</h1>
+    <!-- Overall marker asserted by Playwright (desktop) and Maestro (Android). -->
+    <div>Overall: <span id="spike-status" class="status">pending</span></div>
+
+    <div class="leg">
+      <h2>Leg A — Web renderer (React from esm.sh, in-browser JSX transpile)</h2>
+      <div>Status: <span id="render-status" class="status">pending</span></div>
+      <div>Transpiler: <span id="render-transpiler">?</span></div>
+      <!-- G3: allow-scripts ONLY. No allow-same-origin. Opaque origin. -->
+      <iframe
+        id="render-frame"
+        sandbox="allow-scripts"
+        title="Web renderer sandbox"
+      ></iframe>
+    </div>
+
+    <div class="leg">
+      <h2>Leg B — Python (Pyodide worker spawned from iframe: numpy + matplotlib PNG)</h2>
+      <div>Status: <span id="python-status" class="status">pending</span></div>
+      <div>Pyodide load ms: <span id="py-load-ms">?</span></div>
+      <iframe
+        id="python-frame"
+        sandbox="allow-scripts"
+        title="Python sandbox"
+      ></iframe>
+      <div><img id="py-image" alt="matplotlib output" /></div>
+      <pre id="py-console"></pre>
+    </div>
+
+    <pre id="log"></pre>
+
+    <script>
+      const SANDBOX = window.__SANDBOX_ORIGIN__;
+      const logEl = document.getElementById('log');
+      const log = (m) => {
+        logEl.textContent += m + '\n';
+        // eslint-disable-next-line no-console
+        console.log('[app]', m);
+      };
+      log('sandbox origin: ' + SANDBOX);
+
+      const state = { render: null, python: null };
+      let beaconSent = false;
+      function beacon() {
+        if (beaconSent) return;
+        const $ = (id) => document.getElementById(id);
+        const img = $('py-image');
+        let png = null;
+        if (img && img.src && img.src.startsWith('data:image/png;base64,')) {
+          const b = atob(img.src.slice('data:image/png;base64,'.length));
+          png = { bytes: b.length, sig: [0, 1, 2, 3].map((i) => b.charCodeAt(i)).join(',') };
+        }
+        beaconSent = true;
+        fetch('/__result', {
+          method: 'POST',
+          body: JSON.stringify({
+            overall: $('spike-status').textContent,
+            render: $('render-status').textContent,
+            python: $('python-status').textContent,
+            transpiler: $('render-transpiler').textContent,
+            pyLoadMs: $('py-load-ms').textContent,
+            png,
+            measure: window.__measure || null,
+            userAgent: navigator.userAgent,
+            deviceMemory: navigator.deviceMemory || null,
+            log: $('log').textContent,
+          }),
+        }).catch(() => {});
+      }
+      function settle() {
+        const rTerminal = state.render === true || state.render === 'fail';
+        const pTerminal = state.python === true || state.python === 'fail';
+        // Reflect a failure in the status as soon as it happens (for live view),
+        // but only emit the beacon once BOTH legs have reached a terminal state so
+        // the recorded result is complete.
+        if (state.render === 'fail' || state.python === 'fail') {
+          document.getElementById('spike-status').textContent = 'FAIL';
+        } else if (state.render === true && state.python === true) {
+          document.getElementById('spike-status').textContent = 'ALL-PASS';
+        }
+        if (rTerminal && pTerminal) beacon();
+      }
+
+      // ---- Leg A: web renderer ----
+      const renderFrame = document.getElementById('render-frame');
+      const REACT_CODE = [
+        "import React from 'react';",
+        "import { createRoot } from 'react-dom/client';",
+        "import confetti from 'canvas-confetti';",
+        'function App() {',
+        '  return <div id="react-mounted">React ' + '{' + 'React.version' + '}' + " rendered + confetti loaded: {typeof confetti}</div>;",
+        '}',
+        "const el = document.getElementById('root');",
+        'createRoot(el).render(<App />);',
+      ].join('\n');
+
+      // ---- Leg B: python ----
+      const pythonFrame = document.getElementById('python-frame');
+      const PY_CODE = [
+        'import numpy as np',
+        'import matplotlib',
+        "matplotlib.use('Agg')",
+        'import matplotlib.pyplot as plt',
+        'import io, base64',
+        'a = np.arange(15).reshape(3, 5)',
+        'print("numpy sum =", int(a.sum()))',
+        'fig, ax = plt.subplots(figsize=(3,2))',
+        'ax.plot(np.linspace(0, 6.28, 100), np.sin(np.linspace(0, 6.28, 100)))',
+        'ax.set_title("spike sine")',
+        'buf = io.BytesIO()',
+        "fig.savefig(buf, format='png')",
+        "print('PNG_B64:' + base64.b64encode(buf.getvalue()).decode())",
+        'int(a.sum())',
+      ].join('\n');
+
+      window.addEventListener('message', (ev) => {
+        // Sandboxed opaque-origin frames report origin "null".
+        const msg = ev.data;
+        if (!msg || typeof msg !== 'object') return;
+        if (msg.type === 'measure') {
+          window.__measure = msg.measure;
+          log('MEASURE ' + JSON.stringify(msg.measure));
+          return;
+        }
+        if (msg.type === 'diag') {
+          log('DIAG[' + (ev.source === renderFrame.contentWindow ? 'render' : 'python') + '] ' + msg.text);
+          return;
+        }
+        if (ev.source === renderFrame.contentWindow) handleRender(msg);
+        else if (ev.source === pythonFrame.contentWindow) handlePython(msg);
+      });
+
+      function handleRender(msg) {
+        if (msg.type === 'ready') {
+          log('render frame ready → init react');
+          renderFrame.contentWindow.postMessage(
+            { type: 'init', kind: 'react', requestId: 'r1', code: REACT_CODE },
+            '*'
+          );
+        } else if (msg.type === 'rendered') {
+          document.getElementById('render-status').textContent = 'PASS';
+          document.getElementById('render-transpiler').textContent =
+            msg.transpiler + ' (' + msg.transpileMs + 'ms)';
+          log('render PASS via ' + msg.transpiler);
+          state.render = true;
+          settle();
+        } else if (msg.type === 'error') {
+          document.getElementById('render-status').textContent = 'FAIL: ' + msg.code;
+          log('render ERROR ' + msg.code + ' ' + msg.message);
+          state.render = 'fail';
+          settle();
+        }
+      }
+
+      function handlePython(msg) {
+        if (msg.type === 'ready') {
+          log('python frame ready → init+run');
+          pythonFrame.contentWindow.postMessage(
+            { type: 'init', kind: 'python', requestId: 'p1', code: PY_CODE },
+            '*'
+          );
+        } else if (msg.type === 'loading') {
+          log('python loading: ' + msg.phase);
+        } else if (msg.type === 'console') {
+          const c = document.getElementById('py-console');
+          c.textContent += '[' + msg.stream + '] ' + msg.text + '\n';
+        } else if (msg.type === 'result') {
+          if (typeof msg.loadMs === 'number')
+            document.getElementById('py-load-ms').textContent = String(msg.loadMs);
+          for (const out of msg.outputs || []) {
+            if (out.type === 'image/png') {
+              document.getElementById('py-image').src = 'data:image/png;base64,' + out.data;
+              document.getElementById('py-image').setAttribute('data-ok', 'yes');
+            }
+          }
+          document.getElementById('python-status').textContent = 'PASS';
+          log('python PASS');
+          state.python = true;
+          settle();
+        } else if (msg.type === 'error') {
+          document.getElementById('python-status').textContent = 'FAIL: ' + msg.code;
+          log('python ERROR ' + msg.code + ' ' + msg.message);
+          state.python = 'fail';
+          settle();
+        }
+      }
+
+      // Load the cross-origin sandbox pages.
+      renderFrame.src = SANDBOX + '/render.html';
+      pythonFrame.src = SANDBOX + '/python.html';
+    </script>
+  </body>
+</html>

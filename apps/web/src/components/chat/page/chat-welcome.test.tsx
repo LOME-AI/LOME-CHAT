@@ -101,8 +101,11 @@ vi.mock('@/hooks/billing/use-stable-balance', () => ({
   })),
 }));
 
-// Mock usePromptBudget directly — PromptInput's only budget dependency
+// Mock usePromptBudget directly — PromptInput's only budget dependency.
+// useModelFloor rides the same module; the picker's greying is out of scope
+// here, so it reports nothing below floor.
 vi.mock('@/hooks/billing/use-prompt-budget', () => ({
+  useModelFloor: () => ({ isPending: false, isBelowFloor: () => false }),
   usePromptBudget: (input: { value: string }): PromptBudgetResult => ({
     fundingSource: 'personal_balance',
     notifications: [],

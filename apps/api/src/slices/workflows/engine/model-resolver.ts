@@ -1,5 +1,5 @@
 import { callShapeFamilyFor } from '@hushbox/shared';
-import { priceMediaBaseNanoUsd, priceUsageBaseNanoUsd } from '../../models/index.js';
+import { priceMediaBillableNanoUsd, priceUsageBillableNanoUsd } from '../../models/index.js';
 import { deriveModelPorts } from './model-ports.js';
 import type { ModelPricingResolver } from '../../models/index.js';
 import type { ModelBinding, ModelResolver } from './live-execution-registry.js';
@@ -29,11 +29,11 @@ function resolveModel(
   return {
     descriptor,
     ports: ports.value,
-    price: (usage) => priceUsageBaseNanoUsd(descriptor.pricing, usage),
+    price: (usage) => priceUsageBillableNanoUsd(descriptor.pricing, usage),
     // Deterministic media price from catalog rates + call params — the same
     // derivation admission's ceiling uses, so a call that was admitted is a
     // call settlement can price.
     priceMedia: (params) =>
-      priceMediaBaseNanoUsd(descriptor.pricing, callShapeFamilyFor(descriptor.outputs), params),
+      priceMediaBillableNanoUsd(descriptor.pricing, callShapeFamilyFor(descriptor.outputs), params),
   };
 }

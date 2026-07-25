@@ -24,12 +24,15 @@ import {
   verificationTokens,
   wallets,
 } from '@hushbox/db';
-import { generateKeyPair } from '@hushbox/crypto';
+import { decryptTextFromEpoch, generateKeyPair, unwrapEpochKey } from '@hushbox/crypto';
 import { applyPipeline } from '../../middleware/pipeline.js';
 import { clearVersionOverride, getVersionOverride } from '../../middleware/version-override.js';
 import { withModelCatalogLock } from '../../slices/models/__tests__/model-catalog-lock.js';
 import * as notificationsBarrel from '../../slices/notifications/index.js';
-import { createEmailSenderFromEnv } from '../../slices/notifications/index.js';
+import {
+  createEmailSenderFromEnv,
+  createPushSenderFromEnv,
+} from '../../slices/notifications/index.js';
 import { createDevManifest } from './routes.js';
 import type { AppEnv, Bindings } from '../../lib/context/index.js';
 import type { TelemetryEnv } from '../../lib/telemetry/index.js';
@@ -118,7 +121,9 @@ async function request(
   );
 }
 
-async function seedUser(emailDomain = 'platform-dev.test'): Promise<{ id: string; email: string }> {
+async function seedUser(
+  emailDomain = 'platform-dev.test'
+): Promise<{ id: string; email: string; privateKey: Uint8Array }> {
   const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 10);
   const keys = generateKeyPair();
   const email = `pd-${suffix}@${emailDomain}`;
@@ -136,7 +141,37 @@ async function seedUser(emailDomain = 'platform-dev.test'): Promise<{ id: string
   const id = rows[0]?.id;
   if (id === undefined) throw new Error('user seed failed');
   createdUserIds.push(id);
-  return { id, email };
+  return { id, email, privateKey: keys.privateKey };
+}
+
+/**
+ * Decrypts a seeded conversation's title along the path the client uses to
+ * render it: unwrap the first-epoch key from the owner's member wrap, then
+ * ECIES-decrypt the `conversations.title` blob. The title is stored encrypted,
+ * so this is the only way to assert the plaintext the route forwarded.
+ */
+async function decryptConversationTitle(
+  conversationId: string,
+  ownerPrivateKey: Uint8Array
+): Promise<string> {
+  const [convRow] = await db
+    .select({ title: conversations.title })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId));
+  const [epochRow] = await db
+    .select({ id: epochs.id })
+    .from(epochs)
+    .where(eq(epochs.conversationId, conversationId));
+  if (convRow === undefined || epochRow === undefined) {
+    throw new Error('conversation or epoch row missing');
+  }
+  const [wrapRow] = await db
+    .select({ wrap: epochMembers.wrap })
+    .from(epochMembers)
+    .where(eq(epochMembers.epochId, epochRow.id));
+  if (wrapRow === undefined) throw new Error('epoch member wrap missing');
+  const epochPrivateKey = unwrapEpochKey(ownerPrivateKey, wrapRow.wrap);
+  return decryptTextFromEpoch(epochPrivateKey, convRow.title);
 }
 
 async function seedTextModel(): Promise<string> {
@@ -291,6 +326,34 @@ describe('POST /dev/conversation', () => {
     const { conversationId } = await readJson<{ conversationId: string }>(res);
     await assertConversationShell(conversationId, owner.id, 1);
     await assertSeededMessageChain(conversationId);
+  });
+
+  it('forwards an optional title to the seeded conversation', async () => {
+    const owner = await seedUser();
+    const res = await withSeededCatalog(() =>
+      request('/dev/conversation', {
+        method: 'POST',
+        body: { ownerEmail: owner.email, title: 'Mobile render proof' },
+      })
+    );
+    expect(res.status).toBe(201);
+    const { conversationId } = await readJson<{ conversationId: string }>(res);
+    expect(await decryptConversationTitle(conversationId, owner.privateKey)).toBe(
+      'Mobile render proof'
+    );
+  });
+
+  it('leaves the conversation untitled when no title is given', async () => {
+    const owner = await seedUser();
+    const res = await withSeededCatalog(() =>
+      request('/dev/conversation', {
+        method: 'POST',
+        body: { ownerEmail: owner.email },
+      })
+    );
+    expect(res.status).toBe(201);
+    const { conversationId } = await readJson<{ conversationId: string }>(res);
+    expect(await decryptConversationTitle(conversationId, owner.privateKey)).toBe('');
   });
 
   it('seeds the multi-model fan-out shape (shared batchId, common parent, distinct costs)', async () => {
@@ -1326,6 +1389,94 @@ describe('dev mailbox routes', () => {
 
   it('404s in production (dev-only route class)', async () => {
     const res = await request('/dev/mailbox', {}, { ...testEnv, NODE_ENV: 'production' });
+    expect(res.status).toBe(404);
+  });
+});
+
+interface CapturedPushView {
+  id: string;
+  category: string | null;
+  tag: string | null;
+  title: string;
+  body: string;
+  payload: Record<string, string>;
+  recipients: { platform: string; userId: string }[];
+}
+
+describe('dev push routes', () => {
+  it('lists captured mock pushes with platform, category, alias tag and payload', async () => {
+    const conversationId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    const sender = createPushSenderFromEnv(
+      { NODE_ENV: 'development', NOTIFICATION_TAG_SECRET: 'dev-route-collapse-alias-key' },
+      db
+    );
+    const sent = await sender.send({
+      recipients: [{ platform: 'ios', userId, token: `push-probe-${crypto.randomUUID()}` }],
+      title: 'New message',
+      body: 'You have a new message in a conversation.',
+      data: { category: 'message', conversationId },
+    });
+    expect(sent.isOk()).toBe(true);
+
+    const res = await request('/dev/push');
+    expect(res.status).toBe(200);
+    const { sends } = await readJson<{ sends: CapturedPushView[] }>(res);
+    const captured = sends.find((send) => send.payload['conversationId'] === conversationId);
+
+    expect(captured?.category).toBe('message');
+    expect(captured?.recipients).toEqual([{ platform: 'ios', userId }]);
+    expect(captured?.title).toBe('New message');
+    // The push-service-visible collapse identity is the derived alias, never
+    // the raw conversation id.
+    expect(captured?.tag).toBeTruthy();
+    expect(captured?.tag).not.toBe(conversationId);
+  });
+
+  it('never exposes a device token or subscription endpoint', async () => {
+    const token = `push-secret-${crypto.randomUUID()}`;
+    const conversationId = crypto.randomUUID();
+    const sender = createPushSenderFromEnv(
+      { NODE_ENV: 'development', NOTIFICATION_TAG_SECRET: 'dev-route-collapse-alias-key' },
+      db
+    );
+    await sender.send({
+      recipients: [{ platform: 'android', userId: crypto.randomUUID(), token }],
+      title: 'New message',
+      body: 'You have a new message in a conversation.',
+      data: { category: 'message', conversationId },
+    });
+
+    const res = await request('/dev/push');
+    const body = await res.text();
+    expect(body).toContain(conversationId);
+    expect(body).not.toContain(token);
+  });
+
+  it('reports a conversation-less send as having no category, tag or payload', async () => {
+    const body = `probe body ${crypto.randomUUID()}`;
+    const sender = createPushSenderFromEnv(
+      { NODE_ENV: 'development', NOTIFICATION_TAG_SECRET: 'dev-route-collapse-alias-key' },
+      db
+    );
+    // Nothing conversation-scoped: the composite derives no collapse alias.
+    await sender.send({
+      recipients: [{ platform: 'ios', userId: crypto.randomUUID(), token: crypto.randomUUID() }],
+      title: 'Notice',
+      body,
+    });
+
+    const res = await request('/dev/push');
+    const { sends } = await readJson<{ sends: CapturedPushView[] }>(res);
+    const captured = sends.find((send) => send.body === body);
+
+    expect(captured?.category).toBeNull();
+    expect(captured?.tag).toBeNull();
+    expect(captured?.payload).toEqual({});
+  });
+
+  it('404s in production (dev-only route class)', async () => {
+    const res = await request('/dev/push', {}, { ...testEnv, NODE_ENV: 'production' });
     expect(res.status).toBe(404);
   });
 });

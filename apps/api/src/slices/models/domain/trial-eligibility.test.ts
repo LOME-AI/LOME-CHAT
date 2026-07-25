@@ -9,7 +9,7 @@ import {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   isTextModel,
   trialEligibility,
-  trialMessageBaseNanoUsd,
+  trialMessageBillableNanoUsd,
   trialPriceThresholdNanoUsd,
 } from './trial-eligibility.js';
 import type { Modality, ModelDescriptor, Pricing } from '@hushbox/shared';
@@ -201,27 +201,27 @@ describe('trialPriceThresholdNanoUsd', () => {
   });
 });
 
-describe('trialMessageBaseNanoUsd', () => {
+describe('trialMessageBillableNanoUsd', () => {
   it('prices the actual prompt on the minimum basis (2000 output tokens), not the context window', () => {
     // prompt 10 chars -> 10 input chars -> ceil(10 / 2) = 5 input tokens; 2000 output tokens.
     // provider = 5 * 1000 + 2000 * 1000 = 2,005,000.
     // storage  = 10 * 300 (input chars) + 2000 * 4 * 300 (output, trial ratio) = 2,403,000.
     // canonical (with-storage) total = 4,408,000 — independent of the 1,000,000 context window.
     const target = model({ pricing: pricing(1000n, 1000n), limits: { contextLength: 1_000_000 } });
-    const result = trialMessageBaseNanoUsd(target, '0123456789', []);
+    const result = trialMessageBillableNanoUsd(target, '0123456789', []);
     expect(result.isOk() && result.value).toBe(4_408_000n);
   });
 
   it('exceeds the 1¢ cap for a long prompt on a mid-price model', () => {
     // 24000 chars -> 12000 input tokens; base = 12000*1000 + 2000*1000 = 14,000,000 > cap.
     const target = model({ pricing: pricing(1000n, 1000n) });
-    const result = trialMessageBaseNanoUsd(target, 'x'.repeat(24_000), []);
+    const result = trialMessageBillableNanoUsd(target, 'x'.repeat(24_000), []);
     expect(result.isOk() && result.value > TRIAL_MESSAGE_COST_CAP_NANO_USD).toBe(true);
   });
 
   it('stays within the 1¢ cap for a short prompt on a mid-price model', () => {
     const target = model({ pricing: pricing(1000n, 1000n) });
-    const result = trialMessageBaseNanoUsd(target, 'hello', []);
+    const result = trialMessageBillableNanoUsd(target, 'hello', []);
     expect(result.isOk() && result.value <= TRIAL_MESSAGE_COST_CAP_NANO_USD).toBe(true);
   });
 
@@ -231,7 +231,7 @@ describe('trialMessageBaseNanoUsd', () => {
     // storage  = 20 * 300 + 2000 * 4 * 300 = 2,406,000.
     // canonical (with-storage) total = 4,416,000.
     const target = model({ pricing: pricing(1000n, 1000n) });
-    const result = trialMessageBaseNanoUsd(target, '0123456789', [
+    const result = trialMessageBillableNanoUsd(target, '0123456789', [
       { role: 'user', content: 'abcd' },
       { role: 'assistant', content: 'efghij' },
     ]);
@@ -253,7 +253,7 @@ describe('trialMessageBaseNanoUsd', () => {
       BigInt(totalChars) * STORAGE_COST_PER_CHARACTER_NANO +
       2000n * BigInt(outputCharsPerTokenForTier('trial')) * STORAGE_COST_PER_CHARACTER_NANO;
     const target = model({ pricing: pricing(1000n, 1000n) });
-    const result = trialMessageBaseNanoUsd(target, prompt, history);
+    const result = trialMessageBillableNanoUsd(target, prompt, history);
     expect(result.isOk() && result.value).toBe(providerBase + storageBase);
   });
 
@@ -261,7 +261,7 @@ describe('trialMessageBaseNanoUsd', () => {
     // priceRequest fails closed when the output rate is absent; the send cannot
     // be priced, so the trial gate refuses it rather than under-charging.
     const target = model({ pricing: { inputPerToken: nanoUSD(5n) } as Pricing });
-    const result = trialMessageBaseNanoUsd(target, 'hi', []);
+    const result = trialMessageBillableNanoUsd(target, 'hi', []);
     expect(result.isErr()).toBe(true);
     expect(result.isErr() && result.error.code).toBe('validation');
   });
@@ -269,7 +269,7 @@ describe('trialMessageBaseNanoUsd', () => {
   it('exceeds the 1¢ cap when a long history inflates a short prompt', () => {
     // 24000 history chars + 5 prompt chars -> 12003 input tokens; over the cap.
     const target = model({ pricing: pricing(1000n, 1000n) });
-    const result = trialMessageBaseNanoUsd(target, 'hello', [
+    const result = trialMessageBillableNanoUsd(target, 'hello', [
       { role: 'user', content: 'x'.repeat(12_000) },
       { role: 'assistant', content: 'y'.repeat(12_000) },
     ]);

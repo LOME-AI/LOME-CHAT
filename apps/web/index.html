@@ -2,7 +2,28 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Frame-source allowlist for the bundled Capacitor WebView (iOS/Android). The
+      generated _headers CSP governs frame-src on the web deployment, but static
+      _headers never reach the assets bundled into the native app — so without this
+      meta policy a sandboxed document inside the app could navigate its own frame
+      to an arbitrary host and exfiltrate data in the URL. Vite substitutes the
+      per-mode sandbox origin at build time; the directive mirrors the web
+      _headers frame-src exactly ('self' + the document sandbox origin) so the two
+      never diverge. Only frame-src is set here — no default-src — so this narrows
+      framing without affecting any other resource load.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="frame-src 'self' %VITE_SANDBOX_ORIGIN_URL%"
+    />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <!-- Installable-PWA manifest. iOS Safari has no web-push path without an
+         installed (Home Screen) PWA, and navigator.setAppBadge only renders for
+         an installed app; the apple-touch-icon is what iOS uses for the Home
+         Screen icon. The service worker is push-only (see src/sw). -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icon.png" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"

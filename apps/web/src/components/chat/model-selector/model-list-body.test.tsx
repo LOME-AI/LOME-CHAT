@@ -33,6 +33,7 @@ function baseProps(overrides: Partial<ModelListBodyProps> = {}): ModelListBodyPr
     focusedModelId: '',
     expandedModelId: null,
     isPremium: () => false,
+    isBelowFloor: () => false,
     canAccessPremium: true,
     isAuthenticated: true,
     isLinkGuest: false,

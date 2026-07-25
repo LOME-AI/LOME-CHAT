@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { DEV_EMAIL_DOMAIN } from '@hushbox/shared';
 import {
   CORE_TEST_PERSONAS,
   E2E_WORKER_POOL_SIZE,
   POOLED_PERSONA_BASE_NAMES,
 } from './lib/seed-personas.js';
+import { DOCUMENT_SHOWCASE_MESSAGES, DOCUMENT_SHOWCASE_TITLE } from './lib/seed-documents.js';
 import {
   ADMIN_TARGET_PERSONA,
   BASE_TEST_PERSONAS,
@@ -15,6 +17,7 @@ import {
   TEST_PERSONAS,
   assertLocalDatabaseUrl,
   assertNoSeedArgs,
+  buildDocumentShowcaseConversations,
   buildPersonaSampleConversations,
   isLocalDatabaseUrl,
   personasWithSampleData,
@@ -166,6 +169,38 @@ describe('buildPersonaSampleConversations (bulk per-persona sample data)', () =>
     const conversations = buildPersonaSampleConversations('alice', 3);
     expect(conversations[0]?.id).toBe(seedUUID('alice-conv-1'));
     expect(conversations[2]?.id).toBe(seedUUID('alice-conv-3'));
+  });
+});
+
+describe('buildDocumentShowcaseConversations', () => {
+  it('gives every dev persona a showcase conversation of their own', () => {
+    const showcases = buildDocumentShowcaseConversations(DEV_PERSONAS);
+    expect(showcases.map((showcase) => showcase.ownerEmail)).toEqual(
+      DEV_PERSONAS.map((persona) => `${persona.name}@${DEV_EMAIL_DOMAIN}`)
+    );
+  });
+
+  it('titles each one so it is obvious in the sidebar', () => {
+    for (const showcase of buildDocumentShowcaseConversations(DEV_PERSONAS)) {
+      expect(showcase.title).toBe(DOCUMENT_SHOWCASE_TITLE);
+    }
+  });
+
+  it('carries the whole showcase transcript', () => {
+    const [first] = buildDocumentShowcaseConversations(DEV_PERSONAS);
+    expect(first?.messages).toEqual(DOCUMENT_SHOWCASE_MESSAGES);
+  });
+
+  it('addresses each conversation by a deterministic per-persona id', () => {
+    const showcases = buildDocumentShowcaseConversations(DEV_PERSONAS);
+    expect(showcases[0]?.id).toBe(seedUUID('alice-document-showcase'));
+    expect(new Set(showcases.map((showcase) => showcase.id)).size).toBe(showcases.length);
+  });
+
+  it('produces the same conversations on a second run, so re-seeding adds nothing', () => {
+    expect(buildDocumentShowcaseConversations(DEV_PERSONAS)).toEqual(
+      buildDocumentShowcaseConversations(DEV_PERSONAS)
+    );
   });
 });
 

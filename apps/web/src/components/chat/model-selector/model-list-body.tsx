@@ -13,6 +13,8 @@ export interface ModelListBodyProps {
   focusedModelId: string;
   expandedModelId: string | null;
   isPremium: (modelId: string) => boolean;
+  /** Shared affordability-floor verdict — a true row greys, not selectable. */
+  isBelowFloor: (model: Model) => boolean;
   canAccessPremium: boolean;
   isAuthenticated: boolean;
   isLinkGuest: boolean;
@@ -34,6 +36,7 @@ export function ModelListBody(props: Readonly<ModelListBodyProps>): React.JSX.El
     focusedModelId,
     expandedModelId,
     isPremium,
+    isBelowFloor,
     canAccessPremium,
     isAuthenticated,
     isLinkGuest,
@@ -65,6 +68,7 @@ export function ModelListBody(props: Readonly<ModelListBodyProps>): React.JSX.El
             isSelected={isSelected}
             isDisabled={isAtLimit && !localSelectedIds.has(model.id)}
             isPremium={isPremium(model.id)}
+            isBelowFloor={isBelowFloor(model)}
             canAccessPremium={canAccessPremium}
             isAuthenticated={isAuthenticated}
             isLinkGuest={isLinkGuest}

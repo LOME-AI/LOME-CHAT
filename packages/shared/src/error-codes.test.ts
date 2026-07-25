@@ -91,6 +91,25 @@ describe('ERROR_CODES', () => {
     );
   });
 
+  it('names the link-guest group-budget refusal code with its own copy', () => {
+    expect(ERROR_CODES.GROUP_BUDGET_EXHAUSTED).toBe('GROUP_BUDGET_EXHAUSTED');
+    expect(friendlyErrorMessage('GROUP_BUDGET_EXHAUSTED')).toBe(
+      ERROR_MESSAGES.GROUP_BUDGET_EXHAUSTED
+    );
+    // A guest denial names its remedy (owner-allocated budget) — never the
+    // generic permission copy that stood here before the typed code.
+    expect(ERROR_MESSAGES.GROUP_BUDGET_EXHAUSTED).not.toBe(ERROR_MESSAGES.FORBIDDEN);
+    expect(friendlyErrorMessage('GROUP_BUDGET_EXHAUSTED')).not.toBe(
+      'Something went wrong. Please try again.'
+    );
+  });
+
+  it('names the budget-edit-below-spend rejection code with its own copy', () => {
+    expect(ERROR_CODES.BUDGET_BELOW_SPENT).toBe('BUDGET_BELOW_SPENT');
+    expect(friendlyErrorMessage('BUDGET_BELOW_SPENT')).toBe(ERROR_MESSAGES.BUDGET_BELOW_SPENT);
+    expect(ERROR_MESSAGES.BUDGET_BELOW_SPENT).not.toBe(ERROR_MESSAGES.VALIDATION);
+  });
+
   it('names the admin model kill-switch code', () => {
     expect(ERROR_CODES.MODEL_DISABLED).toBe('MODEL_DISABLED');
     expect(friendlyErrorMessage('MODEL_DISABLED')).toBe(ERROR_MESSAGES.MODEL_DISABLED);
@@ -348,6 +367,21 @@ describe('errorResponseSchema', () => {
 
   it('rejects an unknown code', () => {
     expect(errorResponseSchema.safeParse({ code: 'WHAT' }).success).toBe(false);
+  });
+});
+
+describe('classifier-unavailable error code', () => {
+  it('names the auto-effort classifier-unbuildable refusal with its own copy', () => {
+    expect(ERROR_CODES.CLASSIFIER_UNAVAILABLE).toBe('CLASSIFIER_UNAVAILABLE');
+    expect(friendlyErrorMessage('CLASSIFIER_UNAVAILABLE')).toBe(
+      ERROR_MESSAGES.CLASSIFIER_UNAVAILABLE
+    );
+    // The refusal must tell the user explicit levels still work — never the
+    // generic fallback or the plain unavailable copy.
+    expect(ERROR_MESSAGES.CLASSIFIER_UNAVAILABLE).not.toBe(ERROR_MESSAGES.UNAVAILABLE);
+    expect(friendlyErrorMessage('CLASSIFIER_UNAVAILABLE')).not.toBe(
+      'Something went wrong. Please try again.'
+    );
   });
 });
 

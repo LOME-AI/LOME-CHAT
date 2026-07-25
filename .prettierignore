@@ -28,6 +28,18 @@ yarn.lock
 *.min.css
 **/routeTree.gen.ts
 
+# Document-sandbox served assets. The two bundles are esbuild output committed so
+# the reviewed bytes are the served bytes; a drift test asserts they equal a fresh
+# build, so reformatting them would break that byte-equality. The pyodide runtime
+# is fetched, pinned third-party wasm/wheels.
+apps/sandbox/public/render.js
+apps/sandbox/public/python.js
+apps/sandbox/public/pyodide/
+
+# Captured upstream package-registry responses, replayed verbatim in tests.
+# Reformatting them would change the bytes under replay.
+apps/sandbox/test-fixtures/
+
 # IDE
 .idea/
 .vscode/

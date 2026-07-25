@@ -1,20 +1,139 @@
 appId: ai.hushbox.app
-name: Push notification permission dialog appears
+name: Notification permission is never asked at launch and the in-app offer is one-time
 tags:
   - must
+androidWebViewHierarchy: devtools
+env:
+  # See 10-core-user-flow.yaml for the full reasoning. Short version: Maestro
+  # spends ~10 s per character on Capacitor WebViews on docker-android (issue
+  # #2718), so log in with the shortest legal username (3 chars) rather than a
+  # 27-char email. `tmu` is the seeded MOBILE_TEST_PERSONA username.
+  TEST_USERNAME: tmu
+  TEST_PASSWORD: pass1234
 ---
-# Launch with notification permission unset to trigger the system dialog.
-# The usePushNotifications hook calls PushNotifications.requestPermissions() on mount.
+# The app never raises the OS notification dialog on its own: permission is only
+# ever requested from an explicit tap on the in-app offer, which is made at most
+# once per device. Launching with the permission unset is what makes both halves
+# observable — the OS dialog would appear here if anything asked on mount, and
+# the offer is only eligible while the permission is still undecided.
 - launchApp:
     clearState: true
     permissions:
       notifications: unset
 
-# On Android 13+ (API 33+), POST_NOTIFICATIONS requires explicit permission.
-# Wait for the system permission dialog to appear.
 - extendedWaitUntil:
-    visible: 'Allow'
+    visible: 'Sign up'
     timeout: 45000
 
-# Accept the permission
-- tapOn: 'Allow'
+# Give anything that asks on mount time to surface its dialog before asserting
+# the absence — an immediate assertion would pass on a slow emulator regardless.
+- waitForAnimationToEnd:
+    timeout: 5000
+- assertNotVisible: 'Allow'
+
+# The offer lives in the authenticated shell (it reads account notification
+# preferences), so reaching it means logging in. /login is not deep-linkable
+# (auth routes fall back to home), so reach it via in-app links.
+- tapOn: 'Sign up'
+- extendedWaitUntil:
+    visible: 'Create your account'
+    timeout: 10000
+- tapOn: 'Log in'
+- extendedWaitUntil:
+    visible: 'Welcome back'
+    timeout: 10000
+- tapOn: 'Email or Username'
+- inputText: ${TEST_USERNAME}
+- hideKeyboard
+- tapOn: 'Password'
+- inputText: ${TEST_PASSWORD}
+- hideKeyboard
+- tapOn: 'Log in'
+
+# Authenticated chat page (an element unique to chat, not the login page).
+- extendedWaitUntil:
+    visible:
+      id: 'model-selector-button'
+    timeout: 15000
+
+# Mounting the authenticated shell is the other moment something could ask on
+# mount, so the absence is asserted again once the shell has settled.
+- waitForAnimationToEnd:
+    timeout: 5000
+- assertNotVisible: 'Allow'
+
+# The offer lives in the sidebar, which on a phone is a drawer whose contents
+# are unmounted while it is closed — so the offer is not in the hierarchy until
+# the drawer opens. `hamburger-button` carries a literal HTML `id`, which
+# Maestro's `id:` selector matches (`id:` matches an `id` attribute, never
+# `data-testid`). This comes after the launch-time absence assertions above, so
+# they still prove nothing asks for permission on its own.
+- tapOn:
+    id: 'hamburger-button'
+
+# The offer itself: an inline callout in the sidebar, never a system dialog. Its
+# copy is matched loosely because it wraps across lines in the view hierarchy.
+- extendedWaitUntil:
+    visible: '.*Turn on notifications.*'
+    timeout: 15000
+- assertVisible: 'Enable'
+- assertVisible: 'Later'
+
+# "Later" is permanent on this device.
+- tapOn: 'Later'
+- assertNotVisible: 'Enable'
+- assertNotVisible: '.*Turn on notifications.*'
+
+# Relaunch without clearing state: the process restarts while the device-local
+# answer survives. The permission is re-declared unset so the offer would be
+# eligible again had the answer not stuck — that is what makes the assertions
+# below prove the dismissal rather than a changed permission.
+- launchApp:
+    permissions:
+      notifications: unset
+
+# This login leaves "Keep me signed in" unchecked (the default), which keeps the
+# session marker in sessionStorage — the WebView process restart above clears it,
+# so signing in again is part of the relaunch. That also proves the answer is
+# device-local rather than something a new session resets. Reaching the
+# authenticated shell is what keeps the assertions below non-vacuous: a
+# signed-out app would hide the offer for the wrong reason.
+- extendedWaitUntil:
+    visible: 'Sign up'
+    timeout: 45000
+- tapOn: 'Sign up'
+- extendedWaitUntil:
+    visible: 'Create your account'
+    timeout: 10000
+- tapOn: 'Log in'
+- extendedWaitUntil:
+    visible: 'Welcome back'
+    timeout: 10000
+- tapOn: 'Email or Username'
+- inputText: ${TEST_USERNAME}
+- hideKeyboard
+- tapOn: 'Password'
+- inputText: ${TEST_PASSWORD}
+- hideKeyboard
+- tapOn: 'Log in'
+- extendedWaitUntil:
+    visible:
+      id: 'model-selector-button'
+    timeout: 15000
+- assertNotVisible: 'Sign up'
+
+- waitForAnimationToEnd:
+    timeout: 5000
+- assertNotVisible: 'Allow'
+
+# The drawer is opened again before the absence assertions below: with it shut
+# the offer would be missing whatever the device answered, which would prove
+# nothing. "Search chats" is the drawer's own field — waiting for it is how the
+# assertions stay about the offer rather than about a drawer that never opened.
+- tapOn:
+    id: 'hamburger-button'
+- extendedWaitUntil:
+    visible: 'Search chats'
+    timeout: 15000
+- assertNotVisible: '.*Turn on notifications.*'
+- assertNotVisible: 'Enable'

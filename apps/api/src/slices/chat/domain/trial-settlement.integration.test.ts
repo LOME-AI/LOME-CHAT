@@ -104,14 +104,14 @@ async function claimTrialFence(
   return { id: claim.row.id, executorId, claims: claim.row.claims };
 }
 
-function charge(baseCostNanoUsd: bigint): SettlementCharge {
+function charge(billableCostNanoUsd: bigint): SettlementCharge {
   return {
     key: 'answer',
     modelId: 'trial/model',
     providerName: 'trial-provider',
     modality: 'text',
     generationId: 'gen-1',
-    baseCostNanoUsd,
+    billableCostNanoUsd,
     isEstimated: false,
   };
 }

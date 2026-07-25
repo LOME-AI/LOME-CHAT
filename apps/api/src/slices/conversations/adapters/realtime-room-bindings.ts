@@ -1,15 +1,13 @@
 import { Redis } from '@upstash/redis';
-import { and, eq, isNotNull, isNull } from 'drizzle-orm';
-import { LOCAL_NEON_DEV_CONFIG, conversationMembers, createDb } from '@hushbox/db';
+import { LOCAL_NEON_DEV_CONFIG, createDb } from '@hushbox/db';
 import { createEnvUtilities } from '@hushbox/shared';
 import { createCachedSessionVerifier, isTrialRoomSelf } from '@hushbox/realtime';
 import { REALTIME_REDIS_KEYS } from '../../../lib/redis/define-key.js';
 import { createConsoleTelemetry } from '../../../lib/telemetry/index.js';
-import { fromPromise } from '../../../lib/result/index.js';
-import { unavailableError } from '../../../lib/errors/index.js';
 import { createDbMembershipSource, createRedisMembershipCache } from './membership.js';
 import { composeMembershipVerifier } from './membership-verifier.js';
 import { createEpochPublicKeyReader } from './epoch-reads.js';
+import { createPushMembershipReader } from './push-membership-reader.js';
 import type { Database } from '@hushbox/db';
 import type { DbWriter } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -38,6 +36,7 @@ import type {
 } from '@hushbox/realtime';
 import type { Bindings } from '../../../lib/context/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
+import type { PushMembershipReader } from './push-membership-reader.js';
 
 /**
  * The worker-side dependency set for the ConversationRoom DO. This adapter is
@@ -278,47 +277,6 @@ export function composeSessionVerifier(
     lastKnownGoodMs: SESSION_LIVENESS_LAST_KNOWN_GOOD_MS,
     now,
   });
-}
-
-/**
- * The narrow active-user-member read (mute flag included) the push side-band
- * needs, structurally the notifications slice's `MembershipReader`. Declared
- * here — not imported from that slice — because a conversations adapter may not
- * import another slice's barrel (boundaries); the shapes match structurally so
- * the injected factory binds it as its `MembershipReader`.
- */
-export interface PushMembershipReader {
-  listActiveUserMembers(
-    conversationId: string
-  ): ResultAsync<readonly { readonly userId: string; readonly muted: boolean }[], DomainError>;
-}
-
-/**
- * The active user members of a conversation with their mute flag, read from
- * `conversation_members` (this slice's own table — single-writer). Link guests
- * carry a null `userId` and no devices, so they are excluded at the query.
- */
-export function createPushMembershipReader(db: Database): PushMembershipReader {
-  return {
-    listActiveUserMembers: (conversationId) =>
-      fromPromise(
-        db
-          .select({ userId: conversationMembers.userId, muted: conversationMembers.muted })
-          .from(conversationMembers)
-          .where(
-            and(
-              eq(conversationMembers.conversationId, conversationId),
-              isNull(conversationMembers.leftAt),
-              isNotNull(conversationMembers.userId)
-            )
-          ),
-        (cause) => unavailableError('push membership read failed', cause)
-      ).map((rows) =>
-        rows.flatMap((row) =>
-          row.userId === null ? [] : [{ userId: row.userId, muted: row.muted }]
-        )
-      ),
-  };
 }
 
 /** Infra the room composes and hands the injected push-notify factory. */

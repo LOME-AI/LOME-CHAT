@@ -24,7 +24,11 @@ flowchart LR
   Redis["Upstash Redis (ephemeral)"]
   Prov["OpenRouter (via AI SDK)"]
   Cron["Cron (pollers + retention + auditors)"]
+  Sandbox["Sandbox origin (static; runs untrusted document code)"]
+  ModCDN["esm.sh / PyPI (modules + wheels)"]
 
+  Client -. sandboxed iframe .-> Sandbox
+  Sandbox --> ModCDN
   Client --> Worker
   Worker --> PG & Redis & R2 & DO
   Worker -. wake .-> Jobs
@@ -40,7 +44,8 @@ auth, sessions, TOTP/step-up, recovery, link-guest principal, account deletion) 
 messages, content, orchestration, trial, Smart Model) · `billing` (wallets, double-entry
 ledger, usage, payments, budgets, Helcim) · `models` (catalog, capability registry,
 inference via `ModelProvider`) · `media` (R2 GC, epoch-gated presign, transforms) ·
-`notifications` (email, push, device tokens) · `newsletter` (mailing list: subscribers,
+`notifications` (email, native FCM + in-house Web Push, device tokens/subscriptions,
+notification preferences) · `newsletter` (mailing list: subscribers,
 double opt-in consent, issues, batch dispatch, Resend webhooks) · `account` (search,
 instructions, preferences) · `workflows` (the engine, node registry, definitions, builder) ·
 `admin` (the operations registry + Customer-360 reads; owns only `admin_audit` — see
@@ -183,6 +188,30 @@ persists each sibling's output and bills the successful subset (`docs/BILLING.md
   disabled composer client-side). Multi-stream within a run (`streamId` + per-stream
   cursors) is the protocol; fan-out width respects the platform's 6-connection cap.
 
+## Runnable documents
+
+AI-generated code executes in the user's browser, never on our infrastructure. A fenced
+block past a length threshold becomes a **document**; `html`/`js`/`react`/`python`
+documents run live in the document panel. Full design: `docs/DOCUMENTS.md`.
+
+- **The trust boundary is an origin.** Untrusted code runs only inside a sandboxed
+  (`allow-scripts`, never `allow-same-origin`) cross-origin iframe served by a
+  credential-free static Worker — no cookies, no session, no API, nothing to steal. The
+  app origin, holding plaintext and the device key, is unreachable by construction rather
+  than by diligence. Parent↔frame traffic is a Zod-typed postMessage bridge shared from
+  `packages/shared`.
+- **Containment is the network lockdown, not `script-src`.** The sandbox CSP is
+  `default-src 'none'` with `connect-src` narrowed to the Python wheel hosts and
+  frame/child/worker/object `'none'` (no fresh realm to escape into); `script-src`
+  deliberately permits inline, because executing the document's own scripts is the
+  feature. WebRTC is closed by deleting its constructors in the frame bootstrap — the CSP
+  `webrtc` directive is a draft Chromium does not enforce, verified by runtime probe.
+- **No service workers, by construction.** WKWebView has none, so any SW-dependent
+  bundler is structurally unavailable on iOS. This design needs none, so one codepath
+  serves web, iOS, and Android.
+- **Python runs main-thread** inside that iframe (Pyodide's required module worker cannot
+  spawn from an opaque origin); a run is stopped by the parent tearing the frame down.
+
 ## Streaming & realtime
 
 The conversation DO's hibernatable WebSocket is the sole transport: turn tokens, flow
@@ -216,8 +245,11 @@ evidence + confirm/unsubscribe tokens; complaint-sticky suppression) · `newslet
 `newsletter_deliveries` (one row per recipient, kept forever — the duplicate-send referee) ·
 `modelCatalog` (one row per model,
 cron-refreshed OpenRouter snapshot) · `idempotency_keys` (`kind`,
-body-hash, lease, claims fence) · `jobs` · `admin_audit` (append-only) · device tokens,
-instructions, preferences, verification tokens. Assistant text stores the model's return
+body-hash, lease, claims fence) · `jobs` · `admin_audit` (append-only) · `device_tokens`
+(native FCM tokens and web push subscriptions in one table) · `notification_preferences`
+(per-category toggles, quiet hours, IANA timezone) · instructions, preferences,
+verification tokens. `conversation_members` also carries `lastReadSeq`, the monotonic
+read cursor behind cross-device notification dismissal. Assistant text stores the model's return
 verbatim — reasoning inline, parsed on demand; token counts ride
 `llm_completions.reasoningTokens`. Deletion is hard (privacy promise);
 financial rows are pseudonymized via `SET NULL` (Art. 17(3)(b) retention); R2 ciphertext is
@@ -297,6 +329,10 @@ Decisions **not** to do things. Reversing one is an architecture decision, not a
 - **One run per conversation** — no queueing, no concurrent lanes.
 - **No client-side Sentry** — browser capture sits too close to plaintext; frontend bugs
   are debugged from reports.
+- **Document execution is client-side only** — no server-side code execution exists.
+  Service-worker-dependent bundlers (Sandpack) are structurally dead on iOS WKWebView;
+  COOP/COEP runtimes (WebContainers) cost a paid licence and an app-wide header tax. Both
+  are excluded; re-entry means revisiting `docs/DOCUMENTS.md`'s rejected-designs table.
 - **No backup mechanisms** — one mechanism per task, made recoverable (leases, TTLs, lazy
   checks); auditors detect, humans redrive. A second delivery path is a design smell.
 - **No degraded admission mode** — Redis down means paid runs refuse, loudly.

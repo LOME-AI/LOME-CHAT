@@ -4,6 +4,12 @@ import userEvent from '@testing-library/user-event';
 import { ModelSelectorButton } from '@/components/chat/model-selector/model-selector-button';
 import type { Model } from '@hushbox/shared';
 
+// The modal's floor hook rides the billing query stack — irrelevant to the
+// button's own behavior, so it is mocked at the module seam.
+vi.mock('@/hooks/billing/use-prompt-budget', () => ({
+  useModelFloor: () => ({ isPending: false, isBelowFloor: () => false }),
+}));
+
 // Mock models hook to break the import chain that requires VITE_API_URL
 vi.mock('@/hooks/models/models', () => ({
   useModels: () => ({

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
+import { act } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TEST_IDS } from '@hushbox/shared';
 import type { ReactNode } from 'react';
@@ -8,7 +9,9 @@ vi.mock('@/lib/api', () => ({
 }));
 
 import { useUIStore } from '@/stores/ui';
+import { useNotificationActivityStore } from '@/stores/notification-activity';
 import { useModelValidation } from '@/hooks/models/use-model-validation';
+import { usePushRegistration } from '@/hooks/notifications/use-push-registration';
 import { AppShell } from './app-shell';
 
 vi.mock('@/hooks/models/use-model-validation', () => ({
@@ -20,6 +23,17 @@ vi.mock('@/hooks/chat/chat', () => ({
     data: [],
     isLoading: false,
   })),
+  useConversations: vi.fn(() => ({
+    data: [],
+    isLoading: false,
+    fetchNextPage: vi.fn(),
+    hasNextPage: false,
+    isFetchingNextPage: false,
+  })),
+  chatKeys: {
+    all: ['chat'] as const,
+    conversations: () => ['chat', 'conversations'] as const,
+  },
   useDeleteConversation: () => ({
     mutate: vi.fn(),
     isPending: false,
@@ -65,6 +79,19 @@ vi.mock('@/providers/stability-provider', () => ({
   }),
 }));
 
+vi.mock('@/hooks/notifications/use-push-registration', () => ({
+  usePushRegistration: vi.fn(),
+}));
+
+vi.mock('@/hooks/notifications/use-enable-prompt', () => ({
+  useEnablePrompt: vi.fn(() => ({
+    isVisible: true,
+    isEnabling: false,
+    enable: vi.fn(),
+    dismiss: vi.fn(),
+  })),
+}));
+
 function createWrapper(): ({ children }: { children: ReactNode }) => ReactNode {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -95,6 +122,23 @@ describe('AppShell', () => {
     );
     expect(screen.getByTestId('child-content')).toBeInTheDocument();
     expect(screen.getByText('Hello World')).toBeInTheDocument();
+  });
+
+  it('presents observed notification activity', () => {
+    document.title = 'HushBox';
+    render(
+      <AppShell>
+        <div>Content</div>
+      </AppShell>,
+      { wrapper: createWrapper() }
+    );
+
+    act(() => {
+      useNotificationActivityStore.setState({ unreadCount: 2 });
+    });
+
+    expect(document.title).toBe('(2) HushBox');
+    useNotificationActivityStore.setState({ unreadCount: 0 });
   });
 
   it('renders Sidebar', () => {
@@ -173,6 +217,48 @@ describe('AppShell', () => {
     const portalTarget = document.querySelector('#right-sidebar-portal');
     expect(portalTarget).toBeInTheDocument();
     expect(portalTarget).toHaveClass('contents');
+  });
+
+  it('re-registers this device for push once the shell mounts', () => {
+    render(
+      <AppShell>
+        <div>Content</div>
+      </AppShell>,
+      { wrapper: createWrapper() }
+    );
+
+    expect(usePushRegistration).toHaveBeenCalled();
+  });
+
+  it('offers notifications from the sidebar, never from the main region', () => {
+    render(
+      <AppShell>
+        <div>Content</div>
+      </AppShell>,
+      { wrapper: createWrapper() }
+    );
+
+    expect(
+      within(screen.getByRole('complementary')).getByRole('button', { name: 'Enable' })
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('main')).queryByRole('button', { name: 'Enable' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('never asks the browser for notification permission on mount', () => {
+    const requestPermission = vi.fn();
+    vi.stubGlobal('Notification', { permission: 'default', requestPermission });
+
+    render(
+      <AppShell>
+        <div>Content</div>
+      </AppShell>,
+      { wrapper: createWrapper() }
+    );
+
+    expect(requestPermission).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 
   it('calls useModelValidation to validate cached model selection', () => {

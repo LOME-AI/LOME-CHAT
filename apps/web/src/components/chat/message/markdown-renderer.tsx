@@ -74,6 +74,48 @@ function extractCodeBlockMeta(node: HastElement | undefined): CodeBlockMeta | un
   return { language, codeText, lineCount };
 }
 
+// Carried by context rather than closed over: `components` stays referentially
+// stable (Streamdown re-renders every block when it changes), while context
+// updates still reach each block through those memo boundaries.
+const MessageStreamingContext = React.createContext(false);
+
+/**
+ * Intercepts document-worthy code blocks before Streamdown's own code block
+ * renders. Streamdown's default `pre` adds `data-block="true"` to its children,
+ * which MarkdownCode uses to tell block from inline code.
+ */
+function MarkdownPre({
+  children,
+  node,
+}: Readonly<{ children?: React.ReactNode; node?: HastElement | undefined }>): React.JSX.Element {
+  const isStreaming = React.useContext(MessageStreamingContext);
+  const meta = extractCodeBlockMeta(node);
+
+  if (meta && shouldExtractAsDocument(meta.language, meta.lineCount)) {
+    const type = getDocumentType(meta.language);
+    const document_: Document = {
+      id: generateDocumentId(meta.codeText),
+      type,
+      language: meta.language,
+      title: extractTitle(meta.codeText, meta.language, type),
+      content: meta.codeText,
+      lineCount: meta.lineCount,
+      isStreaming,
+    };
+
+    return <DocumentCard document={document_} />;
+  }
+
+  /* v8 ignore next 7 -- Streamdown always passes the <code> element as pre children, so the non-element fallback branch is unreachable */
+  return React.isValidElement(children) ? (
+    React.cloneElement(children as React.ReactElement<Record<string, unknown>>, {
+      'data-block': 'true',
+    })
+  ) : (
+    <>{children}</>
+  );
+}
+
 function MarkdownRenderFallback({ content }: Readonly<{ content: string }>): React.JSX.Element {
   return (
     <div data-testid={TEST_IDS.markdownRenderFallback}>
@@ -90,38 +132,8 @@ export function MarkdownRenderer({
 }: Readonly<MarkdownRendererProps>): React.JSX.Element {
   const components = React.useMemo<Partial<Components>>(
     () => ({
-      // Override pre to intercept document-worthy code blocks.
-      // Streamdown's default pre adds data-block="true" to children, which
-      // MarkdownCode uses to distinguish block vs inline code.
-      // We intercept BEFORE MarkdownCode fires for large blocks and mermaid.
-      pre: ((props: { children?: React.ReactNode; node?: HastElement | undefined }) => {
-        const { children, node } = props;
-        const meta = extractCodeBlockMeta(node);
-
-        if (meta && shouldExtractAsDocument(meta.language, meta.lineCount)) {
-          const type = getDocumentType(meta.language);
-          const document_: Document = {
-            id: generateDocumentId(meta.codeText),
-            type,
-            language: meta.language,
-            title: extractTitle(meta.codeText, meta.language, type),
-            content: meta.codeText,
-            lineCount: meta.lineCount,
-          };
-
-          return <DocumentCard document={document_} />;
-        }
-
-        // Default behavior: add data-block for MarkdownCode to detect block vs inline
-        /* v8 ignore next 7 -- Streamdown always passes the <code> element as pre children, so the non-element fallback branch is unreachable */
-        return React.isValidElement(children) ? (
-          React.cloneElement(children as React.ReactElement<Record<string, unknown>>, {
-            'data-block': 'true',
-          })
-        ) : (
-          <>{children}</>
-        );
-      }) as NonNullable<Components['pre']>,
+      // Intercepts BEFORE MarkdownCode fires for large blocks and mermaid.
+      pre: MarkdownPre as NonNullable<Components['pre']>,
       // Links render in brand-red to stand out within message prose.
       a: (({
         children,
@@ -136,9 +148,8 @@ export function MarkdownRenderer({
         </a>
       )) as NonNullable<Components['a']>,
     }),
-    // `content` excluded: ref reads happen at execution time, not closure time.
-    // Streamdown re-renders on children change independently.
-
+    // Deliberately empty: a new `components` object re-renders every Streamdown
+    // block. Per-message data reaches the overrides through context instead.
     []
   );
 
@@ -157,15 +168,17 @@ export function MarkdownRenderer({
       )}
     >
       <ErrorBoundary fallback={<MarkdownRenderFallback content={content} />} resetKey={content}>
-        <Streamdown
-          plugins={{ code: safeCode, mermaid, math }}
-          components={components}
-          controls={{ code: true, mermaid: { copy: true, download: true } }}
-          isAnimating={isStreaming ?? false}
-          animated
-        >
-          {content}
-        </Streamdown>
+        <MessageStreamingContext.Provider value={isStreaming ?? false}>
+          <Streamdown
+            plugins={{ code: safeCode, mermaid, math }}
+            components={components}
+            controls={{ code: true, mermaid: { copy: true, download: true } }}
+            isAnimating={isStreaming ?? false}
+            animated
+          >
+            {content}
+          </Streamdown>
+        </MessageStreamingContext.Provider>
       </ErrorBoundary>
     </div>
   );

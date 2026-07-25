@@ -57,6 +57,7 @@ import {
   setWalletBalance,
   upsertCatalog,
 } from '@hushbox/api/dev-seed';
+import { DOCUMENT_SHOWCASE_MESSAGES, DOCUMENT_SHOWCASE_TITLE } from './lib/seed-documents.js';
 import {
   ALICE_PAYMENT_SPECS,
   ALICE_USAGE_SPECS,
@@ -408,7 +409,7 @@ async function seedAliceBillingHistory(
         modelId: spec.model,
         providerName: spec.provider,
         modality: 'text' as const,
-        baseCostNanoUsd: spec.costNanoUsd,
+        billableCostNanoUsd: spec.costNanoUsd,
         tokens: {
           inputTokens: spec.inputTokens,
           outputTokens: spec.outputTokens,
@@ -542,6 +543,45 @@ export function personasWithSampleData(roster: readonly DevPersona[]): DevPerson
   return roster.filter((persona) => persona.hasSampleData);
 }
 
+/** One persona's seeded document-showcase conversation. */
+export interface DocumentShowcaseConversation {
+  id: string;
+  ownerEmail: string;
+  title: string;
+  messages: readonly { content: string; senderType: 'user' | 'ai' }[];
+}
+
+/**
+ * One showcase conversation per dev persona, so the document panel's every path
+ * is one click away whichever persona a developer logs in as. Ids derive from
+ * the persona name, so a re-seed rewrites the same rows instead of adding more.
+ */
+export function buildDocumentShowcaseConversations(
+  roster: readonly DevPersona[]
+): DocumentShowcaseConversation[] {
+  return roster.map((persona) => ({
+    id: seedUUID(`${persona.name}-document-showcase`),
+    ownerEmail: devEmail(persona.name),
+    title: DOCUMENT_SHOWCASE_TITLE,
+    messages: DOCUMENT_SHOWCASE_MESSAGES,
+  }));
+}
+
+/** Persists the per-persona showcase conversations; returns the count seeded. */
+async function seedDocumentShowcases(db: Database, roster: readonly DevPersona[]): Promise<number> {
+  const showcases = buildDocumentShowcaseConversations(roster);
+  for (const showcase of showcases) {
+    await createDevConversation(db, {
+      ownerEmail: showcase.ownerEmail,
+      seedAiModel: SEED_MODEL_ID,
+      id: showcase.id,
+      title: showcase.title,
+      messages: [...showcase.messages],
+    });
+  }
+  return showcases.length;
+}
+
 /** Persists a persona's bulk sample conversations; returns the count created. */
 async function seedPersonaSampleData(db: Database, persona: DevPersona): Promise<number> {
   const conversations = buildPersonaSampleConversations(
@@ -589,6 +629,10 @@ async function seedDevData(db: Database, redis: Redis, masterSecret: string): Pr
     messages: [...CHARLIE_CONV_MESSAGES],
   });
 
+  // Mallory is deliberately excluded (she is locked, so demo flows never log in
+  // as her); the showcase is for the personas a developer actually uses.
+  const showcaseConversations = await seedDocumentShowcases(db, DEV_PERSONAS);
+
   const alice = devPersonaByName('alice');
   const aliceConversationId = conversationIds[0];
   /* v8 ignore next 3 -- defensive: SCREENSHOT_CONVERSATIONS is a non-empty constant, so index 0 is always present */
@@ -616,7 +660,7 @@ async function seedDevData(db: Database, redis: Redis, masterSecret: string): Pr
     });
   }
   console.log(
-    `seed[dev]: ${processed.toString()} personas processed, ${created.toString()} newly created; ${sampleConversations.toString()} bulk sample + ${conversationIds.length.toString()} screenshot + 1 charlie conversation; alice billing history; admin op-target states.`
+    `seed[dev]: ${processed.toString()} personas processed, ${created.toString()} newly created; ${sampleConversations.toString()} bulk sample + ${conversationIds.length.toString()} screenshot + 1 charlie + ${showcaseConversations.toString()} document showcase conversations; alice billing history; admin op-target states.`
   );
 }
 

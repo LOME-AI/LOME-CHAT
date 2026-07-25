@@ -788,7 +788,9 @@ describe('createWorkflowExecutor — the streaming chat turn', () => {
       {
         runKey: RUN_KEY,
         outputs: { answer: { kind: 'text', text: 'echo:hi' } },
-        charges: [{ key: 'answer', ...ANSWER_BILLING, baseCostNanoUsd: 1234n, isEstimated: false }],
+        charges: [
+          { key: 'answer', ...ANSWER_BILLING, billableCostNanoUsd: 1234n, isEstimated: false },
+        ],
       },
     ]);
   });
@@ -1117,7 +1119,7 @@ describe('createWorkflowExecutor — the composite smartModel node', () => {
         modelId: 'answer-model',
         providerName: 'p',
         modality: 'text',
-        baseCostNanoUsd: 7n,
+        billableCostNanoUsd: 7n,
         isEstimated: false,
       },
     ]);
@@ -1145,7 +1147,7 @@ describe('createWorkflowExecutor — auxiliary charges and mid-node accrual', ()
                   {
                     keySuffix: 'classifier',
                     billing: { ...AUX_BILLING, generationId: 'gen-cls' },
-                    baseCostNanoUsd: 7n,
+                    billableCostNanoUsd: 7n,
                     isEstimated: false,
                   },
                 ],
@@ -1161,7 +1163,7 @@ describe('createWorkflowExecutor — auxiliary charges and mid-node accrual', ()
         modelId: 'answer-model',
         providerName: 'p',
         modality: 'text',
-        baseCostNanoUsd: 20n,
+        billableCostNanoUsd: 20n,
         isEstimated: false,
       },
       {
@@ -1170,7 +1172,7 @@ describe('createWorkflowExecutor — auxiliary charges and mid-node accrual', ()
         providerName: 'p',
         modality: 'text',
         generationId: 'gen-cls',
-        baseCostNanoUsd: 7n,
+        billableCostNanoUsd: 7n,
         isEstimated: false,
       },
     ]);
@@ -1194,7 +1196,7 @@ describe('createWorkflowExecutor — auxiliary charges and mid-node accrual', ()
                   {
                     keySuffix: 'classifier',
                     billing: { ...AUX_BILLING, generationId: 'gen-cls' },
-                    baseCostNanoUsd: 7n,
+                    billableCostNanoUsd: 7n,
                     isEstimated: false,
                   },
                 ],
@@ -1324,7 +1326,9 @@ describe('createWorkflowExecutor — deadline and stop', () => {
       {
         runKey: RUN_KEY,
         outputs: { answer: { kind: 'text', text: 'partial answer' } },
-        charges: [{ key: 'answer', ...ANSWER_BILLING, baseCostNanoUsd: 7n, isEstimated: false }],
+        charges: [
+          { key: 'answer', ...ANSWER_BILLING, billableCostNanoUsd: 7n, isEstimated: false },
+        ],
       },
     ]);
   });
@@ -1461,8 +1465,8 @@ describe('createWorkflowExecutor — fanOut / fanIn', () => {
     // One charge per branch, keyed by the body node id + the branch element index.
     const charges = run.settlements[0]?.charges ?? [];
     expect(charges.toSorted((a, b) => a.key.localeCompare(b.key))).toEqual([
-      { key: 'describe#0', ...ANSWER_BILLING, baseCostNanoUsd: 9n, isEstimated: false },
-      { key: 'describe#1', ...ANSWER_BILLING, baseCostNanoUsd: 9n, isEstimated: false },
+      { key: 'describe#0', ...ANSWER_BILLING, billableCostNanoUsd: 9n, isEstimated: false },
+      { key: 'describe#1', ...ANSWER_BILLING, billableCostNanoUsd: 9n, isEstimated: false },
     ]);
   });
 
@@ -1739,7 +1743,7 @@ describe('createWorkflowExecutor — concurrent multi-model siblings', () => {
         modelId: 'first-model',
         providerName: 'p',
         modality: 'text',
-        baseCostNanoUsd: 11n,
+        billableCostNanoUsd: 11n,
         isEstimated: false,
       },
       {
@@ -1747,7 +1751,7 @@ describe('createWorkflowExecutor — concurrent multi-model siblings', () => {
         modelId: 'second-model',
         providerName: 'p',
         modality: 'text',
-        baseCostNanoUsd: 22n,
+        billableCostNanoUsd: 22n,
         isEstimated: false,
       },
       {
@@ -1755,7 +1759,7 @@ describe('createWorkflowExecutor — concurrent multi-model siblings', () => {
         modelId: 'third-model',
         providerName: 'p',
         modality: 'text',
-        baseCostNanoUsd: 33n,
+        billableCostNanoUsd: 33n,
         isEstimated: false,
       },
     ]);
@@ -1786,7 +1790,7 @@ describe('createWorkflowExecutor — concurrent multi-model siblings', () => {
         modelId: 'first-model',
         providerName: 'p',
         modality: 'text',
-        baseCostNanoUsd: 0n,
+        billableCostNanoUsd: 0n,
         isEstimated: false,
       },
       {
@@ -1794,7 +1798,7 @@ describe('createWorkflowExecutor — concurrent multi-model siblings', () => {
         modelId: 'third-model',
         providerName: 'p',
         modality: 'text',
-        baseCostNanoUsd: 0n,
+        billableCostNanoUsd: 0n,
         isEstimated: false,
       },
     ]);

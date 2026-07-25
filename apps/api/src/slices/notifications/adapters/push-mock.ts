@@ -18,7 +18,19 @@ export function createMockPushSender(): MockPushSender {
   return {
     send(message: PushMessage): ResultAsync<PushDelivery, DomainError> {
       sent.push({ ...message });
-      return okAsync({ successCount: message.recipients.length, failureCount: 0 });
+      // Reports every target as delivered, so the last-seen refresh the real
+      // transports drive is exercised in dev/CI too. `deadTokens` is present
+      // and empty because both real transports always return it — dev and CI
+      // must see the same delivery shape production does.
+      return okAsync({
+        successCount: message.recipients.length,
+        failureCount: 0,
+        deliveredTokens: message.recipients.map((recipient) => ({
+          userId: recipient.userId,
+          token: recipient.platform === 'web' ? recipient.endpoint : recipient.token,
+        })),
+        deadTokens: [],
+      });
     },
 
     getSentMessages(): readonly PushMessage[] {

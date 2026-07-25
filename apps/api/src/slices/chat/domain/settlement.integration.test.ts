@@ -33,9 +33,9 @@ import {
   createFencedSettlementHook,
   keyRowCompletion,
 } from '../../workflows/index.js';
+import { applyMarkup } from '@hushbox/shared';
 import {
   admitRun,
-  applyMarkup,
   createBillingStores,
   MEDIA_STORAGE_COST_PER_BYTE_NANO,
   resolveBudgetScopes,
@@ -207,7 +207,7 @@ function charge(): SettlementCharge {
     providerName: PROVIDER_NAME,
     modality: 'text',
     generationId: 'gen-1',
-    baseCostNanoUsd: BASE_COST,
+    billableCostNanoUsd: applyMarkup(BASE_COST),
     isEstimated: false,
   };
 }
@@ -235,7 +235,7 @@ function multiModelRequest(runKey: string, baseA: bigint, baseB: bigint): Settle
         providerName: PROVIDER_NAME,
         modality: 'text',
         generationId: 'gen-a',
-        baseCostNanoUsd: baseA,
+        billableCostNanoUsd: applyMarkup(baseA),
         isEstimated: false,
       },
       {
@@ -244,7 +244,7 @@ function multiModelRequest(runKey: string, baseA: bigint, baseB: bigint): Settle
         providerName: PROVIDER_NAME,
         modality: 'text',
         generationId: 'gen-b',
-        baseCostNanoUsd: baseB,
+        billableCostNanoUsd: applyMarkup(baseB),
         isEstimated: false,
       },
     ],
@@ -513,7 +513,7 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
           providerName: PROVIDER_NAME,
           modality: 'text',
           generationId: 'gen-cls',
-          baseCostNanoUsd: classifierBase,
+          billableCostNanoUsd: applyMarkup(classifierBase),
           isEstimated: false,
         },
       ],
@@ -1462,7 +1462,9 @@ function multiCharge(key: string, cost: bigint): SettlementCharge {
     providerName: PROVIDER_NAME,
     modality: 'text',
     generationId: `gen-${key}`,
-    baseCostNanoUsd: cost,
+    // Entries carry provider-scale figures; the port made them billable
+    // upstream, so the charge carries the converted amount.
+    billableCostNanoUsd: applyMarkup(cost),
     isEstimated: false,
   };
 }
@@ -1737,6 +1739,18 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
       .from(conversationSpending)
       .where(eq(conversationSpending.conversationId, conversationId));
     return rows[0] ?? null;
+  }
+
+  /** The payer/sender identity triple every charge of a run recorded. */
+  async function runUsageSenders(runId: string) {
+    return db
+      .select({
+        userId: usageRecords.userId,
+        senderUserId: usageRecords.senderUserId,
+        senderLinkId: usageRecords.senderLinkId,
+      })
+      .from(usageRecords)
+      .where(eq(usageRecords.runId, runId));
   }
 
   async function runUsageTotal(runId: string): Promise<bigint> {
@@ -2087,6 +2101,73 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
     expect(guestMember?.spentNanoUsd).toBe(perTurnCharge);
     const conversationSpend = await conversationSpendingRow(owner.conversationId);
     expect(conversationSpend?.spentNanoUsd).toBe(perTurnCharge);
+
+    // Payer and sender are first-class and independent on the billed row: the
+    // guest rides the link column (it has no users row), the owner the payer
+    // column — recoverable without the batchId → messages join.
+    const usage = await runUsageSenders(runId);
+    expect(usage).toEqual([{ userId: owner.userId, senderUserId: null, senderLinkId: linkId }]);
+  });
+
+  it('stamps the sender from identity.sender even when it differs from the attributed userId', async () => {
+    const owner = await seedFixture();
+    await db
+      .update(conversations)
+      .set({ conversationBudgetNanoUsd: 5_000_000n })
+      .where(eq(conversations.id, owner.conversationId));
+    const memberUserId = await insertTestUser();
+    const memberKey = crypto.getRandomValues(new Uint8Array(32));
+    const memberRows = await db
+      .insert(conversationMembers)
+      .values({
+        conversationId: owner.conversationId,
+        userId: memberUserId,
+        privilege: 'write',
+        visibleFromEpoch: 1,
+      })
+      .returning({ id: conversationMembers.id });
+    const memberId = first(memberRows, 'member').id;
+    const epochRows = await db
+      .select({ id: epochs.id })
+      .from(epochs)
+      .where(and(eq(epochs.conversationId, owner.conversationId), eq(epochs.epochNumber, 1)));
+    await db.insert(epochMembers).values({
+      epochId: first(epochRows, 'epoch').id,
+      memberPublicKey: memberKey,
+      wrap: BYTES,
+      visibleFromEpoch: 1,
+    });
+
+    const runId = crypto.randomUUID();
+    const fence = await claimFence(owner.userId, 'member-run', runId);
+    const hook = createFencedSettlementHook({
+      db,
+      fence,
+      complete: keyRowCompletion({ runId }),
+      // Deliberately column-independent: identity.userId is the OWNER while the
+      // member sends, so senderUserId cannot be a copy of identity.userId — it
+      // has to be threaded from identity.sender. (In production, owner funding
+      // moves only the wallet; the attributed userId stays the member.)
+      commit: commitFor(owner, runId, createChatStores(), {
+        userMessage: { id: crypto.randomUUID(), content: PROMPT },
+        sender: { kind: 'user', userId: memberUserId, memberId },
+        ownerFunded: okAsync(true),
+      }),
+    });
+    await hook(request('member-run'));
+
+    expect(await runUsageSenders(runId)).toEqual([
+      { userId: owner.userId, senderUserId: memberUserId, senderLinkId: null },
+    ]);
+  });
+
+  it('self-funds a solo turn: records the same principal as both payer and sender', async () => {
+    const fixture = await seedFixture();
+    const runId = await settleTurn(fixture, request(crypto.randomUUID()), okAsync(false));
+
+    expect(await runUsageSenders(runId)).toEqual([
+      { userId: fixture.userId, senderUserId: fixture.userId, senderLinkId: null },
+    ]);
   });
 });
 
@@ -2130,7 +2211,7 @@ describe('chat settlement commit (display-cost mirror invariant)', () => {
     await settleAndAssertInvariant({
       runKey: 'inv-agentic',
       outputs: { answer: { kind: 'text', text: ANSWER } },
-      charges: [{ ...charge(), baseCostNanoUsd: 4242n }],
+      charges: [{ ...charge(), billableCostNanoUsd: applyMarkup(4242n) }],
     });
   });
 
@@ -2150,7 +2231,7 @@ describe('chat settlement commit (display-cost mirror invariant)', () => {
           providerName: PROVIDER_NAME,
           modality: 'text',
           generationId: 'gen-inv-cls',
-          baseCostNanoUsd: 77n,
+          billableCostNanoUsd: applyMarkup(77n),
           isEstimated: false,
         },
       ],
@@ -2180,7 +2261,7 @@ describe('chat settlement commit (display-cost mirror invariant)', () => {
             providerName: PROVIDER_NAME,
             modality: 'image',
             generationId: 'gen-media',
-            baseCostNanoUsd: 500n,
+            billableCostNanoUsd: applyMarkup(500n),
             isEstimated: false,
           },
         ],
@@ -2223,7 +2304,7 @@ function mediaTurn(
     /** The MediaValue's own modality when it must diverge from the charge's. */
     readonly valueModality?: 'image' | 'video' | 'audio';
     readonly isEstimated?: boolean;
-    readonly baseCostNanoUsd?: bigint;
+    readonly billableCostNanoUsd?: bigint;
     readonly byteLength?: number;
     readonly metadata?: Record<string, unknown>;
   } = {}
@@ -2243,7 +2324,7 @@ function mediaTurn(
       providerName: PROVIDER_NAME,
       modality,
       generationId: `gen-${key}`,
-      baseCostNanoUsd: options.baseCostNanoUsd ?? BASE_COST,
+      billableCostNanoUsd: options.billableCostNanoUsd ?? applyMarkup(BASE_COST),
       isEstimated: options.isEstimated ?? true,
     },
     output: {
@@ -2389,7 +2470,7 @@ describe('chat settlement commit (media persistence)', () => {
     const fixture = await seedFixture();
     const runId = crypto.randomUUID();
     const firstPiece = mediaTurn(fixture, 'node-a');
-    const secondPiece = mediaTurn(fixture, 'node-b', { baseCostNanoUsd: 700n });
+    const secondPiece = mediaTurn(fixture, 'node-b', { billableCostNanoUsd: applyMarkup(700n) });
     await runSettlement(db, (tx) =>
       commitFor(fixture, runId, createChatStores(), {
         mediaPlans: plansOf([firstPiece, secondPiece]),

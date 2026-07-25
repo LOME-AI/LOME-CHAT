@@ -565,6 +565,7 @@ describe('backendEnvSchema', () => {
       UPSTASH_REDIS_REST_TOKEN: 'local_dev_token',
       OPAQUE_MASTER_SECRET: 'dev-opaque-master-secret-32-bytes-minimum', // gitleaks:allow
       IRON_SESSION_SECRET: 'dev-iron-session-secret-32-bytes-min', // gitleaks:allow
+      NOTIFICATION_TAG_SECRET: 'dev-notification-tag-hmac-key', // gitleaks:allow
     };
 
     const result = backendEnvSchema.safeParse(validEnv);
@@ -587,6 +588,7 @@ describe('backendEnvSchema', () => {
       UPSTASH_REDIS_REST_TOKEN: 'prod_token_value',
       OPAQUE_MASTER_SECRET: 'prod-opaque-master-secret-32-bytes-minimum', // gitleaks:allow
       IRON_SESSION_SECRET: 'prod-iron-session-secret-32-bytes-min', // gitleaks:allow
+      NOTIFICATION_TAG_SECRET: 'prod-notification-tag-hmac-key', // gitleaks:allow
     };
 
     const result = backendEnvSchema.safeParse(validEnv);
@@ -606,6 +608,7 @@ describe('backendEnvSchema', () => {
       UPSTASH_REDIS_REST_TOKEN: 'prod_token_value',
       OPAQUE_MASTER_SECRET: 'prod-opaque-master-secret-32-bytes-minimum', // gitleaks:allow
       IRON_SESSION_SECRET: 'prod-iron-session-secret-32-bytes-min', // gitleaks:allow
+      NOTIFICATION_TAG_SECRET: 'prod-notification-tag-hmac-key', // gitleaks:allow
       R2_S3_ENDPOINT: 'https://abc123.r2.cloudflarestorage.com',
       R2_ACCESS_KEY_ID: 'r2-access-key',
       R2_SECRET_ACCESS_KEY: 'r2-secret-key',
@@ -677,6 +680,8 @@ describe('backendEnvSchema', () => {
       UPSTASH_REDIS_REST_TOKEN: 'local_dev_token',
       OPAQUE_MASTER_SECRET: 'dev-opaque-master-secret-32-bytes-minimum', // gitleaks:allow
       IRON_SESSION_SECRET: 'dev-iron-session-secret-32-bytes-min', // gitleaks:allow
+      // Required in every mode, so it stays even here (see the schema comment).
+      NOTIFICATION_TAG_SECRET: 'dev-notification-tag-hmac-key', // gitleaks:allow
       // CI/prod secrets are omitted - test they're optional
     };
 

@@ -9,6 +9,7 @@ import {
   addMember,
   addMemberBodySchema,
   addMemberOutcomeSchema,
+  advanceLastReadSeqTransition,
   broadcastForkCreated,
   broadcastForkDeleted,
   broadcastForkRenamed,
@@ -73,6 +74,7 @@ import {
   messageHistoryQuerySchema,
   muteBodySchema,
   pinBodySchema,
+  readCursorBodySchema,
   readIdempotencyKey,
   readSharedMessage,
   refusalToWire,
@@ -111,6 +113,7 @@ import type { AppEnv } from '../../middleware/pipeline-manifest.js';
 import type {
   BudgetBilling,
   ConversationCaller,
+  ConversationEventNotification,
   ConversationsStoresFactory,
   DbWriter,
   DomainError,
@@ -118,6 +121,7 @@ import type {
   ForkMessageDeleter,
   LinkResolutionPort,
   MembershipRevoker,
+  NotifyConversationEventFactory,
   Outcome,
   RealtimeBroadcast,
   Refusal,
@@ -156,6 +160,44 @@ export interface ConversationsRouteDeps {
    * `createLinkResolutionAdapter`.
    */
   readonly linkResolution: (db: DbWriter) => LinkResolutionPort;
+  /**
+   * The membership-event push capability, built per request at the composition
+   * root (this slice may not import the notifications barrel). Optional: an
+   * absent binding is a no-op, so a deployment without push still serves every
+   * mutation unchanged.
+   */
+  readonly notifyConversationEvent?: NotifyConversationEventFactory;
+}
+
+/**
+ * Fires the membership notification after the mutation has committed, through
+ * `waitUntil` so it survives the response. Best-effort by construction: the
+ * capability reports its own failures, and building it inside the promise
+ * chain means even a synchronous throw from a misconfigured push sender becomes
+ * a caught rejection instead of reaching the request path.
+ *
+ * The routes hold no presence snapshot (only the room does), so the empty
+ * snapshot suppresses nobody — a member watching live already received the
+ * membership broadcast frame, so the cost is at most one redundant nudge.
+ */
+function notifyMembershipEvent(
+  deps: ConversationsRouteDeps,
+  c: Context<AppEnv>,
+  notification: Omit<ConversationEventNotification, 'presentUserIds'>
+): void {
+  const factory = deps.notifyConversationEvent;
+  if (factory === undefined) return;
+  const task = async (): Promise<void> => {
+    try {
+      await factory(c.env, c.var.db)({ ...notification, presentUserIds: [] });
+      // eslint-disable-next-line catch-swallow/no-silent-catch -- best-effort side-band fired through waitUntil: the failure is logged and deliberately not rethrown, so it can never reach the request path.
+    } catch {
+      c.var.logger.warn('membership notification failed', {
+        conversationId: notification.conversationId,
+      });
+    }
+  };
+  c.executionCtx.waitUntil(task());
 }
 
 const STATUS_BY_DOMAIN_CODE = {
@@ -561,6 +603,15 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
                 privilege: member.privilege,
               })
             );
+            // Only the added member is nudged — the rest of the conversation
+            // learns through the broadcast above.
+            if (member.userId !== null) {
+              notifyMembershipEvent(deps, c, {
+                conversationId,
+                actorUserId: caller,
+                recipientUserIds: [member.userId],
+              });
+            }
             // A full-history add leaves the epoch unchanged (null); only an
             // add-with-rotation advances it, so only then does a connected
             // device need to refetch the keychain.
@@ -587,12 +638,16 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
             body: { conversationId, memberId, rotation },
             responseSchema: removeMemberOutcomeSchema,
             execute: (tx) =>
-              removeMember(deps.stores(tx), {
-                conversationId,
-                memberId,
-                callerUserId: caller,
-                rotation,
-              }),
+              removeMember(
+                deps.stores(tx),
+                (id) => deps.billing.deleteMemberBudgetWithinTx(tx, id),
+                {
+                  conversationId,
+                  memberId,
+                  callerUserId: caller,
+                  rotation,
+                }
+              ),
           });
           if (result.isOk() && !isRefusal(result.value)) {
             const { newEpochNumber } = result.value;
@@ -627,11 +682,15 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
             body: { conversationId, ...(rotation === undefined ? {} : { rotation }) },
             responseSchema: leaveOutcomeSchema,
             execute: (tx) =>
-              leaveConversation(deps.stores(tx), {
-                conversationId,
-                callerUserId: caller,
-                rotation,
-              }),
+              leaveConversation(
+                deps.stores(tx),
+                (id) => deps.billing.deleteMemberBudgetWithinTx(tx, id),
+                {
+                  conversationId,
+                  callerUserId: caller,
+                  rotation,
+                }
+              ),
           });
           if (result.isOk() && !isRefusal(result.value)) {
             const success = result.value;
@@ -702,6 +761,30 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
                 conversationId,
                 callerUserId: callerUserId(c.var.principal),
                 pinned,
+              })
+            )
+          );
+          return respond200(c, result);
+        }
+      )
+      // Read acknowledgement: the write is `GREATEST(lastReadSeq, $new)`, so a
+      // replayed or reordered acknowledgement converges instead of regressing —
+      // naturally idempotent, no Idempotency-Key.
+      .patch(
+        '/:conversationId/read',
+        routeClass('session'),
+        idempotencyExempt('naturally-idempotent'),
+        zValidator('param', conversationIdParameterSchema, rejectInvalid),
+        zValidator('json', readCursorBodySchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('param');
+          const { lastReadSeq } = c.req.valid('json');
+          const result = await runMutation(() =>
+            idempotent.byTransition(
+              advanceLastReadSeqTransition(deps.stores(c.var.db), {
+                conversationId,
+                callerUserId: callerUserId(c.var.principal),
+                lastReadSeq,
               })
             )
           );
@@ -867,11 +950,15 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
             body: { conversationId, capNanoUsd: serializeNanoUSD(capNanoUsd) },
             responseSchema: setBudgetOutcomeSchema,
             execute: (tx) =>
-              setConversationBudget(deps.stores(tx), {
-                conversationId,
-                callerUserId: caller,
-                capNanoUsd,
-              }),
+              setConversationBudget(
+                deps.stores(tx),
+                (id) => deps.billing.lockConversationSpentWithinTx(tx, id),
+                {
+                  conversationId,
+                  callerUserId: caller,
+                  capNanoUsd,
+                }
+              ),
           });
           return respond200(c, result);
         }
@@ -1052,6 +1139,7 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
                   tipMessageId: created.tipMessageId,
                 })
               );
+              notifyMembershipEvent(deps, c, { conversationId, actorUserId: caller });
             }
           }
           return respond200(c, result);
@@ -1176,6 +1264,9 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
                 privilege: body.privilege,
               })
             );
+            // The share grants conversation access to someone outside it, so
+            // every member is nudged (the link guest itself has no account).
+            notifyMembershipEvent(deps, c, { conversationId, actorUserId: caller });
             if (newEpochNumber !== null) {
               await broadcastAfterCommit(c, conversationId, () =>
                 broadcastRotationComplete(deps.realtime(c.env), { conversationId, newEpochNumber })

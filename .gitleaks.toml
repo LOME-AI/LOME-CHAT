@@ -42,3 +42,45 @@ regexes = [
   '''^eNxNjdgoXYa/jI\+Z/My2tAkv7qwFfzUvBbqIIxVR8sL9ZLoGSaW88HLj3DUovzfo35lyX3txgW1eSnI9Icb6DmE3ACZXEQMvUtTZacdcaDA5$''',
   '''^ApWrpwhm\+w17ZLA/uR3O0719kCuODqQImCywb3DGkFjXKXWXKJv83mjb19wVAUSxBttmyyj1jwMgbyxvXHAcjjCXzB8g1gskTzWzD0BXuenu$''',
 ]
+
+# Inert Web Push crypto vectors in the notifications webpush tests. The auth
+# secret is the RFC 8291 Appendix A public UA auth vector; the private key is a
+# throwaway P-256 scalar generated once for these tests. The `authSecret:` /
+# `auth:` / `privateKey:` labels trip generic-api-key's keyword heuristic. Each
+# entry AND-pins its exact captured secret to its one file.
+[[rules.allowlists]]
+description = "Web Push encrypt.test.ts RFC 8291 auth-secret vector; AND-pins the exact secret to that file."
+condition = "AND"
+paths = ['''^apps/api/src/slices/notifications/adapters/webpush/encrypt\.test\.ts$''']
+regexTarget = "secret"
+regexes = [
+  '''^BTBZMqHH6r4Tts7J_aSIgg$''',
+]
+
+[[rules.allowlists]]
+description = "Web Push vapid.test.ts throwaway P-256 private key; AND-pins the exact secret to that file."
+condition = "AND"
+paths = ['''^apps/api/src/slices/notifications/adapters/webpush/vapid\.test\.ts$''']
+regexTarget = "secret"
+regexes = [
+  '''^SQ6hnT9IQ-46JeC7tl_zN_tJjH0v76csKdFBGcCYTx0$''',
+]
+
+[[rules.allowlists]]
+description = "Web Push send.test.ts auth-secret vector + throwaway private key; AND-pins the exact secrets to that file."
+condition = "AND"
+paths = ['''^apps/api/src/slices/notifications/adapters/webpush/send\.test\.ts$''']
+regexTarget = "secret"
+regexes = [
+  '''^BTBZMqHH6r4Tts7J_aSIgg$''',
+  '''^SQ6hnT9IQ-46JeC7tl_zN_tJjH0v76csKdFBGcCYTx0$''',
+]
+
+[[rules.allowlists]]
+description = "Web Push push-webpush.test.ts RFC 8291 Appendix A auth-secret vector; AND-pins the exact secret to that file."
+condition = "AND"
+paths = ['''^apps/api/src/slices/notifications/adapters/push-webpush\.test\.ts$''']
+regexTarget = "secret"
+regexes = [
+  '''^BTBZMqHH6r4Tts7J_aSIgg$''',
+]

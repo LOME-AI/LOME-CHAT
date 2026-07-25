@@ -3,3 +3,4 @@
 @import './typography.css' layer(accessibility);
 @import './motion.css' layer(accessibility);
 @import './pointer.css' layer(accessibility);
+@import './reading-highlight.css' layer(accessibility);

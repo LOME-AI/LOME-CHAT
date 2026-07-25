@@ -1,4 +1,4 @@
-import { usdToNanoUsd } from '../../billing/index.js';
+import { providerUsdToBillableNanoUsd } from '../../billing/index.js';
 import { resolveToolRegistry } from '../../models/index.js';
 import { createModelCallExecution } from '../nodes/model-call-execution.js';
 import { createSmartModelExecution } from '../nodes/smart-model-execution.js';
@@ -115,7 +115,7 @@ function resolveSmartModel(
     classifier,
     candidates,
     schemas: deps.schemas,
-    usdToNanoUsd,
+    usdToBillableNanoUsd: providerUsdToBillableNanoUsd,
     ...(deps.telemetry === undefined ? {} : { telemetry: deps.telemetry }),
   });
 }
@@ -138,7 +138,7 @@ function resolveModelCall(
     provider: deps.provider,
     binding,
     schemas: deps.schemas,
-    usdToNanoUsd,
+    usdToBillableNanoUsd: providerUsdToBillableNanoUsd,
     ...(deps.telemetry === undefined ? {} : { telemetry: deps.telemetry }),
     ...(registry === undefined ? {} : { tools: { registry, maxSteps: node.maxSteps } }),
   });

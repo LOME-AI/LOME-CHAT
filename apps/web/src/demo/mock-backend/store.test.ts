@@ -255,6 +255,7 @@ describe('DemoBackendStore', () => {
       pinned: false,
       accepted: true,
       visibleFromEpoch: 1,
+      lastReadSeq: 0,
     });
     expect(detail.conversation.id).toBe(id);
     expect(detail.forks).toEqual([]);

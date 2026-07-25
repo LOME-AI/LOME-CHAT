@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BASE_SYSTEM_PREAMBLE, RUNNABLE_DOCUMENTS_GUIDANCE } from './base-preamble.js';
 import { buildTurnSystemPrompt } from './system-prompt.js';
 
 const NOW = new Date('2026-07-08T13:45:00.000Z');
@@ -28,13 +29,25 @@ describe('buildTurnSystemPrompt', () => {
     });
   });
 
-  describe('code-execution capability blocks are omitted (deferred capability)', () => {
-    it('never mentions Python code execution', () => {
-      expect(buildTurnSystemPrompt({ now: NOW })).not.toContain('Python Code Execution');
+  describe('runnable-documents capability section', () => {
+    it('advertises the runnable-documents guidance on every turn', () => {
+      expect(buildTurnSystemPrompt({ now: NOW })).toContain(RUNNABLE_DOCUMENTS_GUIDANCE);
     });
 
-    it('never mentions JavaScript code execution', () => {
-      expect(buildTurnSystemPrompt({ now: NOW })).not.toContain('JavaScript Code Execution');
+    it('places the capability guidance after the base preamble', () => {
+      const prompt = buildTurnSystemPrompt({ now: NOW });
+      const baseIndex = prompt.indexOf('You are a helpful AI assistant');
+      const guidanceIndex = prompt.indexOf(RUNNABLE_DOCUMENTS_GUIDANCE);
+      expect(baseIndex).toBeGreaterThanOrEqual(0);
+      expect(guidanceIndex).toBeGreaterThan(baseIndex);
+    });
+
+    it('places the capability guidance before the custom-instructions section', () => {
+      const prompt = buildTurnSystemPrompt({ now: NOW, customInstructions: 'Be terse.' });
+      const guidanceIndex = prompt.indexOf(RUNNABLE_DOCUMENTS_GUIDANCE);
+      const customIndex = prompt.indexOf("## User's Custom Instructions");
+      expect(guidanceIndex).toBeGreaterThan(0);
+      expect(customIndex).toBeGreaterThan(guidanceIndex);
     });
   });
 
@@ -69,15 +82,11 @@ describe('buildTurnSystemPrompt', () => {
     });
   });
 
-  it('base-only output is exactly the preamble (no trailing capability sections)', () => {
+  it('base-only output is the preamble+date followed by the runnable-documents guidance', () => {
     expect(buildTurnSystemPrompt({ now: NOW })).toBe(
-      [
-        'You are a helpful AI assistant powered by HushBox.',
-        'HushBox is a unified AI chat interface that lets users access multiple AI models — including GPT, Claude, Gemini, and more — from a single application. Users can switch models mid-conversation while keeping their conversation history.',
-        'All conversations are encrypted. Messages are encrypted before storage, and only the user can decrypt them.',
-        'You provide accurate, helpful responses while being concise and clear.',
-        'Current date: 2026-07-08',
-      ].join('\n')
+      [`${BASE_SYSTEM_PREAMBLE}\nCurrent date: 2026-07-08`, RUNNABLE_DOCUMENTS_GUIDANCE].join(
+        '\n\n'
+      )
     );
   });
 });

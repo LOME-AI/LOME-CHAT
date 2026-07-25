@@ -5,6 +5,7 @@ import {
   ESTIMATED_VIDEO_BYTES_PER_SECOND,
   MEDIA_STORAGE_COST_PER_BYTE_NANO,
   STORAGE_COST_PER_CHARACTER_NANO,
+  WEB_SEARCH_RESERVATION_NANO_PER_MODEL,
   WorkflowDefinition,
   classifierReserveChars,
   estimateTokensForTier,
@@ -13,13 +14,10 @@ import {
   smartModelMinimumRequiredNanoUsd,
 } from '@hushbox/shared';
 import { DAILY_ALLOWANCE_NANO_USD } from '../../billing/index.js';
-import { WORST_CASE_SEARCH_RESERVATION_NANO_USD } from './estimate.js';
+
 import { VALUE_STORE_BYTE_BUDGET_BYTES } from '../../workflows/engine/value-store.js';
 import { createEstimateRun, estimateMinMediaOutputBytes } from './estimate-run.js';
-import {
-  buildSmartModelCandidates,
-  classifierWorstCaseBaseNanoUsd,
-} from './smart-model-candidates.js';
+import { buildSmartModelCandidates, classifierWorstCaseNanoUsd } from './smart-model-candidates.js';
 import type { Pricing, ModelDescriptor, SmartModelPoolCandidate, UserTier } from '@hushbox/shared';
 import type { ModelPricingResolver } from './estimate-run.js';
 
@@ -393,7 +391,7 @@ describe('estimateRun', () => {
     // mid-run by the cost circuit.
     const result = estimateRun(workflow([modelNode('m1', 'gpt', { tools: ['webSearch'] })]));
 
-    expect(result._unsafeUnwrap()).toBe(BASE_1000 + WORST_CASE_SEARCH_RESERVATION_NANO_USD);
+    expect(result._unsafeUnwrap()).toBe(BASE_1000 + WEB_SEARCH_RESERVATION_NANO_PER_MODEL);
   });
 
   it('exceeds the same turn without web search by exactly the reservation (admission refuses a balance between them)', () => {
@@ -408,7 +406,7 @@ describe('estimateRun', () => {
 
     // Admission refuses when balance < estimate, so a wallet holding exactly the
     // no-search estimate cannot afford the web-search run — refused pre-flight.
-    expect(withSearch - withoutSearch).toBe(WORST_CASE_SEARCH_RESERVATION_NANO_USD);
+    expect(withSearch - withoutSearch).toBe(WEB_SEARCH_RESERVATION_NANO_PER_MODEL);
     expect(withSearch > withoutSearch).toBe(true);
   });
 
@@ -431,9 +429,9 @@ describe('estimateRun', () => {
     // case — matching legacy's N× multiplication over the selected models.
     expect(result._unsafeUnwrap()).toBe(
       BASE_1000 +
-        WORST_CASE_SEARCH_RESERVATION_NANO_USD +
+        WEB_SEARCH_RESERVATION_NANO_PER_MODEL +
         BASE_1000 +
-        WORST_CASE_SEARCH_RESERVATION_NANO_USD
+        WEB_SEARCH_RESERVATION_NANO_PER_MODEL
     );
   });
 
@@ -465,7 +463,7 @@ describe('estimateRun', () => {
     );
 
     expect(result._unsafeUnwrap()).toBe(
-      BASE_1000 * 6n + WORST_CASE_SEARCH_RESERVATION_NANO_USD * 6n
+      BASE_1000 * 6n + WEB_SEARCH_RESERVATION_NANO_PER_MODEL * 6n
     );
   });
 
@@ -494,7 +492,7 @@ describe('estimateRun', () => {
     // The classifier is priced at its bounded truncated-context reserve (the
     // affordability filter's basis), NOT a full-context modelCall. Exactly ONE
     // candidate answers, so the ceiling is classifier + max candidate.
-    const classifierReserve = classifierWorstCaseBaseNanoUsd(cheap, [
+    const classifierReserve = classifierWorstCaseNanoUsd(cheap, [
       { id: 'cheap' },
       { id: 'mid' },
       { id: 'big' },
@@ -522,7 +520,7 @@ describe('estimateRun', () => {
     });
     // A wallet that funds cheap's floor + classifier reserve, but nowhere near
     // big's far larger worst case: the affordable-subset gate admits [cheap].
-    const reserve = classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }, { id: 'big' }])!;
+    const reserve = classifierWorstCaseNanoUsd(cheap, [{ id: 'cheap' }, { id: 'big' }])!;
     const cheapFloor = BASE_1000;
     const built = buildSmartModelCandidates({
       descriptors: [cheap, big],
@@ -668,7 +666,7 @@ describe('estimateRun', () => {
       ])
     );
 
-    const classifierReserve = classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }])!;
+    const classifierReserve = classifierWorstCaseNanoUsd(cheap, [{ id: 'cheap' }])!;
     expect(result._unsafeUnwrap()).toBe(classifierReserve + BASE_1000);
   });
 
@@ -688,10 +686,7 @@ describe('estimateRun', () => {
     // capped at 100: cheap = 1000×2500 + 100×10_000 = 3_500_000; big = 4000×2500
     // + 100×10_000 = 11_000_000 → max candidate 11_000_000. The classifier call
     // never receives the answer params — it stays at its bounded reserve.
-    const classifierReserve = classifierWorstCaseBaseNanoUsd(cheap, [
-      { id: 'cheap' },
-      { id: 'big' },
-    ])!;
+    const classifierReserve = classifierWorstCaseNanoUsd(cheap, [{ id: 'cheap' }, { id: 'big' }])!;
     expect(result._unsafeUnwrap()).toBe(classifierReserve + 11_000_000n);
   });
 
@@ -709,7 +704,7 @@ describe('estimateRun', () => {
     );
 
     // Both the classifier reserve and the candidate ceiling scale by the width.
-    const classifierReserve = classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'cheap' }])! * 3n;
+    const classifierReserve = classifierWorstCaseNanoUsd(cheap, [{ id: 'cheap' }])! * 3n;
     expect(result._unsafeUnwrap()).toBe(classifierReserve + BASE_1000 * 3n);
   });
 
@@ -771,7 +766,7 @@ describe('estimateRun', () => {
       ])
     );
 
-    const classifierReserve = classifierWorstCaseBaseNanoUsd(cheap, [{ id: 'mid' }])!;
+    const classifierReserve = classifierWorstCaseNanoUsd(cheap, [{ id: 'mid' }])!;
     // mid contextLength 2000 priced on both legs = 2000×2500 + 2000×10_000.
     expect(result._unsafeUnwrap()).toBe(classifierReserve + BASE_1000 * 2n);
   });

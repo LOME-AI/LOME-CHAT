@@ -28,7 +28,7 @@ import {
 } from './jobs/access-log-audit-entry.js';
 import { createAdminDigestEntry } from './jobs/admin-digest-entry.js';
 import { parseAdminNotificationRecipients } from './adapters/admin-op-notification-email.js';
-import { createEmailSenderFromEnv } from './slices/notifications/index.js';
+import { createEmailSenderFromEnv, purgeStaleDeviceTokens } from './slices/notifications/index.js';
 import type { Database } from '@hushbox/db';
 import type { RefreshJitter } from './slices/models/index.js';
 import type { Bindings } from './lib/context/index.js';
@@ -129,6 +129,11 @@ export function cronEntriesFor(cron: string, deps: CronDependencies): CronEntry[
       createRetentionEntry('jobs-succeeded-prune', steps.pruneSucceededJobs),
       createRetentionEntry('jobs-discarded-prune', steps.pruneDiscardedJobs),
       createRetentionEntry('account-deletion-events-purge', steps.purgeDeletionEvents),
+      // Owned by the notifications slice (the single writer of the table), so
+      // the delete is bound here rather than in the shared retention steps.
+      createRetentionEntry('stale-device-token-purge', (batchSize) =>
+        purgeStaleDeviceTokens(deps.db, { batchSize })
+      ),
       createAdminDigestEntry({
         db: deps.db,
         telemetry: deps.telemetry,

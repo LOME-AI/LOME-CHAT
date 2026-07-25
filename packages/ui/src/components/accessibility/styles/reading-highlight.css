@@ -1,0 +1,15 @@
+/* Reading highlight for the document reader (blog read-aloud). Two paint
+ * mechanisms share one look: the CSS Custom Highlight API via ::highlight()
+ * when supported, and a whole-block class fallback otherwise. Both use the
+ * brand tint token so the currently-read text reads as a soft wash rather than
+ * a bordered box, and both inherit the accessibility contrast overrides
+ * because the token is redefined per contrast mode. The tint has light and dark
+ * variants in packages/config/tailwind/index.css, so it stays visible in both. */
+
+::highlight(tts-reading) {
+  background-color: var(--brand-red-subtle);
+}
+
+.tts-reading-block {
+  background-color: var(--brand-red-subtle);
+}

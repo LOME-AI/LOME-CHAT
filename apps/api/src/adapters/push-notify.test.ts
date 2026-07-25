@@ -1,19 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { errAsync, okAsync } from '../lib/result/index.js';
 import { unavailableError } from '../lib/errors/index.js';
-import {
-  NEW_MESSAGE_PUSH_BODY,
-  NEW_MESSAGE_PUSH_TITLE,
-  createChatMessagePushNotify,
-  createMessagePushNotify,
-} from './push-notify.js';
-import type { PushMembershipReader } from '../slices/conversations/adapters/realtime-room-bindings.js';
+import { createChatMessagePushNotify, createRunCompletionPushNotify } from './push-notify.js';
+import type { PushMembershipReader } from '../slices/conversations/adapters/push-membership-reader.js';
 import type { Database } from '@hushbox/db';
 import type { Bindings } from '../lib/context/app-env.js';
 import type { Telemetry } from '../lib/telemetry/index.js';
 
 /** Development env selects the in-process mock push sender (no real push). */
-const ENV = { NODE_ENV: 'development' } as Bindings;
+const ENV = { NODE_ENV: 'development', NOTIFICATION_TAG_SECRET: 'test-secret' } as Bindings;
 
 function noopTelemetry(): Telemetry {
   const noop = (): void => undefined;
@@ -28,16 +23,24 @@ function noopTelemetry(): Telemetry {
 }
 
 /**
- * A fake DB exposing only what `createDeviceTokenStore.listTokensForUsers`
- * touches: `select().from().where()`. The select spy fires only when the store
- * is asked for a NON-EMPTY recipient set (the store short-circuits on empty),
- * so its call count observes whether any member survived suppression.
+ * A fake DB whose `select().from().where()` yields the queued result sets in
+ * order. The message pipeline reads (for an injected-membership caller) the
+ * per-user preferences then, if any member survives, the device tokens; the
+ * `select` spy's call count observes how far it got.
  */
-function fakeDb(): { db: Database; selectSpy: ReturnType<typeof vi.fn> } {
-  const selectSpy = vi.fn(() => ({
-    from: () => ({ where: () => Promise.resolve([{ token: 'device-token-1' }]) }),
+function queuedDb(...resultSets: readonly unknown[][]): {
+  db: Database;
+  select: ReturnType<typeof vi.fn>;
+  update: ReturnType<typeof vi.fn>;
+} {
+  const queue = [...resultSets];
+  const select = vi.fn(() => ({
+    from: () => ({ where: () => Promise.resolve(queue.shift() ?? []) }),
   }));
-  return { db: { select: selectSpy } as unknown as Database, selectSpy };
+  // The delivery path refreshes `lastSeenAt` on every target the sender
+  // accepted; the spy observes that write.
+  const update = vi.fn(() => ({ set: () => ({ where: () => Promise.resolve([]) }) }));
+  return { db: { select, update } as unknown as Database, select, update };
 }
 
 function membershipOf(
@@ -46,27 +49,32 @@ function membershipOf(
   return { listActiveUserMembers: () => okAsync(members) };
 }
 
-describe('createMessagePushNotify', () => {
-  it('uses fixed, content-free copy (the message itself never reaches the payload)', () => {
-    expect(NEW_MESSAGE_PUSH_TITLE).toBe('New message');
-    expect(NEW_MESSAGE_PUSH_BODY).toBe('You have a new message in a conversation.');
-  });
-
-  it('looks up device tokens for an eligible absent member', async () => {
-    const { db, selectSpy } = fakeDb();
-    const notify = createMessagePushNotify({
+describe('createRunCompletionPushNotify', () => {
+  it('reads preferences then device tokens for an eligible absent member', async () => {
+    // [prefs rows, token rows] — no prefs row means defaults; the token row
+    // makes the surviving recipient reachable.
+    const { db, select, update } = queuedDb(
+      [],
+      [{ platform: 'ios', userId: 'member-1', token: 'device-1' }]
+    );
+    const notify = createRunCompletionPushNotify({
       env: ENV,
       db,
       telemetry: noopTelemetry(),
       membership: membershipOf([{ userId: 'member-1', muted: false }]),
     });
+
     await notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] });
-    expect(selectSpy).toHaveBeenCalledTimes(1);
+
+    // Preferences read, then the token lookup for the surviving recipient.
+    expect(select).toHaveBeenCalledTimes(2);
+    // …and the delivered device's last-seen clock is refreshed.
+    expect(update).toHaveBeenCalledTimes(1);
   });
 
-  it('suppresses muted members, present users, and the sender before any lookup', async () => {
-    const { db, selectSpy } = fakeDb();
-    const notify = createMessagePushNotify({
+  it('never looks up tokens when every member is suppressed', async () => {
+    const { db, select } = queuedDb([]); // only the preferences read runs
+    const notify = createRunCompletionPushNotify({
       env: ENV,
       db,
       telemetry: noopTelemetry(),
@@ -76,71 +84,61 @@ describe('createMessagePushNotify', () => {
         { userId: 'sender-1', muted: false },
       ]),
     });
+
     await notify({
       conversationId: 'c1',
       senderUserId: 'sender-1',
-      presentUserIds: ['present-member'],
+      presentUserIds: ['present-member', 'sender-1'],
     });
-    // Every member is filtered (mute / presence / sender), so the store is
-    // never asked for tokens — a suppression regression would fire the lookup.
-    expect(selectSpy).not.toHaveBeenCalled();
+
+    // Preferences are read over the candidates, but no member survives mute /
+    // presence, so the token lookup never fires. A run completion does not
+    // suppress its requester — only their watching the run does.
+    expect(select).toHaveBeenCalledTimes(1);
   });
 
   it('resolves without throwing when the membership read fails (best-effort)', async () => {
-    const { db } = fakeDb();
-    const notify = createMessagePushNotify({
+    const { db } = queuedDb();
+    const notify = createRunCompletionPushNotify({
       env: ENV,
       db,
       telemetry: noopTelemetry(),
       membership: { listActiveUserMembers: () => errAsync(unavailableError('members down')) },
     });
+
     await expect(
       notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] })
     ).resolves.toBeUndefined();
   });
 });
 
-/**
- * A fake DB whose `select().from().where()` yields the queued result sets in
- * order — the runless-send push runs a member read then (if any survive) a
- * device-token read, so the queue is `[memberRows, tokenRows]`. The `select`
- * spy's call count observes how far the pipeline got: two calls means a member
- * survived suppression and tokens were looked up; one call means every member
- * was filtered before the lookup.
- */
-function queuedDb(...resultSets: readonly unknown[][]): {
-  db: Database;
-  select: ReturnType<typeof vi.fn>;
-} {
-  const queue = [...resultSets];
-  const select = vi.fn(() => ({
-    from: () => ({ where: () => Promise.resolve(queue.shift() ?? []) }),
-  }));
-  return { db: { select } as unknown as Database, select };
-}
-
 describe('createChatMessagePushNotify', () => {
-  it('reads active members then device tokens for an eligible absent member', async () => {
+  it('reads active members, preferences, then device tokens for an eligible member', async () => {
     const { db, select } = queuedDb(
       [{ userId: 'member-1', muted: false }],
-      [{ token: 'device-1' }]
+      [],
+      [{ platform: 'ios', userId: 'member-1', token: 'device-1' }]
     );
     const notify = createChatMessagePushNotify(ENV, db);
+
     await expect(
       notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] })
     ).resolves.toBeUndefined();
-    // Members query, then the token lookup for the surviving recipient.
-    expect(select).toHaveBeenCalledTimes(2);
+
+    // Members query, preferences query, then the token lookup.
+    expect(select).toHaveBeenCalledTimes(3);
   });
 
-  it('excludes a link-guest (null userId) member — no recipient, no token lookup', async () => {
+  it('excludes a link-guest (null userId) member — no recipient, no further reads', async () => {
     const { db, select } = queuedDb([{ userId: null, muted: false }]);
     const notify = createChatMessagePushNotify(ENV, db);
+
     await expect(
       notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] })
     ).resolves.toBeUndefined();
+
     // Only the member read runs: the null-userId row is dropped, leaving no
-    // recipient, so the token lookup never fires.
+    // candidate, so neither the preferences nor the token lookup fires.
     expect(select).toHaveBeenCalledTimes(1);
   });
 
@@ -150,6 +148,7 @@ describe('createChatMessagePushNotify', () => {
     }));
     const db = { select } as unknown as Database;
     const notify = createChatMessagePushNotify(ENV, db);
+
     await expect(
       notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] })
     ).resolves.toBeUndefined();

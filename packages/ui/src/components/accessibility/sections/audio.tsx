@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import { TTS_MODEL_DOWNLOAD_MB } from '@hushbox/shared';
+
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../select';
 import { SettingCard } from '../controls/setting-card';
 import {
@@ -11,14 +13,13 @@ import {
 } from '../lib/tts-download-progress';
 import { TTS_VOICES, getTtsService, type TtsVoice } from '../lib/tts-engine';
 import { useA11yStore } from '../store';
+import { TtsDownloadBar } from '../tts-download-bar';
 import { ON_OFF_OPTIONS } from './_constants';
 
-// Observed download size for the q8 weights on the
-// onnx-community/Kokoro-82M-v1.0-ONNX model card. Multiplied by
-// WORKER_POOL_SIZE workers on disk after first load, but the HF
-// transformers IndexedDB cache deduplicates by URL so the download is
-// paid once.
-const DOWNLOAD_SIZE_TEXT = '88 MB';
+// Friendly first-listen download size, sourced from the shared figure so this
+// disclosure and the blog "Listen" disclosure cannot drift. Sizing rationale
+// (q8 weights + one voice + config/tokenizer) lives with the constant.
+const DOWNLOAD_SIZE_TEXT = `${TTS_MODEL_DOWNLOAD_MB.toString()} MB`;
 
 async function requestPersistentStorage(): Promise<void> {
   const nav = globalThis.navigator as unknown as {
@@ -45,19 +46,7 @@ function DownloadProgress({
     bytesPerSecond === null ? null : estimateEtaSeconds(bytes.loaded, bytes.total, bytesPerSecond);
   return (
     <div className="flex flex-col gap-1">
-      <div
-        role="progressbar"
-        aria-label="Read-aloud model download"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={percent}
-        className="bg-input h-2 w-full overflow-hidden rounded-full"
-      >
-        <div
-          className="bg-primary h-full transition-all"
-          style={{ width: `${percent.toString()}%` }}
-        />
-      </div>
+      <TtsDownloadBar percent={percent} label="Read-aloud model download" />
       <p className="text-muted-foreground text-xs tabular-nums">
         {formatBytesProgress(bytes.loaded, bytes.total)}
         {bytesPerSecond === null ? '' : ` · ${formatSpeed(bytesPerSecond)}`}

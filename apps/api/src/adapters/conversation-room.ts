@@ -2,7 +2,7 @@ import { createConversationRoomClass } from '@hushbox/realtime';
 import { createRoomBindings } from '../slices/conversations/adapters/realtime-room-bindings.js';
 import { createChatConversationRuntime } from '../slices/chat/index.js';
 import { checkSessionLiveness } from '../slices/identity/index.js';
-import { createMessagePushNotify } from './push-notify.js';
+import { createRunCompletionPushNotify } from './push-notify.js';
 import type { Bindings } from '../lib/context/app-env.js';
 
 /**
@@ -25,6 +25,6 @@ export const ConversationRoom = createConversationRoomClass<Bindings>((env) =>
     env,
     createChatConversationRuntime,
     checkSessionLiveness,
-    createMessagePushNotify
+    createRunCompletionPushNotify
   )
 );

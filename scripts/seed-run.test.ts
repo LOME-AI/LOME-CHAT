@@ -74,7 +74,9 @@ vi.mock('./lib/seed-crypto-cache.js', async (importOriginal) => {
 });
 
 const devSeed = await import('@hushbox/api/dev-seed');
-const { runSeed } = await import('./seed.js');
+const { DEV_EMAIL_DOMAIN } = await import('@hushbox/shared');
+const { DOCUMENT_SHOWCASE_TITLE } = await import('./lib/seed-documents.js');
+const { runSeed, DEV_PERSONAS } = await import('./seed.js');
 
 const ENV_KEYS = [
   'DATABASE_URL',
@@ -121,6 +123,19 @@ describe('runSeed', () => {
     expect(devSeed.seedAdminOpTargets).toHaveBeenCalledTimes(1);
     // The connection is always closed.
     expect(endSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('seeds a document-showcase conversation for every dev persona', async () => {
+    await runSeed();
+    const conversations = (
+      devSeed.createDevConversation as unknown as ReturnType<typeof vi.fn>
+    ).mock.calls.map((call) => call[1] as { id: string; ownerEmail: string; title: string });
+    const showcases = conversations.filter(
+      (conversation) => conversation.title === DOCUMENT_SHOWCASE_TITLE
+    );
+    expect(showcases.map((showcase) => showcase.ownerEmail)).toEqual(
+      DEV_PERSONAS.map((persona) => `${persona.name}@${DEV_EMAIL_DOMAIN}`)
+    );
   });
 
   it('upserts the synthetic strict-image catalog row through the slice barrel', async () => {

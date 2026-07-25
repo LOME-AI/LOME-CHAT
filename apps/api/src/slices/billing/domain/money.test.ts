@@ -5,6 +5,7 @@ import {
   STORAGE_COST_PER_CHARACTER_NANO,
   applyMarkup,
   assertMarkupMatchesSharedRate,
+  providerUsdToBillableNanoUsd,
   roundHalfEvenDiv,
   usdToNanoUsd,
 } from './money.js';
@@ -87,6 +88,46 @@ describe('applyMarkup', () => {
 
   it('rejects a negative base cost', () => {
     expect(() => applyMarkup(-1n)).toThrow(/negative/);
+  });
+});
+
+describe('providerUsdToBillableNanoUsd', () => {
+  it('reproduces the pre-migration charge composition bit-exactly (markup relocated, number unchanged)', () => {
+    // KEY REGRESSION PIN: the old money path charged
+    // applyMarkup(usdToNanoUsd(inlineUsd)) at settlement; the port helper must
+    // produce the identical bigint for every inline provider cost, or a
+    // cassette-replayed turn's charged total would shift. Fixtures are
+    // realistic OpenRouter inline `usage.cost` figures (text and video scale)
+    // plus rounding-hostile values.
+    const recordedInlineCostsUsd = [
+      0.000_184_5, 0.001_23, 0.004_262_5, 0.0165, 0.24, 1.038_745_5, 0.000_000_001, 0.000_000_030_5,
+      0.007_163_999, 3.5,
+    ];
+    for (const usd of recordedInlineCostsUsd) {
+      expect(providerUsdToBillableNanoUsd(usd)).toBe(applyMarkup(usdToNanoUsd(usd)));
+    }
+  });
+
+  it('adds exactly 15% to a whole-dollar inline cost', () => {
+    expect(providerUsdToBillableNanoUsd(1)).toBe(1_150_000_000n);
+  });
+
+  it('rounds the markup half-even, diverging from ceil on midpoints', () => {
+    // 30 nano × 1.15 = 34.5 → 34 (half-even, even neighbor); ceil would give 35.
+    expect(providerUsdToBillableNanoUsd(0.000_000_03)).toBe(34n);
+    // 10 nano × 1.15 = 11.5 → 12 (half-even, even neighbor); ceil agrees here.
+    expect(providerUsdToBillableNanoUsd(0.000_000_01)).toBe(12n);
+    // 2 nano × 1.15 = 2.3 → 2 (half-even truncates); ceil would give 3.
+    expect(providerUsdToBillableNanoUsd(0.000_000_002)).toBe(2n);
+  });
+
+  it('converts zero to zero', () => {
+    expect(providerUsdToBillableNanoUsd(0)).toBe(0n);
+  });
+
+  it('rejects negative and non-finite inline costs', () => {
+    expect(() => providerUsdToBillableNanoUsd(-0.01)).toThrow(/negative/);
+    expect(() => providerUsdToBillableNanoUsd(Number.NaN)).toThrow(/finite/);
   });
 });
 

@@ -38,6 +38,8 @@ export interface ConversationListRecord {
   readonly pinned: boolean;
   readonly acceptedAt: Date | null;
   readonly invitedByUsername: string | null;
+  /** Highest message sequence this member has read; 0 means nothing read. */
+  readonly lastReadSeq: bigint;
 }
 
 export interface MemberRecord {
@@ -49,6 +51,8 @@ export interface MemberRecord {
   readonly acceptedAt: Date | null;
   readonly muted: boolean;
   readonly pinned: boolean;
+  /** Highest message sequence this member has read; 0 means nothing read. */
+  readonly lastReadSeq: bigint;
 }
 
 export interface MemberListRecord {
@@ -373,6 +377,18 @@ export interface MembersStore {
     readonly userId: string;
     readonly pinned: boolean;
   }): ResultAsync<boolean, DomainError>;
+  /**
+   * Monotonic read-cursor write: `SET last_read_seq = GREATEST(last_read_seq,
+   * $new)` scoped to the CALLER's active row. Never check-then-act — a replay
+   * and an out-of-order lower write both converge on the committed maximum, so
+   * the returned cursor is the row's value after the write, not the input.
+   * Null when the caller has no active row.
+   */
+  advanceLastReadSeq(params: {
+    readonly conversationId: string;
+    readonly userId: string;
+    readonly lastReadSeq: bigint;
+  }): ResultAsync<{ readonly lastReadSeq: bigint } | null, DomainError>;
   /**
    * base64(member public key) → visibleFromEpoch for every ACTIVE member
    * (users and link guests) — the authoritative input to wrap-set planning.

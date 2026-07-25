@@ -53,7 +53,7 @@ import {
   runMutation,
   saveUserOnlyMessage,
   trialEligibility,
-  trialMessageBaseNanoUsd,
+  trialMessageBillableNanoUsd,
   trialReasoningSelection,
 } from './domain/index.js';
 import type { Context, Env } from 'hono';
@@ -360,8 +360,8 @@ function trialGateRejection(
       : c.json(createErrorResponse(ERROR_CODES.PREMIUM_REQUIRES_ACCOUNT), 403);
   }
   // The actual message priced on a minimum basis (history + prompt tokens + a
-  // fixed minimum output allocation), BASE cost against the 1¢ cap.
-  const cost = trialMessageBaseNanoUsd(target, message.prompt, message.history);
+  // fixed minimum output allocation), BILLABLE (all-in) cost against the 1¢ cap.
+  const cost = trialMessageBillableNanoUsd(target, message.prompt, message.history);
   if (cost.isErr()) return respondDomainError(c, cost.error);
   if (cost.value > TRIAL_MESSAGE_COST_CAP_NANO_USD) {
     return c.json(createErrorResponse(ERROR_CODES.TRIAL_MESSAGE_TOO_EXPENSIVE), 402);
@@ -678,7 +678,8 @@ async function mediaDefinitionOrRefusal(
  * choice via a single-candidate smartModel node. `null` = build the regular
  * turn instead — web-search turns never enter here (the composite node
  * carries no tool loop), and a non-eligible model falls back, where `auto`
- * resolves placeholder-style with no classifier call, charge, or reserve.
+ * resolves deterministically (the sole real choice) or reasoning-free, with
+ * no classifier call, charge, or reserve.
  */
 async function pinnedAutoDefinitionOrNull(
   c: Context<AppEnv>,

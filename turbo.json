@@ -3,14 +3,32 @@
   "globalEnv": ["DATABASE_URL", "NODE_ENV", "VITE_API_URL"],
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "fetch-pyodide"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**"],
+      // The sandbox build bakes `ESM_CDN_URL` into its `/config.js` and
+      // fail-fasts without it. Vite's `VITE_*` vars reach the web build through
+      // turbo's framework inference; this one has no prefix to be inferred from,
+      // so it must be named or turbo's strict env mode strips it. It belongs in
+      // `env`, not `passThroughEnv`: the value determines build output, and
+      // passthrough supplies a value without hashing it — which would let a dist
+      // built against the local test stub replay from cache for a production
+      // build, serving a wrong artifact on a correct-looking cache hit.
+      "env": ["ESM_CDN_URL"]
+    },
+    "fetch-pyodide": {
+      "inputs": ["scripts/fetch-pyodide.sh"],
+      "outputs": ["public/pyodide/**"]
     },
     "dev": {
       "cache": false,
       "persistent": true,
-      "passThroughEnv": ["HB_*"]
+      // Dev servers read these from the environment that `scripts/with-env.ts`
+      // loads. Turbo strips anything not listed here, so a registry variable a
+      // dev server reads directly must be named: the `HB_*` glob covers the
+      // worktree-computed ports, and `ESM_CDN_URL` selects the document
+      // sandbox's module source (esm.sh in dev, the local stub in test modes).
+      "passThroughEnv": ["HB_*", "ESM_CDN_URL"]
     },
     "lint": {
       "inputs": ["$TURBO_DEFAULT$", "eslint.config.js", "../../packages/config/eslint.config.js"],
@@ -21,6 +39,7 @@
       "outputs": []
     },
     "test": {
+      "dependsOn": ["fetch-pyodide"],
       "inputs": ["$TURBO_DEFAULT$", "**/*.test.{ts,tsx}", "!**/*.md"],
       "outputs": ["coverage/**"],
       "passThroughEnv": ["HB_TEST_SCOPE"]

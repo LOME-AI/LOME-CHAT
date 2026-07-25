@@ -4,6 +4,7 @@ import { shortenModelName, TEST_IDS } from '@hushbox/shared';
 import { DEFAULT_MODEL_NAME } from '@/stores/model';
 import { ModelSelectorModal } from '@/components/chat/model-selector/model-selector-modal';
 import type { Model, ChatModality } from '@hushbox/shared';
+import type { ModelFloorGroupContext } from '@/hooks/billing/use-prompt-budget';
 import type { ModelSelectorGatingProps } from '@/components/chat/model-selector/model-selector-types';
 
 function getModelDisplayText(
@@ -28,6 +29,8 @@ export interface ModelSelectorButtonProps extends ModelSelectorGatingProps {
   open?: boolean | undefined;
   /** Called when the modal wants to open or close. Required for controlled mode. */
   onOpenChange?: ((open: boolean) => void) | undefined;
+  /** Group funding context for the modal's affordability floor (threading only). */
+  floorGroup?: ModelFloorGroupContext | undefined;
 }
 
 /**
@@ -62,6 +65,7 @@ export function ModelSelectorButton({
   activeModality = 'text',
   open: controlledOpen,
   onOpenChange,
+  floorGroup,
 }: Readonly<ModelSelectorButtonProps>): React.JSX.Element {
   const [isOpen, setIsOpen] = usePickerOpenState(controlledOpen, onOpenChange);
 
@@ -109,6 +113,7 @@ export function ModelSelectorButton({
         isLinkGuest={isLinkGuest}
         onPremiumClick={onPremiumClick}
         activeModality={activeModality}
+        floorGroup={floorGroup}
       />
     </>
   );

@@ -386,6 +386,18 @@ describe('SettingsPage', () => {
     });
   });
 
+  describe('notifications card', () => {
+    it('renders the notifications card after the mailing list card', () => {
+      renderRoute(Route);
+
+      const mailingList = screen.getByText('Mailing list');
+      const notifications = screen.getByText('Notifications');
+      expect(
+        mailingList.compareDocumentPosition(notifications) & Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+    });
+  });
+
   describe('status badges', () => {
     it('shows Enabled badge when 2FA is enabled', () => {
       setMockUser({ totpEnabled: true });

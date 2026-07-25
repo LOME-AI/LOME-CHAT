@@ -1,18 +1,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import {
+  MINIMUM_OUTPUT_TOKENS,
   REASONING_BUDGET_TOKENS_BY_EFFORT,
   SMART_MODEL_ID,
   buildTurnSystemPrompt,
+  evaluateManifest,
   nanoUSD,
+  outputCharsPerTokenForTier,
+  priceRequest,
   promptCharacterCount,
   resolveClientBilling,
   smartModelMinimumRequiredNanoUsd,
+  type Model,
   type ResolveBillingResult,
   type SmartModelPoolCandidate,
 } from '@hushbox/shared';
 import { type BudgetCalculationResult } from '@/hooks/billing/use-budget-calculation';
-import { usePromptBudget } from '@/hooks/billing/use-prompt-budget';
+import { useModelFloor, usePromptBudget } from '@/hooks/billing/use-prompt-budget';
 
 const {
   mockUseBudgetCalculation,
@@ -36,6 +41,8 @@ const {
     description?: string;
     // The synthetic Smart Model row is flagged so the pool derivation excludes it.
     isSmartModel?: boolean;
+    // The provider completion ceiling the wire catalog carries.
+    maxOutputTokens?: number;
     // BASE (pre-markup) nano-USD wire rates as canonical decimal strings.
     pricing: {
       inputPerToken?: string;
@@ -113,13 +120,29 @@ vi.mock('@/hooks/billing/use-resolve-billing', () => ({
   useResolveBilling: (...args: unknown[]) => mockUseResolveBilling(...args),
 }));
 
+const { mockTierInfo, mockSpendable } = vi.hoisted(() => ({
+  mockTierInfo: {
+    current: {
+      tier: 'free' as 'free' | 'paid' | 'trial' | 'guest',
+      canAccessPremium: false,
+      purchasedBalanceNanoUsd: 0n,
+      freeAllowanceNanoUsd: 0n,
+    },
+  },
+  mockSpendable: {
+    current: {
+      data: undefined as { spendableNanoUsd: string; heldNanoUsd: string } | undefined,
+      isPending: false,
+    },
+  },
+}));
+
 vi.mock('@/hooks/billing/use-user-tier-info', () => ({
-  useUserTierInfo: () => ({
-    tier: 'free' as const,
-    canAccessPremium: false,
-    purchasedBalanceNanoUsd: 0n,
-    freeAllowanceNanoUsd: 0n,
-  }),
+  useUserTierInfo: () => mockTierInfo.current,
+}));
+
+vi.mock('@/hooks/billing/use-spendable', () => ({
+  useSpendable: () => mockSpendable.current,
 }));
 
 vi.mock('@/stores/model', async (importOriginal) => {
@@ -206,6 +229,13 @@ describe('usePromptBudget', () => {
     mockSession.current = AUTHENTICATED_SESSION;
     mockCustomInstructions.current = null;
     mockSearchStore.current = { webSearchEnabled: false };
+    mockTierInfo.current = {
+      tier: 'free',
+      canAccessPremium: false,
+      purchasedBalanceNanoUsd: 0n,
+      freeAllowanceNanoUsd: 0n,
+    };
+    mockSpendable.current = { data: undefined, isPending: false };
     mockUseBudgetCalculation.mockReturnValue(baseBudgetResult);
     mockUseConversationBudgets.mockReturnValue({
       data: undefined,
@@ -1199,6 +1229,101 @@ describe('usePromptBudget', () => {
       );
     });
 
+    it("sizes a free-tier member's owner-funded preview at the PAYER's tier (paid ratios)", () => {
+      withSmartModelSelected();
+      // Owner-funded group context: positive effective remaining + positive
+      // owner balance ⇒ the owner pays, and an owner-funded turn is priced
+      // exactly as if the owner sent it (BILLING §Group Funding 1). The server
+      // sizes it from the admitted wallet's kind — purchased ⇒ paid ⇒ output
+      // storage at the paid 2 chars/token — so the client preview must use the
+      // SAME tier input, not the caller's own free-tier 4 chars/token.
+      mockUseConversationBudgets.mockReturnValue({
+        data: {
+          conversationCapNanoUsd: '10000000000',
+          conversationSpentNanoUsd: '0',
+          ownerBalanceNanoUsd: '50000000000',
+          members: [
+            {
+              memberId: 'mem-1',
+              userId: 'user-1',
+              username: 'member',
+              privilege: 'write',
+              capNanoUsd: '10000000000',
+              spentNanoUsd: '0',
+              effectiveRemainingNanoUsd: '10000000000',
+            },
+          ],
+        },
+        isPending: false,
+        isLoading: false,
+      });
+      const promptChars =
+        buildTurnSystemPrompt({ now: new Date() }).length + defaultInput.value.length;
+      const paidSized = smartModelMinimumRequiredNanoUsd(
+        [cheapText],
+        baseBudgetResult.estimatedInputTokens,
+        { outputCharsPerToken: outputCharsPerTokenForTier('paid'), inputChars: promptChars }
+      )!;
+      const callerSized = smartModelMinimumRequiredNanoUsd(
+        [cheapText],
+        baseBudgetResult.estimatedInputTokens,
+        { outputCharsPerToken: outputCharsPerTokenForTier('free'), inputChars: promptChars }
+      )!;
+
+      const { result } = renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conv-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      expect(result.current.estimatedCostNanoUsd).toBe(paidSized);
+      // Guard the pin's teeth: the two tiers genuinely price differently here.
+      expect(paidSized).not.toBe(callerSized);
+    });
+
+    it("keeps the CALLER's tier sizing once the group headroom is exhausted", () => {
+      withSmartModelSelected();
+      mockUseConversationBudgets.mockReturnValue({
+        data: {
+          conversationCapNanoUsd: '10000000000',
+          conversationSpentNanoUsd: '0',
+          ownerBalanceNanoUsd: '50000000000',
+          members: [
+            {
+              memberId: 'mem-1',
+              userId: 'user-1',
+              username: 'member',
+              privilege: 'write',
+              capNanoUsd: '100',
+              spentNanoUsd: '100',
+              effectiveRemainingNanoUsd: '0',
+            },
+          ],
+        },
+        isPending: false,
+        isLoading: false,
+      });
+      const promptChars =
+        buildTurnSystemPrompt({ now: new Date() }).length + defaultInput.value.length;
+      const callerSized = smartModelMinimumRequiredNanoUsd(
+        [cheapText],
+        baseBudgetResult.estimatedInputTokens,
+        { outputCharsPerToken: outputCharsPerTokenForTier('free'), inputChars: promptChars }
+      )!;
+
+      const { result } = renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conv-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      expect(result.current.estimatedCostNanoUsd).toBe(callerSized);
+    });
+
     it('refuses a $0 free-tier Smart Model send: insufficient_free_allowance', () => {
       withSmartModelSelected();
       const { result } = renderHook(() => usePromptBudget(defaultInput));
@@ -1217,5 +1342,273 @@ describe('usePromptBudget', () => {
         })
       ).toEqual({ fundingSource: 'denied', reason: 'insufficient_free_allowance' });
     });
+  });
+});
+
+describe('useModelFloor', () => {
+  /** A wire-shaped text model row with the given pricing/reasoning knobs. */
+  function makeModel(overrides: Partial<Model> & { id: string }): Model {
+    return {
+      name: 'Floor Model',
+      provider: 'Test',
+      modality: 'text',
+      contextLength: 200_000,
+      capabilities: [],
+      description: 'A model for floor tests.',
+      pricing: { inputPerToken: '10000', outputPerToken: '30000' },
+      ...overrides,
+    } as Model;
+  }
+
+  /**
+   * The expected floor for a reasoning-free model, derived through the SAME
+   * shared fold the composer prices with: single-model manifest at zero
+   * prompt input, evaluated at the minimum-viable answer.
+   */
+  function expectedTokenFloor(model: Model, tier: 'free' | 'paid' | 'trial'): bigint {
+    const manifest = priceRequest({
+      models: [
+        {
+          pricing: {
+            inputPerToken: BigInt(model.pricing.inputPerToken ?? '0'),
+            outputPerToken: BigInt(model.pricing.outputPerToken ?? '0'),
+          },
+        },
+      ],
+      inputTokens: 0n,
+      inputChars: 0,
+      outputCharsPerToken: outputCharsPerTokenForTier(tier),
+    });
+    if (!manifest.ok) throw new Error('floor manifest must price');
+    return evaluateManifest(manifest.value, BigInt(MINIMUM_OUTPUT_TOKENS), { scope: 'all-in' });
+  }
+
+  beforeEach(() => {
+    mockSession.current = AUTHENTICATED_SESSION;
+    mockTierInfo.current = {
+      tier: 'free',
+      canAccessPremium: false,
+      purchasedBalanceNanoUsd: 0n,
+      freeAllowanceNanoUsd: 0n,
+    };
+    mockSpendable.current = { data: undefined, isPending: false };
+    mockUseConversationBudgets.mockReturnValue({ data: undefined, isPending: false });
+    mockModelsData.current = {
+      models: [
+        {
+          id: 'test-model',
+          contextLength: 128_000,
+          pricing: { inputPerToken: '10000', outputPerToken: '30000' },
+        },
+      ],
+      premiumIds: new Set<string>(),
+    };
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('greys a model whose minimum-viable turn the free allowance cannot fund, exactly at the shared floor boundary', () => {
+    const model = makeModel({ id: 'floor-model' });
+    const floor = expectedTokenFloor(model, 'free');
+
+    mockTierInfo.current = { ...mockTierInfo.current, freeAllowanceNanoUsd: floor };
+    const at = renderHook(() => useModelFloor({ isAuthenticated: true }));
+    expect(at.result.current.isBelowFloor(model)).toBe(false);
+
+    mockTierInfo.current = { ...mockTierInfo.current, freeAllowanceNanoUsd: floor - 1n };
+    const below = renderHook(() => useModelFloor({ isAuthenticated: true }));
+    expect(below.result.current.isBelowFloor(model)).toBe(true);
+  });
+
+  it('gates a paid user on the served spendable', () => {
+    mockTierInfo.current = {
+      tier: 'paid',
+      canAccessPremium: true,
+      purchasedBalanceNanoUsd: 10_000_000_000n,
+      freeAllowanceNanoUsd: 0n,
+    };
+    mockSpendable.current = {
+      data: { spendableNanoUsd: '0', heldNanoUsd: '0' },
+      isPending: false,
+    };
+    const { result } = renderHook(() => useModelFloor({ isAuthenticated: true }));
+    expect(result.current.isBelowFloor(makeModel({ id: 'floor-model' }))).toBe(true);
+
+    mockSpendable.current = {
+      data: { spendableNanoUsd: '1000000000000', heldNanoUsd: '0' },
+      isPending: false,
+    };
+    const funded = renderHook(() => useModelFloor({ isAuthenticated: true }));
+    expect(funded.result.current.isBelowFloor(makeModel({ id: 'floor-model' }))).toBe(false);
+  });
+
+  it("prices a mandatory-reasoning model's floor at its lowest offered rung", () => {
+    // Both models cost the same per token; only the mandatory ladder differs.
+    // An allowance that funds the plain floor exactly must still grey the
+    // mandatory model — its cheapest configuration carries the lowest-rung
+    // reasoning budget on top of the minimum answer.
+    const plain = makeModel({ id: 'plain' });
+    const mandatory = makeModel({
+      id: 'mandatory',
+      reasoning: { supportedEfforts: ['high', 'low'], mandatory: true },
+    });
+    mockTierInfo.current = {
+      ...mockTierInfo.current,
+      freeAllowanceNanoUsd: expectedTokenFloor(plain, 'free'),
+    };
+    const { result } = renderHook(() => useModelFloor({ isAuthenticated: true }));
+    expect(result.current.isBelowFloor(plain)).toBe(false);
+    expect(result.current.isBelowFloor(mandatory)).toBe(true);
+  });
+
+  it('lets group headroom fund a member below their own floor (the composer verdict, not a group-blind one)', () => {
+    mockUseConversationBudgets.mockReturnValue({
+      data: {
+        members: [{ capNanoUsd: '1000000000000', effectiveRemainingNanoUsd: '1000000000000' }],
+        ownerBalanceNanoUsd: '1000000000000',
+      },
+      isPending: false,
+    });
+    const { result } = renderHook(() =>
+      useModelFloor({
+        isAuthenticated: true,
+        group: { conversationId: 'conv-1', currentUserPrivilege: 'write' },
+      })
+    );
+    expect(result.current.isBelowFloor(makeModel({ id: 'floor-model' }))).toBe(false);
+    expect(mockUseConversationBudgets).toHaveBeenCalledWith('conv-1');
+  });
+
+  it('greys for a group member when both group headroom and own funds are exhausted', () => {
+    mockUseConversationBudgets.mockReturnValue({
+      data: {
+        members: [{ capNanoUsd: '0', effectiveRemainingNanoUsd: '0' }],
+        ownerBalanceNanoUsd: '0',
+      },
+      isPending: false,
+    });
+    const { result } = renderHook(() =>
+      useModelFloor({
+        isAuthenticated: true,
+        group: { conversationId: 'conv-1', currentUserPrivilege: 'write' },
+      })
+    );
+    expect(result.current.isBelowFloor(makeModel({ id: 'floor-model' }))).toBe(true);
+  });
+
+  it('treats an owner as self-funded (no group dimension)', () => {
+    const model = makeModel({ id: 'floor-model' });
+    mockTierInfo.current = {
+      ...mockTierInfo.current,
+      freeAllowanceNanoUsd: expectedTokenFloor(model, 'free'),
+    };
+    const { result } = renderHook(() =>
+      useModelFloor({
+        isAuthenticated: true,
+        group: { conversationId: 'conv-1', currentUserPrivilege: 'owner' },
+      })
+    );
+    expect(result.current.isBelowFloor(model)).toBe(false);
+    expect(mockUseConversationBudgets).toHaveBeenCalledWith(null);
+  });
+
+  it('applies the fixed trial arm for unauthenticated users', () => {
+    mockTierInfo.current = { ...mockTierInfo.current, tier: 'trial' };
+    const { result } = renderHook(() => useModelFloor({ isAuthenticated: false }));
+    // Floor ≈ $0.0345 at these rates — over the 1¢ trial cap.
+    expect(result.current.isBelowFloor(makeModel({ id: 'pricey' }))).toBe(true);
+    // A near-free model fits the cap.
+    expect(
+      result.current.isBelowFloor(
+        makeModel({ id: 'cheap', pricing: { inputPerToken: '1', outputPerToken: '1' } })
+      )
+    ).toBe(false);
+  });
+
+  it('never greys a model without per-token rates (media rows have no token floor)', () => {
+    const { result } = renderHook(() => useModelFloor({ isAuthenticated: true }));
+    expect(result.current.isBelowFloor(makeModel({ id: 'img', pricing: {} }))).toBe(false);
+  });
+
+  it('prices the Smart Model row through the shared pool minimum', () => {
+    // Catalog carries one real text model; a $0 free allowance sits below the
+    // reserve+floor threshold, so the Smart Model row greys.
+    const { result } = renderHook(() => useModelFloor({ isAuthenticated: true }));
+    expect(result.current.isBelowFloor(makeModel({ id: SMART_MODEL_ID, isSmartModel: true }))).toBe(
+      true
+    );
+
+    mockTierInfo.current = { ...mockTierInfo.current, freeAllowanceNanoUsd: 1_000_000_000_000n };
+    const funded = renderHook(() => useModelFloor({ isAuthenticated: true }));
+    expect(
+      funded.result.current.isBelowFloor(makeModel({ id: SMART_MODEL_ID, isSmartModel: true }))
+    ).toBe(false);
+  });
+
+  it('excludes a catalog model whose provider cap cannot fund a minimum answer from the Smart Model floor', () => {
+    // A cheap model whose completion ceiling sits below the minimum answer can
+    // never serve the turn. Dropping the wire cap on the way into the pool
+    // would price the Smart Model floor through it and under-deny — the floor
+    // must come from the next candidate that can actually emit the answer.
+    const capped = {
+      id: 'capped/cheap',
+      contextLength: 128_000,
+      maxOutputTokens: MINIMUM_OUTPUT_TOKENS - 500,
+      pricing: { inputPerToken: '10', outputPerToken: '30' },
+    };
+    const emitting = {
+      id: 'pricey/uncapped',
+      contextLength: 128_000,
+      maxOutputTokens: 64_000,
+      pricing: { inputPerToken: '10000', outputPerToken: '30000' },
+    };
+    mockModelsData.current = { models: [capped, emitting], premiumIds: new Set<string>() };
+    const pool: SmartModelPoolCandidate[] = [capped, emitting].map((model) => ({
+      id: model.id,
+      pricing: {
+        inputPerToken: nanoUSD(BigInt(model.pricing.inputPerToken)),
+        outputPerToken: nanoUSD(BigInt(model.pricing.outputPerToken)),
+      },
+      contextLength: model.contextLength,
+      maxOutputTokens: model.maxOutputTokens,
+    }));
+    const floor = smartModelMinimumRequiredNanoUsd(pool, 0, {
+      outputCharsPerToken: outputCharsPerTokenForTier('free'),
+      inputChars: 0,
+    })!;
+    const smartRow = makeModel({ id: SMART_MODEL_ID, isSmartModel: true });
+
+    mockTierInfo.current = { ...mockTierInfo.current, freeAllowanceNanoUsd: floor };
+    const at = renderHook(() => useModelFloor({ isAuthenticated: true }));
+    expect(at.result.current.isBelowFloor(smartRow)).toBe(false);
+
+    mockTierInfo.current = { ...mockTierInfo.current, freeAllowanceNanoUsd: floor - 1n };
+    const below = renderHook(() => useModelFloor({ isAuthenticated: true }));
+    expect(below.result.current.isBelowFloor(smartRow)).toBe(true);
+  });
+
+  it('never greys the Smart Model row while the catalog is still loading', () => {
+    mockModelsData.current = undefined as unknown as typeof mockModelsData.current;
+    const { result } = renderHook(() => useModelFloor({ isAuthenticated: true }));
+    expect(result.current.isBelowFloor(makeModel({ id: SMART_MODEL_ID, isSmartModel: true }))).toBe(
+      false
+    );
+  });
+
+  it('never greys the Smart Model row when no catalog model prices', () => {
+    mockModelsData.current = { models: [], premiumIds: new Set<string>() };
+    const { result } = renderHook(() => useModelFloor({ isAuthenticated: true }));
+    expect(result.current.isBelowFloor(makeModel({ id: SMART_MODEL_ID, isSmartModel: true }))).toBe(
+      false
+    );
+  });
+
+  it('suppresses greying and reports pending while funding inputs load', () => {
+    mockSpendable.current = { data: undefined, isPending: true };
+    const { result } = renderHook(() => useModelFloor({ isAuthenticated: true }));
+    expect(result.current.isPending).toBe(true);
+    expect(result.current.isBelowFloor(makeModel({ id: 'floor-model' }))).toBe(false);
   });
 });

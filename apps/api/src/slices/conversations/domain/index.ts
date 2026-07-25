@@ -69,6 +69,7 @@ export {
   acceptInviteTransition,
   addMember,
   addMemberOutcomeSchema,
+  advanceLastReadSeqTransition,
   changeMemberPrivilege,
   changePrivilegeOutcomeSchema,
   declineInviteTransition,
@@ -123,6 +124,7 @@ export {
   messageHistoryQuerySchema,
   muteBodySchema,
   pinBodySchema,
+  readCursorBodySchema,
   removeMemberBodySchema,
   renameForkBodySchema,
   revokeLinkBodySchema,
@@ -174,6 +176,7 @@ export type {
   MemberView,
   MuteOutcome,
   PinOutcome,
+  ReadCursorOutcome,
   RemoveMemberOutcome,
 } from './members.js';
 export type { KeyChainView } from './keychain.js';
@@ -215,9 +218,12 @@ export type { DomainError, DomainErrorCode } from '../../../lib/errors/index.js'
 export type { DbWriter } from '../../../lib/idempotency/index.js';
 export type { Result } from '../../../lib/result/index.js';
 export type {
+  ConversationEventNotification,
   ConversationsStores,
   ConversationsStoresFactory,
   MembershipRevoker,
+  NotifyConversationEvent,
+  NotifyConversationEventFactory,
   RealtimeBroadcast,
   UpgradePrincipal,
 } from '../ports/index.js';

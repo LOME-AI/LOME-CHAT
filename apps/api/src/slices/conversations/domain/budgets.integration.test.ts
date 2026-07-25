@@ -866,3 +866,116 @@ describe('hold-aware effective remaining', () => {
     expect(await response.json()).toEqual({ code: 'UNAVAILABLE' });
   });
 });
+
+describe('budget edits below accrued spend (typed rejection)', () => {
+  it('rejects a member cap below the accrued spend with BUDGET_BELOW_SPENT, leaving the row untouched', async () => {
+    const owner = await newUser();
+    const member = await newUser();
+    const { conversationId, memberIds } = await seedConversation(owner.userId, [
+      { userId: owner.userId, privilege: 'owner' },
+      { userId: member.userId, privilege: 'write' },
+    ]);
+    const memberId = memberIds.get(member.userId)!;
+    await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 900n, spentNanoUsd: 700n });
+
+    const response = await send(
+      'PUT',
+      `/conversations/${conversationId}/member/${memberId}/budget`,
+      owner.cookie,
+      { capNanoUsd: '699' }
+    );
+
+    expect(response.status).toBe(400);
+    const body: { code: string } = await response.json();
+    expect(body.code).toBe('BUDGET_BELOW_SPENT');
+    const rows = await db
+      .select({ budgetNanoUsd: memberBudgets.budgetNanoUsd })
+      .from(memberBudgets)
+      .where(eq(memberBudgets.memberId, memberId));
+    expect(rows[0]?.budgetNanoUsd).toBe(900n);
+  });
+
+  it('applies a member cap exactly equal to the accrued spend (boundary)', async () => {
+    const owner = await newUser();
+    const member = await newUser();
+    const { conversationId, memberIds } = await seedConversation(owner.userId, [
+      { userId: owner.userId, privilege: 'owner' },
+      { userId: member.userId, privilege: 'write' },
+    ]);
+    const memberId = memberIds.get(member.userId)!;
+    await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 900n, spentNanoUsd: 700n });
+
+    const response = await send(
+      'PUT',
+      `/conversations/${conversationId}/member/${memberId}/budget`,
+      owner.cookie,
+      { capNanoUsd: '700' }
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it('rejects a conversation cap below the accrued spend with BUDGET_BELOW_SPENT, keeping the stored cap', async () => {
+    const owner = await newUser();
+    const { conversationId } = await seedConversation(owner.userId, [
+      { userId: owner.userId, privilege: 'owner' },
+    ]);
+    await db
+      .update(conversations)
+      .set({ conversationBudgetNanoUsd: 5000n })
+      .where(eq(conversations.id, conversationId));
+    await db.insert(conversationSpending).values({ conversationId, spentNanoUsd: 3000n });
+
+    const response = await send('PUT', `/conversations/${conversationId}/budget`, owner.cookie, {
+      capNanoUsd: '2999',
+    });
+
+    expect(response.status).toBe(400);
+    const body: { code: string } = await response.json();
+    expect(body.code).toBe('BUDGET_BELOW_SPENT');
+    const rows = await db
+      .select({ cap: conversations.conversationBudgetNanoUsd })
+      .from(conversations)
+      .where(eq(conversations.id, conversationId));
+    expect(rows[0]?.cap).toBe(5000n);
+  });
+
+  it('applies a conversation cap at the spend boundary, including when no spending row exists', async () => {
+    const owner = await newUser();
+    const { conversationId } = await seedConversation(owner.userId, [
+      { userId: owner.userId, privilege: 'owner' },
+    ]);
+    await db.insert(conversationSpending).values({ conversationId, spentNanoUsd: 3000n });
+    const atBoundary = await send('PUT', `/conversations/${conversationId}/budget`, owner.cookie, {
+      capNanoUsd: '3000',
+    });
+    expect(atBoundary.status).toBe(200);
+
+    const { conversationId: freshId } = await seedConversation(owner.userId, [
+      { userId: owner.userId, privilege: 'owner' },
+    ]);
+    // No spending row: spend reads 0, any non-negative cap applies.
+    const noRow = await send('PUT', `/conversations/${freshId}/budget`, owner.cookie, {
+      capNanoUsd: '1',
+    });
+    expect(noRow.status).toBe(200);
+  });
+
+  it('answers forbidden (not a spend probe) for a non-owner on the conversation cap even when overspent', async () => {
+    const owner = await newUser();
+    const admin = await newUser();
+    const { conversationId } = await seedConversation(owner.userId, [
+      { userId: owner.userId, privilege: 'owner' },
+      { userId: admin.userId, privilege: 'admin' },
+    ]);
+    await db.insert(conversationSpending).values({ conversationId, spentNanoUsd: 3000n });
+
+    const response = await send('PUT', `/conversations/${conversationId}/budget`, admin.cookie, {
+      capNanoUsd: '1',
+    });
+
+    // The privilege refusal must win over the below-spent one: a non-owner may
+    // not binary-search the conversation's accrued spend through cap probes.
+    expect(response.status).toBe(403);
+  });
+});

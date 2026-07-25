@@ -38,7 +38,13 @@ export class SidebarPage {
     }
   }
 
-  private async ensureSidebarExpanded(): Promise<void> {
+  /**
+   * Bring the sidebar body on screen: the drawer on mobile, the expanded
+   * column on desktop (it persists collapsed, so a fresh context lands on the
+   * rail). Anything living in the body — conversation rows, the notification
+   * offer — is only reachable after this.
+   */
+  async ensureSidebarExpanded(): Promise<void> {
     await this.openMobileSidebarIfNeeded();
     await this.expandSidebarIfCollapsed();
   }

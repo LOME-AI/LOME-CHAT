@@ -1,16 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+import { TTS_MODEL_DOWNLOAD_BYTES, TTS_ORT_WASM_PATH } from '@hushbox/shared';
+
 import type { WorkerOutbound } from './tts-worker-protocol';
 
-const { generateMock, fromPretrainedMock } = vi.hoisted(() => ({
+const { generateMock, fromPretrainedMock, mockEnv } = vi.hoisted(() => ({
   generateMock: vi.fn(),
   fromPretrainedMock: vi.fn(),
+  // Mirrors the REAL kokoro-js `env` export: a thin wrapper exposing ONLY a
+  // settable `wasmPaths`. It has no `backends` and no `remoteHost`. Grounded
+  // against the real module by the "real kokoro-js env API" test below, so a
+  // regression to `env.backends.onnx.wasm.wasmPaths` throws here at the
+  // worker's import exactly as it does in production.
+  mockEnv: { wasmPaths: '' } as { wasmPaths: string },
 }));
 
 vi.mock('kokoro-js', () => ({
   KokoroTTS: {
     from_pretrained: fromPretrainedMock,
   },
+  env: mockEnv,
 }));
 
 import { createWorkerHandler, type WorkerContext } from './tts.worker';
@@ -32,11 +41,74 @@ function captureContext(): { ctx: WorkerContext; posts: CapturedPost[] } {
   };
 }
 
+interface ProgressEventLike {
+  status?: string;
+  file?: string;
+  loaded?: number;
+  total?: number;
+}
+
+type LoadProgressMsg = Extract<WorkerOutbound, { type: 'loadProgress' }>;
+
+// Drives one load whose progress events fire *while* from_pretrained is
+// pending, as the real transformers hub does. `duringLoad` is only the
+// progress emitted before the download finished, so assertions about the
+// in-flight sequence are not perturbed by the completion emission.
+async function runLoad(
+  requestId: string,
+  events: ProgressEventLike[]
+): Promise<{ posts: CapturedPost[]; duringLoad: LoadProgressMsg[] }> {
+  const { ctx, posts } = captureContext();
+  const handler = createWorkerHandler(ctx);
+  let postCountWhenDownloadFinished = 0;
+  fromPretrainedMock.mockImplementationOnce((_id, options) => {
+    const emit = options.progress_callback as (event: ProgressEventLike) => void;
+    for (const event of events) emit(event);
+    postCountWhenDownloadFinished = posts.length;
+    return Promise.resolve({ generate: generateMock });
+  });
+  await handler({ type: 'load', requestId });
+  const duringLoad = posts
+    .slice(0, postCountWhenDownloadFinished)
+    .filter((p) => p.msg.type === 'loadProgress')
+    .map((p) => p.msg as LoadProgressMsg);
+  return { posts, duringLoad };
+}
+
 async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
+
+describe('model env configuration', () => {
+  // The worker configures the kokoro-js env at import time, so this reads the
+  // mock env mutated when this file imported ./tts.worker above. Because the
+  // mock env has the real single-`wasmPaths` shape, the worker importing
+  // without throwing already proves it uses the wrapper setter and not the
+  // nonexistent `env.backends.onnx.wasm.wasmPaths` path.
+  it('sets env.wasmPaths to the shared same-origin ORT path at import (no throw)', () => {
+    expect(mockEnv.wasmPaths).toBe(TTS_ORT_WASM_PATH);
+  });
+});
+
+describe('real kokoro-js env API', () => {
+  // Grounds the mock above in reality: kokoro-js@1.2.x re-exports the
+  // @huggingface/transformers env wrapped down to a single `wasmPaths`
+  // getter/setter. If a future kokoro-js grows a real `backends` tree this
+  // fails, forcing the mock (and any worker code) to be re-checked against the
+  // real API rather than a fabricated shape.
+  it('exposes only a settable wasmPaths — the shape the worker must target', async () => {
+    const actual = await vi.importActual<typeof import('kokoro-js')>('kokoro-js');
+    expect(Object.keys(actual.env)).toEqual(Object.keys(mockEnv));
+    expect('backends' in actual.env).toBe(false);
+    // The path the worker MUST NOT use throws on the real env; this is exactly
+    // why the fabricated `backends.onnx.wasm` mock was false-green before.
+    expect(
+      () => (actual.env as unknown as { backends: { onnx: unknown } }).backends.onnx
+    ).toThrow();
+  });
+});
 
 describe('createWorkerHandler', () => {
   beforeEach(() => {
@@ -73,39 +145,79 @@ describe('createWorkerHandler', () => {
       ).toBe('L42');
     });
 
-    it('forwards kokoro progress events as loadProgress messages', async () => {
-      const { ctx, posts } = captureContext();
-      const handler = createWorkerHandler(ctx);
-      let capturedProgressCallback: ((event: { loaded: number; total: number }) => void) | null =
-        null;
-      fromPretrainedMock.mockImplementationOnce((_id, options) => {
-        capturedProgressCallback = options.progress_callback as typeof capturedProgressCallback;
-        return Promise.resolve({ generate: generateMock });
-      });
-      await handler({ type: 'load', requestId: 'P1' });
-      expect(capturedProgressCallback).not.toBeNull();
-      capturedProgressCallback!({ loaded: 25, total: 100 });
-      const progresses = posts.filter((p) => p.msg.type === 'loadProgress');
-      expect(progresses).toHaveLength(1);
-      const progressMsg = progresses[0]!.msg as Extract<WorkerOutbound, { type: 'loadProgress' }>;
-      expect(progressMsg.loaded).toBe(25);
-      expect(progressMsg.total).toBe(100);
-      expect(progressMsg.requestId).toBe('P1');
+    // Amended from a test that pinned verbatim per-file forwarding: the hub
+    // reports {loaded,total} per file, so forwarding one file's pair is the
+    // bug (a few-KB JSON reads 100% on its own). The download-wide sum is the
+    // contract now.
+    it('sums progress across files into one download-wide loaded/total pair', async () => {
+      const { duringLoad } = await runLoad('P1', [
+        { status: 'progress', file: 'config.json', loaded: 1200, total: 1200 },
+        {
+          status: 'progress',
+          file: 'onnx/model_quantized.onnx',
+          loaded: 65_536,
+          total: 92_361_116,
+        },
+      ]);
+      expect(duringLoad.map((m) => ({ loaded: m.loaded, total: m.total }))).toEqual([
+        { loaded: 1200, total: TTS_MODEL_DOWNLOAD_BYTES },
+        { loaded: 66_736, total: TTS_MODEL_DOWNLOAD_BYTES },
+      ]);
+      expect(duringLoad.every((m) => m.requestId === 'P1')).toBe(true);
+    });
+
+    it('never reports a near-complete download while the weights are still arriving', async () => {
+      const { duringLoad } = await runLoad('P2', [
+        { status: 'progress', file: 'config.json', loaded: 1200, total: 1200 },
+        {
+          status: 'progress',
+          file: 'onnx/model_quantized.onnx',
+          loaded: 65_536,
+          total: 92_361_116,
+        },
+        {
+          status: 'progress',
+          file: 'onnx/model_quantized.onnx',
+          loaded: 46_000_000,
+          total: 92_361_116,
+        },
+      ]);
+      const percentages = duringLoad.map((m) => (m.loaded / m.total) * 100);
+      expect(percentages[0]).toBeLessThan(5);
+      expect(percentages).toEqual(percentages.toSorted((a, b) => a - b));
+    });
+
+    it('reports a complete download before loadDone so no consumer is left below 100%', async () => {
+      const { posts } = await runLoad('P3', [
+        { status: 'progress', file: 'config.json', loaded: 1200, total: 1200 },
+        {
+          status: 'progress',
+          file: 'onnx/model_quantized.onnx',
+          loaded: 65_536,
+          total: 92_361_116,
+        },
+      ]);
+      const doneIndex = posts.findIndex((p) => p.msg.type === 'loadDone');
+      const beforeDone = posts.slice(0, doneIndex).filter((p) => p.msg.type === 'loadProgress');
+      const last = beforeDone.at(-1)!.msg as LoadProgressMsg;
+      expect(last.loaded).toBe(TTS_MODEL_DOWNLOAD_BYTES);
+      expect(last.total).toBe(TTS_MODEL_DOWNLOAD_BYTES);
+    });
+
+    it('counts unnamed progress events as one file rather than accumulating them', async () => {
+      const { duringLoad } = await runLoad('P4', [
+        { status: 'progress', loaded: 10, total: 100 },
+        { status: 'progress', loaded: 50, total: 100 },
+      ]);
+      expect(duringLoad.map((m) => m.loaded)).toEqual([10, 50]);
     });
 
     it('ignores progress events without numeric loaded/total fields', async () => {
-      const { ctx, posts } = captureContext();
-      const handler = createWorkerHandler(ctx);
-      let capturedProgressCallback: ((event: unknown) => void) | null = null;
-      fromPretrainedMock.mockImplementationOnce((_id, options) => {
-        capturedProgressCallback = options.progress_callback as typeof capturedProgressCallback;
-        return Promise.resolve({ generate: generateMock });
-      });
-      await handler({ type: 'load', requestId: 'X1' });
-      capturedProgressCallback!({ status: 'initiate' });
-      capturedProgressCallback!({ status: 'progress', loaded: 10 });
-      const progresses = posts.filter((p) => p.msg.type === 'loadProgress');
-      expect(progresses).toHaveLength(0);
+      const { duringLoad } = await runLoad('X1', [
+        { status: 'initiate', file: 'config.json' },
+        { status: 'progress', file: 'config.json', loaded: 10 },
+      ]);
+      expect(duringLoad).toHaveLength(0);
     });
 
     it('posts loadError when from_pretrained throws', async () => {

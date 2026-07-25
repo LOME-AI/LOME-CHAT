@@ -37,6 +37,7 @@ export const ERROR_CODES = {
   CONTEXT_LENGTH_EXCEEDED: 'CONTEXT_LENGTH_EXCEEDED',
   NETWORK_ERROR: 'NETWORK_ERROR',
   NO_REASONING_ENDPOINTS: 'NO_REASONING_ENDPOINTS',
+  CLASSIFIER_UNAVAILABLE: 'CLASSIFIER_UNAVAILABLE',
   VERSION_MISMATCH: 'VERSION_MISMATCH',
   BUILD_NOT_FOUND: 'BUILD_NOT_FOUND',
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
@@ -85,6 +86,8 @@ export const ERROR_CODES = {
   PREMIUM_REQUIRES_ACCOUNT: 'PREMIUM_REQUIRES_ACCOUNT',
   MEDIA_TRIAL_BLOCKED: 'MEDIA_TRIAL_BLOCKED',
   MODEL_TIER_LOCKED: 'MODEL_TIER_LOCKED',
+  GROUP_BUDGET_EXHAUSTED: 'GROUP_BUDGET_EXHAUSTED',
+  BUDGET_BELOW_SPENT: 'BUDGET_BELOW_SPENT',
   MODEL_DISABLED: 'MODEL_DISABLED',
   DUPLICATE_MESSAGE: 'DUPLICATE_MESSAGE',
   FEEDBACK_SUBMIT_FAILED: 'FEEDBACK_SUBMIT_FAILED',
@@ -164,6 +167,8 @@ export const ERROR_MESSAGES = {
   NETWORK_ERROR: "We couldn't reach the AI provider. Check your connection and try again.",
   NO_REASONING_ENDPOINTS:
     "No provider can run this model with reasoning under HushBox's privacy requirements right now. Try a different effort level or model.",
+  CLASSIFIER_UNAVAILABLE:
+    "Auto effort can't pick a level right now. Choose an effort level yourself and try again.",
   VERSION_MISMATCH: 'Your app is out of date. Please update to continue.',
   BUILD_NOT_FOUND: "That app version isn't available for download.",
   SERVICE_UNAVAILABLE: 'This service is temporarily unavailable. Please try again later.',
@@ -218,6 +223,10 @@ export const ERROR_MESSAGES = {
   MEDIA_TRIAL_BLOCKED:
     'The free trial supports text models only. Sign up to generate images and video.',
   MODEL_TIER_LOCKED: 'This premium model needs credits. Add funds to your balance to use it.',
+  GROUP_BUDGET_EXHAUSTED:
+    'No group budget is left for you in this conversation. Ask the conversation owner to allocate more budget.',
+  BUDGET_BELOW_SPENT:
+    "A budget can't be set below what has already been spent. Refresh to see the latest spend, then pick a higher amount.",
   MODEL_DISABLED: 'This model is temporarily unavailable. Please choose a different model.',
   DUPLICATE_MESSAGE: 'This message was already sent. Refresh to see the latest state.',
   FEEDBACK_SUBMIT_FAILED: "We couldn't send your feedback. Please try again.",

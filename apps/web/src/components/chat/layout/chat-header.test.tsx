@@ -11,6 +11,12 @@ vi.mock('@/components/providers/theme-provider', () => ({
   }),
 }));
 
+// The picker's affordability floor rides the billing query stack — out of
+// scope for the header's own behavior, so it reports nothing below floor.
+vi.mock('@/hooks/billing/use-prompt-budget', () => ({
+  useModelFloor: () => ({ isPending: false, isBelowFloor: () => false }),
+}));
+
 // Mock models hook to break the import chain that requires VITE_API_URL
 vi.mock('@/hooks/models/models', () => ({
   useModels: () => ({

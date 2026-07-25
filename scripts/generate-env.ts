@@ -46,6 +46,18 @@ const BUILD_VARIANTS: Record<string, Record<string, string>> = {
 };
 
 /**
+ * Build variants whose step runs the whole-workspace `turbo build` rather than
+ * only the web bundle. That build also assembles the sandbox origin's dist,
+ * which bakes ESM_CDN_URL into its `/config.js` and fail-fasts when the value
+ * is absent — so those steps must carry the variable, while the web-only
+ * variants must not (an unread variable in a build block is noise).
+ */
+const WORKSPACE_BUILD_VARIANTS: ReadonlySet<string> = new Set([
+  'build-env',
+  'build-env-web-release',
+]);
+
+/**
  * Deploy secret overrides.
  * Keys here use the specified value instead of `${{ secrets.X }}` in
  * the generated deploy-secrets section. Used to source APP_VERSION
@@ -153,7 +165,8 @@ function generatePortLines(
     `HB_STUDIO_PORT=${escapeEnvValue(String(ports.studio))}`,
     `HB_IDLE_DAEMON_PORT=${escapeEnvValue(String(ports.idleDaemon))}`,
     `HB_ADMIN_PORT=${escapeEnvValue(String(ports.admin))}`,
-    `HB_CRAWLER_VIEW_PORT=${escapeEnvValue(String(ports.crawlerView))}`
+    `HB_CRAWLER_VIEW_PORT=${escapeEnvValue(String(ports.crawlerView))}`,
+    `HB_SANDBOX_PORT=${escapeEnvValue(String(ports.sandbox))}`
   );
   return lines;
 }
@@ -327,27 +340,35 @@ function replaceSection(content: string, marker: string, newContent: string): st
 }
 
 /**
+ * Emit named envConfig entries as plain literals resolved for the mode — for
+ * steps that need a non-secret registry value (e.g. NODE_ENV) present in the
+ * workflow env block.
+ */
+function generateLiteralLines(
+  mode: EnvMode,
+  literalKeys: readonly (keyof typeof envConfig)[]
+): string[] {
+  return literalKeys.map((key) => {
+    const raw = resolveRaw(envConfig[key] as VariableConfig, mode);
+    /* istanbul ignore next -- @preserve defensive check */
+    if (typeof raw !== 'string') {
+      throw new TypeError(`literalKeys entry ${key} must resolve to a plain value in mode ${mode}`);
+    }
+    return `  ${key}: ${raw}`;
+  });
+}
+
+/**
  * Generate a secrets env section for a given mode.
  * Uses the secret name for BOTH the env var name AND GitHub secret reference.
- * `literalKeys` additionally emits named envConfig entries as plain literals
- * resolved for the mode — for steps that need a non-secret registry value
- * (e.g. NODE_ENV) present in the workflow env block.
+ * `literalKeys` rides along as plain literals (see generateLiteralLines).
  */
 function generateSecretsEnv(
   mode: EnvMode,
   destinations?: readonly Destination[],
   literalKeys: readonly (keyof typeof envConfig)[] = []
 ): string {
-  const lines: string[] = ['env:'];
-
-  for (const key of literalKeys) {
-    const raw = resolveRaw(envConfig[key] as VariableConfig, mode);
-    /* istanbul ignore next -- @preserve defensive check */
-    if (typeof raw !== 'string') {
-      throw new TypeError(`literalKeys entry ${key} must resolve to a plain value in mode ${mode}`);
-    }
-    lines.push(`  ${key}: ${raw}`);
-  }
+  const lines: string[] = ['env:', ...generateLiteralLines(mode, literalKeys)];
 
   for (const [, config] of Object.entries(envConfig)) {
     if (
@@ -414,9 +435,14 @@ function generateOpsEnv(omitKeys: ReadonlySet<string> = new Set()): string {
 /**
  * Generate the build-env section (production frontend values).
  * Overrides replace envConfig values for specific keys (e.g., VITE_PLATFORM, VITE_APP_VERSION).
+ * `literalKeys` rides along for non-frontend registry values a build step needs
+ * (see WORKSPACE_BUILD_VARIANTS).
  */
-function generateBuildEnv(overrides: Record<string, string> = {}): string {
-  const lines: string[] = ['env:'];
+function generateBuildEnv(
+  overrides: Record<string, string> = {},
+  literalKeys: readonly (keyof typeof envConfig)[] = []
+): string {
+  const lines: string[] = ['env:', ...generateLiteralLines(Mode.Production, literalKeys)];
 
   for (const [key, config] of Object.entries(envConfig)) {
     const destinations = getDestinations(config as VariableConfig, Mode.Production);
@@ -510,10 +536,13 @@ export function updateWorkflows(rootDir: string): void {
       [Destination.Frontend, Destination.Scripts],
       ['NODE_ENV']
     ),
-    // generate-headers.ts reads only VITE_API_URL (to match the CSP connect-src
-    // to the origin the client bundles were built against). Emitted as a
-    // registry literal — empty destinations means no secrets ride along.
-    'headers-env': generateSecretsEnv(Mode.Production, [], ['VITE_API_URL']),
+    // generate-headers.ts reads VITE_API_URL (to match the CSP connect-src to
+    // the origin the client bundles were built against) and SANDBOX_ORIGIN_URL
+    // (the frame-src allowance for the document sandbox). It runs directly,
+    // not through scripts/with-env.ts, so the workflow env block is its only
+    // source. Emitted as registry literals — empty destinations means no
+    // secrets ride along.
+    'headers-env': generateSecretsEnv(Mode.Production, [], ['VITE_API_URL', 'SANDBOX_ORIGIN_URL']),
     'ops-env': generateOpsEnv(),
     'ops-dispatch-env': generateOpsEnv(OPS_DISPATCH_OMIT_KEYS),
     'deploy-secrets': generateDeploySecrets(),
@@ -522,7 +551,10 @@ export function updateWorkflows(rootDir: string): void {
   };
 
   for (const [marker, overrides] of Object.entries(BUILD_VARIANTS)) {
-    sections[marker] = generateBuildEnv(overrides);
+    sections[marker] = generateBuildEnv(
+      overrides,
+      WORKSPACE_BUILD_VARIANTS.has(marker) ? ['ESM_CDN_URL'] : []
+    );
   }
 
   for (const relativePath of WORKFLOW_FILES) {

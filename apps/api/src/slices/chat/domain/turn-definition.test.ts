@@ -430,7 +430,7 @@ describe('assertModelsWebSearchCapable', () => {
   });
 });
 
-/** Base (pre-markup) per-token rates; the derivation applies the 15% markup. */
+/** Billable per-token rates (fees baked at catalog ingestion); summed as-is. */
 function pricingEntry(
   inputPerTokenNanoUsd: bigint,
   outputPerTokenNanoUsd: bigint,
@@ -446,35 +446,35 @@ function pricingEntry(
 }
 
 describe('turnMaxOutputTokens', () => {
-  // Fixture rates: base input 2000 / output 10_000 nano-USD per token →
-  // fee-inclusive 2300 / 11_500 after the 15% markup (legacy prices were
-  // fee-inclusive before entering the budget math).
+  // Fixture rates: billable input 2000 / output 10_000 nano-USD per token —
+  // the catalog stores fee-inclusive rates, so the budget math sums them
+  // as-is (legacy fed the same math fee-inclusive prices).
   const MODEL = pricingEntry(2000n, 10_000n, 1_000_000);
 
   it('derives the purchased-payer ceiling with the legacy paid-tier formula', () => {
     // chars=400 → estInput=ceil(400/4)=100 (paid = 4 chars/token);
-    // fixed = 100×2300 + 400×300(storage) = 350_000;
-    // variable = 11_500 + 2(paid output chars/token)×300 = 12_100;
+    // fixed = 100×2000 + 400×300(storage) = 320_000;
+    // variable = 10_000 + 2(paid output chars/token)×300 = 10_600;
     // effective = 100_000_000 + 500_000_000 cushion = 600_000_000;
-    // maxOutputTokens = floor((600_000_000 − 350_000) / 12_100) = 49_557.
+    // maxOutputTokens = floor((600_000_000 − 320_000) / 10_600) = 56_573.
     const result = turnMaxOutputTokens(
       { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
       [MODEL]
     );
-    expect(result).toBe(49_557);
+    expect(result).toBe(56_573);
   });
 
   it('derives the free-payer ceiling with the legacy free-tier formula (no cushion, 2 chars/token)', () => {
     // chars=400 → estInput=ceil(400/2)=200 (free = 2 chars/token);
-    // fixed = 200×2300 + 400×300 = 580_000;
-    // variable = 11_500 + 4(free output chars/token)×300 = 12_700;
+    // fixed = 200×2000 + 400×300 = 520_000;
+    // variable = 10_000 + 4(free output chars/token)×300 = 11_200;
     // effective = 50_000_000 (allowance only, no cushion);
-    // maxOutputTokens = floor((50_000_000 − 580_000) / 12_700) = 3_891.
+    // maxOutputTokens = floor((50_000_000 − 520_000) / 11_200) = 4_417.
     const result = turnMaxOutputTokens(
       { promptCharacterCount: 400, funding: { remainingNanoUsd: 50_000_000n, kind: 'free' } },
       [MODEL]
     );
-    expect(result).toBe(3891);
+    expect(result).toBe(4417);
   });
 
   it('returns undefined when the budget covers the remaining context (model default applies)', () => {
@@ -489,7 +489,7 @@ describe('turnMaxOutputTokens', () => {
   });
 
   it('returns undefined below the legacy minimum-output threshold (admission is the refusal gate)', () => {
-    // free minimum = 580_000 + 1000×12_700 = 13_280_000 > 10_000_000 remaining →
+    // free minimum = 520_000 + 1000×11_200 = 11_720_000 > 10_000_000 remaining →
     // legacy set maxOutputTokens=0 and denied upstream; here the cap is omitted so
     // the full-context hold makes admission refuse.
     const result = turnMaxOutputTokens(
@@ -500,7 +500,7 @@ describe('turnMaxOutputTokens', () => {
   });
 
   it('returns undefined when the budget exceeds a small remaining context window', () => {
-    // context 5000 − estInput 100 = 4900 remaining < the 49_557 budget → omit.
+    // context 5000 − estInput 100 = 4900 remaining < the 56_573 budget → omit.
     const result = turnMaxOutputTokens(
       { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
       [pricingEntry(2000n, 10_000n, 5000)]
@@ -509,15 +509,15 @@ describe('turnMaxOutputTokens', () => {
   });
 
   it('sums rates across models and uses the min context length (legacy multi-model)', () => {
-    // sumIn = 2300+4600 = 6900; sumOut = 11_500+23_000 = 34_500;
-    // variable = 34_500 + 2×300×2 models = 35_700;
-    // fixed = 100×6900 + 400×300 = 810_000;
-    // maxOutputTokens = floor((600_000_000 − 810_000) / 35_700) = 16_784.
+    // sumIn = 2000+4000 = 6000; sumOut = 10_000+20_000 = 30_000;
+    // variable = 30_000 + 2×300×2 models = 31_200;
+    // fixed = 100×6000 + 400×300 = 720_000;
+    // maxOutputTokens = floor((600_000_000 − 720_000) / 31_200) = 19_207.
     const result = turnMaxOutputTokens(
       { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
       [pricingEntry(2000n, 10_000n, 100_000), pricingEntry(4000n, 20_000n, 50_000)]
     );
-    expect(result).toBe(16_784);
+    expect(result).toBe(19_207);
   });
 
   it('returns undefined for an empty model list', () => {
@@ -530,7 +530,7 @@ describe('turnMaxOutputTokens', () => {
 
   it('returns undefined when the budget covers the provider completion cap (cap bounds, param omitted)', () => {
     // ceiling = min(remaining context 999_900, cap 8192) = 8192 < budget
-    // 49_557 → omit; the provider enforces its own cap and admission bounds
+    // 56_573 → omit; the provider enforces its own cap and admission bounds
     // the hold by the same catalog cap.
     const result = turnMaxOutputTokens(
       { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
@@ -544,11 +544,11 @@ describe('turnMaxOutputTokens', () => {
       { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
       [pricingEntry(2000n, 10_000n, 1_000_000, 100_000)]
     );
-    expect(result).toBe(49_557);
+    expect(result).toBe(56_573);
   });
 
   it('bounds the multi-model ceiling by the tightest sibling completion cap', () => {
-    // Same rates as the multi-model fixture (budget ceiling 16_784); the
+    // Same rates as the multi-model fixture (budget ceiling 19_207); the
     // second sibling's cap 9000 is the binding output ceiling → omit at or
     // past it, keep the budget below it.
     const rich = turnMaxOutputTokens(
@@ -560,12 +560,12 @@ describe('turnMaxOutputTokens', () => {
 
   it('estimates zero input tokens for an empty prompt (legacy estimateTokensForTier)', () => {
     // chars=0 → estInput=0; fixed = 0; effective = 600_000_000;
-    // maxOutputTokens = floor(600_000_000 / 12_100) = 49_586.
+    // maxOutputTokens = floor(600_000_000 / 10_600) = 56_603.
     const result = turnMaxOutputTokens(
       { promptCharacterCount: 0, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
       [MODEL]
     );
-    expect(result).toBe(49_586);
+    expect(result).toBe(56_603);
   });
 });
 
@@ -979,13 +979,13 @@ describe('answerHeadroomTokens', () => {
   };
 
   it('subtracts the reasoning budget from the affordable output tokens (H = T − B)', () => {
-    // budgetMaxTokens = 49_557 (the turnMaxOutputTokens fixture); context
-    // headroom 999_900 does not bind → H = 49_557 − 4096 = 45_461.
-    expect(answerHeadroomTokens(purchased, [MODEL], LOW_B)).toBe(49_557 - LOW_B);
+    // budgetMaxTokens = 56_573 (the turnMaxOutputTokens fixture); context
+    // headroom 999_900 does not bind → H = 56_573 − 4096 = 52_477.
+    expect(answerHeadroomTokens(purchased, [MODEL], LOW_B)).toBe(56_573 - LOW_B);
   });
 
   it('bounds B+H by the remaining context window for a rich payer (explicit cap, never dropped)', () => {
-    // context 10_000 − estInput 100 = 9900 remaining < the 49_557 budget →
+    // context 10_000 − estInput 100 = 9900 remaining < the 56_573 budget →
     // total 9900, H = 9900 − 4096 = 5804. (`turnMaxOutputTokens` drops the cap
     // here; a reasoning call must keep an explicit one — G2.)
     const result = answerHeadroomTokens(purchased, [pricingEntry(2000n, 10_000n, 10_000)], LOW_B);
@@ -993,7 +993,7 @@ describe('answerHeadroomTokens', () => {
   });
 
   it('returns undefined when the payer cannot afford B plus the minimum answer', () => {
-    // free minimum = 580_000 + (4096+1000)×12_700 ≈ 65.3M > 10M remaining.
+    // free minimum = 520_000 + (4096+1000)×11_200 ≈ 57.6M > 10M remaining.
     const result = answerHeadroomTokens(
       { promptCharacterCount: 400, funding: { remainingNanoUsd: 10_000_000n, kind: 'free' } },
       [MODEL],
@@ -1012,7 +1012,7 @@ describe('answerHeadroomTokens', () => {
   });
 
   it('bounds B+H jointly by the provider completion cap (B + H ≤ maxOutputTokens)', () => {
-    // ceiling = min(budget 49_557, context headroom 999_900, cap 8192) = 8192
+    // ceiling = min(budget 56_573, context headroom 999_900, cap 8192) = 8192
     // → H = 8192 − 4096 = 4096, so the wire cap B+H lands exactly on the cap.
     const result = answerHeadroomTokens(
       purchased,
@@ -1028,7 +1028,7 @@ describe('answerHeadroomTokens', () => {
       [pricingEntry(2000n, 10_000n, 1_000_000, 100_000)],
       LOW_B
     );
-    expect(result).toBe(49_557 - LOW_B);
+    expect(result).toBe(56_573 - LOW_B);
   });
 
   it('returns undefined when the provider completion cap cannot hold B plus one answer token', () => {
@@ -1328,18 +1328,32 @@ describe('trialReasoningSelection', () => {
     expect(decision).toEqual({ accepted: false });
   });
 
-  it("resolves 'auto' to the largest-preference level that fits the ceiling", () => {
+  it("resolves 'auto' reasoning-free when the model offers multiple choices (no static pick)", () => {
+    // Multi-choice auto is classifier-owned; the trial build has no
+    // classifier stage on this path, so auto degrades honestly — never
+    // through a static preference order.
     const decision = trialReasoningSelection(
       trialDescriptor({ supportedEfforts: null }),
       budget,
       'auto'
     )._unsafeUnwrap();
-    expect(decision).toEqual({ accepted: true, selection: 'low' });
+    expect(decision).toEqual({ accepted: true, selection: undefined });
   });
 
   it("resolves 'auto' on a non-reasoning model to no reasoning", () => {
     const decision = trialReasoningSelection(trialDescriptor(), budget, 'auto')._unsafeUnwrap();
     expect(decision).toEqual({ accepted: true, selection: undefined });
+  });
+
+  it("picks the sole real choice deterministically on a Min-only model ('auto' → 'none')", () => {
+    // A disableable model with no offered rungs has exactly one real choice
+    // (Min), so auto picks it with no classifier and no reserve (§Effort 5).
+    const decision = trialReasoningSelection(
+      trialDescriptor({ supportedEfforts: ['none'] }),
+      budget,
+      'auto'
+    )._unsafeUnwrap();
+    expect(decision).toEqual({ accepted: true, selection: 'none' });
   });
 
   it("passes 'none' through untouched (the build owns the mandatory refusal)", () => {

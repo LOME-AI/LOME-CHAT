@@ -1,5 +1,4 @@
 import {
-  applyMarkup,
   estimateTokenCount,
   nanoUsdToFullDollarString,
   STORAGE_COST_PER_CHARACTER_NANO,
@@ -20,7 +19,7 @@ export interface MonthlyCostResult {
   daysPerMonth: number;
 }
 
-/** Combined BASE (pre-markup) nano-USD per-token rate of a model, 0 for non-text. */
+/** Combined billable nano-USD per-token rate of a model, 0 for non-text. */
 function combinedTokenRateNano(model: Model): bigint {
   return BigInt(model.pricing.inputPerToken ?? '0') + BigInt(model.pricing.outputPerToken ?? '0');
 }
@@ -50,15 +49,15 @@ export function calculateMonthlyCost(models: Model[]): MonthlyCostResult {
   const inputTokens = estimateTokenCount(inputChars.toString().padEnd(inputChars, ' '));
   const outputTokens = estimateTokenCount(outputChars.toString().padEnd(outputChars, ' '));
 
-  // All money math stays in integer nano-USD: token cost takes the customer
-  // markup, pass-through storage does not, then the per-message total scales by
-  // the message count. The float dollar figure is produced only at the very end
-  // for the marketing chart.
-  const tokenBaseNano =
+  // All money math stays in integer nano-USD: the wire rates are billable
+  // (fees baked at catalog ingestion) and pass-through storage adds unmarked,
+  // then the per-message total scales by the message count. The float dollar
+  // figure is produced only at the very end for the marketing chart.
+  const tokenBillableNano =
     BigInt(inputTokens) * BigInt(cheapest.pricing.inputPerToken ?? '0') +
     BigInt(outputTokens) * BigInt(cheapest.pricing.outputPerToken ?? '0');
   const storageNano = BigInt(inputChars + outputChars) * STORAGE_COST_PER_CHARACTER_NANO;
-  const perMessageNano = applyMarkup(tokenBaseNano) + storageNano;
+  const perMessageNano = tokenBillableNano + storageNano;
   const totalNano = perMessageNano * BigInt(MESSAGES_PER_DAY * DAYS_PER_MONTH);
 
   return {

@@ -53,6 +53,7 @@ export { deviceTokens } from './device-tokens';
 export { feedback } from './feedback';
 export { customInstructions } from './custom-instructions';
 export { preferences } from './preferences';
+export { notificationPreferences } from './notification-preferences';
 export { verificationTokens } from './verification-tokens';
 export { serviceEvidence } from './service-evidence';
 export { accountDeletionEvents } from './account-deletion-events';
@@ -87,6 +88,7 @@ export {
   newsletterDeliveriesRelations,
   newsletterIssuesRelations,
   newsletterSubscribersRelations,
+  notificationPreferencesRelations,
   paymentsRelations,
   preferencesRelations,
   publicStatsSnapshotsRelations,

@@ -26,6 +26,7 @@ import { execa } from 'execa';
 import { Mode, createEnvUtilities } from '@hushbox/shared';
 import { generateEnvFiles } from './generate-env.js';
 import { mergeMarketingIntoWeb } from './merge-marketing-into-web.js';
+import { verifyWebBundle } from './verify-web-bundle.js';
 import { isMainModule } from './lib/is-main.js';
 import { runMain } from './lib/run-main.js';
 
@@ -53,6 +54,7 @@ export interface BuildWebBundleDeps {
   readonly generateEnv: (rootDir: string, mode: Mode, options?: { skipBackend?: boolean }) => void;
   readonly exec: (file: string, args: readonly string[]) => Promise<unknown>;
   readonly merge: (options: { repoRoot: string }) => Promise<unknown>;
+  readonly verify: (options: { distributionDir: string }) => Promise<void>;
 }
 
 export async function buildWebBundle(
@@ -80,6 +82,12 @@ export async function buildWebBundle(
 
   await deps.merge({ repoRoot: rootDir });
 
+  // After the merge, because the merged dist is what actually deploys: a stray
+  // ORT copy or a Pages-limit breach only exists once marketing's output has
+  // landed on top of web's. Every caller — prod, e2e, preview — comes through
+  // here, so this is the single gate.
+  await deps.verify({ distributionDir: path.join(rootDir, 'apps/web/dist') });
+
   // e2e re-runs under with-env so the freshly generated VITE_API_URL / minio port
   // reach the CSP generator; prod reads them from the inline build env directly,
   // matching the existing prod build's invocation.
@@ -98,6 +106,7 @@ if (isMainModule(import.meta.url)) {
       generateEnv: generateEnvFiles,
       exec: (file, args) => execa(file, [...args], { stdio: 'inherit', cwd: repoRoot }),
       merge: mergeMarketingIntoWeb,
+      verify: verifyWebBundle,
     });
   });
 }

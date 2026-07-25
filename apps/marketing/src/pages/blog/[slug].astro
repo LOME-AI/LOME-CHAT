@@ -1,6 +1,7 @@
 ---
 import { render } from 'astro:content';
 import { Badge } from '@hushbox/ui';
+import { BlogReadAloud } from '@hushbox/ui/blog-reader';
 import BlogLayout from '../../layouts/BlogLayout.astro';
 import LandingHeader from '../../components/LandingHeader.astro';
 import SiteFooter from '../../components/SiteFooter.astro';
@@ -30,6 +31,14 @@ const { Content, headings } = await render(post);
 const readingTime = getReadingTime(post.body ?? '');
 
 const formattedDate = formatPostDate(post.data.date);
+
+/* The one grid the page's content column is defined by. The header band and the
+   article row below are both laid out on it, so the reader's right edge is
+   derived from the same track sizing as the article's and the two cannot drift
+   apart. Only the article row fills the second track (with the "On this page"
+   aside); the band leaves it empty, which is what keeps the reader clear of the
+   aside at every width. */
+const CONTENT_GRID = 'lg:grid lg:grid-cols-[1fr_220px] lg:gap-10';
 
 const initials = post.data.author
   .split(' ')
@@ -62,35 +71,54 @@ const initials = post.data.author
         {post.data.title}
       </h1>
 
-      <div class="mt-4 flex items-center gap-3">
-        <div
-          class="bg-brand-red-subtle text-brand-red flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold"
-        >
-          {initials}
-        </div>
-        <div>
-          <div class="text-foreground text-sm font-medium">{post.data.author}</div>
-          <div class="text-muted-foreground text-xs">
-            <time datetime={post.data.date.toISOString()}>{formattedDate}</time>
-            <span aria-hidden="true"> &middot; </span>
-            <span>{readingTime} min read</span>
+      {/* The header band, held to the article's own column width (see CONTENT_GRID). */}
+      <div class={`mt-4 ${CONTENT_GRID}`}>
+        {
+          /* Byline + tags on the left, the reserved download-bar slot in the
+            gap, the borderless "Listen" reader stack on the right — the last
+            two both come from the `BlogReadAloud` island, whose two roots
+            become direct band children because Astro renders `astro-island`
+            with `display: contents`. `items-stretch` makes the reader span the
+            band's height so its top aligns with the avatar and its bottom with
+            the tags row; below `md` the band stacks and the reader goes full
+            width. */
+        }
+        <div class="flex flex-col gap-6 md:flex-row md:items-stretch md:gap-5">
+          <div class="flex min-w-0 flex-col">
+            <div class="flex items-center gap-3">
+              <div
+                class="bg-brand-red-subtle text-brand-red flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold"
+              >
+                {initials}
+              </div>
+              <div>
+                <div class="text-foreground text-sm font-medium">{post.data.author}</div>
+                <div class="text-muted-foreground text-xs">
+                  <time datetime={post.data.date.toISOString()}>{formattedDate}</time>
+                  <span aria-hidden="true"> &middot; </span>
+                  <span>{readingTime} min read</span>
+                </div>
+              </div>
+            </div>
+
+            {
+              post.data.tags.length > 0 && (
+                <div class="mt-4 flex flex-wrap gap-1.5">
+                  {post.data.tags.map((tag) => (
+                    <a href={`/blog?tag=${tag}`}>
+                      <Badge variant="secondary" className="text-xs">
+                        {tag}
+                      </Badge>
+                    </a>
+                  ))}
+                </div>
+              )
+            }
           </div>
+
+          <BlogReadAloud client:visible />
         </div>
       </div>
-
-      {
-        post.data.tags.length > 0 && (
-          <div class="mt-4 flex flex-wrap gap-1.5">
-            {post.data.tags.map((tag) => (
-              <a href={`/blog?tag=${tag}`}>
-                <Badge variant="secondary" className="text-xs">
-                  {tag}
-                </Badge>
-              </a>
-            ))}
-          </div>
-        )
-      }
     </header>
 
     <details class="border-border mt-4 rounded-lg border p-4 lg:hidden">
@@ -100,7 +128,7 @@ const initials = post.data.author
       </div>
     </details>
 
-    <div class="mt-4 lg:grid lg:grid-cols-[1fr_220px] lg:gap-10">
+    <div class={`mt-4 ${CONTENT_GRID}`}>
       <article class="prose-blog max-w-none" data-reading>
         <Content />
       </article>

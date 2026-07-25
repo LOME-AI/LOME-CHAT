@@ -10,6 +10,7 @@ function makeDocument(overrides?: Partial<Document>): Document {
     title: 'fibonacci',
     content: 'def fibonacci(n): pass',
     lineCount: 15,
+    isStreaming: false,
     ...overrides,
   };
 }
@@ -194,5 +195,39 @@ describe('useDocumentStore', () => {
       toggleFullscreen();
       expect(useDocumentStore.getState().panelWidth).toBe(500);
     });
+  });
+});
+
+describe('useDocumentStore selections', () => {
+  beforeEach(() => {
+    useDocumentStore.setState({
+      isPanelOpen: false,
+      activeDocumentId: null,
+      activeDocument: null,
+      activeSelectionId: 0,
+    });
+  });
+
+  it('counts each explicit open as a new selection', () => {
+    const { setActiveDocument } = useDocumentStore.getState();
+
+    setActiveDocument(makeDocument({ id: 'doc-a' }));
+    const first = useDocumentStore.getState().activeSelectionId;
+    setActiveDocument(makeDocument({ id: 'doc-b' }));
+
+    expect(useDocumentStore.getState().activeSelectionId).toBeGreaterThan(first);
+  });
+
+  it('replaces the active document on refresh without starting a new selection', () => {
+    const { setActiveDocument, refreshActiveDocument } = useDocumentStore.getState();
+    setActiveDocument(makeDocument({ id: 'doc-a', title: 'Partial' }));
+    const selectionId = useDocumentStore.getState().activeSelectionId;
+
+    refreshActiveDocument(makeDocument({ id: 'doc-b', title: 'Complete' }));
+
+    const state = useDocumentStore.getState();
+    expect(state.activeDocumentId).toBe('doc-b');
+    expect(state.activeDocument?.title).toBe('Complete');
+    expect(state.activeSelectionId).toBe(selectionId);
   });
 });

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Blog read-aloud — proposed UI (static mock, rev 4)</title>
+<title>Blog read-aloud — proposed UI (static mock, rev 6)</title>
 <style>
   :root {
     --bg: #ffffff; --fg: #1a1a1e; --muted: #6b6b74; --line: #e6e6ea;
@@ -22,21 +22,36 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg);
     font: 16px/1.6 system-ui, -apple-system, sans-serif; padding: 2.5rem 1rem 6rem; }
-  main { max-width: 52rem; margin: 0 auto; }
+  main { max-width: 58rem; margin: 0 auto; }
   h1 { font-size: 1.4rem; }
-  .note { color: var(--muted); font-size: 0.9rem; max-width: 44rem; }
+  .note { color: var(--muted); font-size: 0.9rem; max-width: 46rem; }
+  .note b { color: var(--fg); }
   section { margin-top: 3rem; }
   section > h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em;
     color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 0.4rem; }
   .frame { border-radius: 12px; padding: 1.5rem; background: var(--bg);
     outline: 1px dashed var(--line); }
   .cap { color: var(--muted); font-size: 0.8rem; margin-top: 0.9rem; }
+  .cap b { color: var(--fg); }
 
-  /* ===== Blog header replica ([slug].astro): title, then a two-column band:
-     left = byline + tags, right = the reader card. ===== */
+  /* ===== Page grid replica: content column (1fr) + ToC aside (220px).
+     THE FIX for issue 3: the header band is constrained to the CONTENT column,
+     so the reader's right edge lands on the article's right edge, never over
+     the "On this page" aside. ===== */
+  .page { display: grid; grid-template-columns: 1fr 220px; gap: 2.5rem; }
+  .content { min-width: 0; }
+  .aside-demo { background: var(--card); border-radius: 10px; padding: 0.9rem 1rem;
+    font-size: 0.85rem; color: var(--muted); height: fit-content; }
+
   .post-title { font-size: 1.9rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 1rem; }
-  .band { display: flex; align-items: stretch; gap: 1.5rem; }
-  .band-left { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+  /* ===== The header band: [byline+tags] [download bar fills the gap] [reader] =====
+     Issue 5: the reader's height is bounded by the byline block (align-items:
+     stretch on a row whose height the byline defines).
+     Issue 4: the download bar sits BETWEEN the two, filling the leftover space
+     up to a max, and adds NO height to the band. ===== */
+  .band { display: flex; align-items: stretch; gap: 1.25rem; }
+  .band-left { flex: none; display: flex; flex-direction: column; }
   .byline { display: flex; align-items: center; gap: 0.75rem; }
   .avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--brand-subtle);
     color: var(--brand); display: flex; align-items: center; justify-content: center;
@@ -47,27 +62,21 @@
   .badge { background: var(--chip-bg); color: var(--muted); font-size: 0.7rem;
     padding: 0.2rem 0.6rem; border-radius: 999px; }
 
-  /* ===== The reader card =====
-     Borderless (background tint only). Right edge flush with the text column.
-     Top aligns with the avatar top; bottom with the bottom of the tags row
-     (achieved by stretching to the band's height). */
-  /* No card box at all: no border, no background. The elements sit directly on
-     the page, as a right-aligned centered stack. */
-  .reader-card { width: 15rem; flex: none; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 0.55rem; text-align: center; }
-
-  /* Shared TTS download bar (same component as the accessibility widget's audio
-     section): thin track, animated indeterminate-style sweep while bytes move,
-     percent label. Sits ABOVE the buttons. */
-  .dl { width: 100%; }
-  .dl .row { display: flex; justify-content: space-between; font-size: 0.72rem;
+  /* Download bar: horizontal, in the gap. Vertically centred, fixed small height,
+     max-width so it never stretches absurdly on wide screens. Reserved slot:
+     present but empty when idle, so nothing reflows when it appears. */
+  .dl-slot { flex: 1 1 auto; min-width: 0; max-width: 22rem; align-self: center; }
+  .dl-row { display: flex; justify-content: space-between; font-size: 0.72rem;
     color: var(--muted); margin-bottom: 0.3rem; }
-  .dl .track { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
-  .dl .fill { display: block; height: 100%; width: 38%; border-radius: 2px;
-    background: var(--accent); animation: pulse 1.2s ease-in-out infinite alternate; }
-  @keyframes pulse { from { opacity: 0.65; } to { opacity: 1; } }
-  @media (prefers-reduced-motion: reduce) { .dl .fill { animation: none; } }
+  .dl-track { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .dl-fill { display: block; height: 100%; width: 38%; border-radius: 2px;
+    background: var(--accent); transition: width .3s linear; }
+  @media (prefers-reduced-motion: reduce) { .dl-fill { transition: none; } }
 
+  /* The reader: no border, no background. Height bounded by the band (issue 5). */
+  .reader { flex: none; width: 17rem; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 0.5rem; text-align: center;
+    overflow: hidden; }
   .controls { display: flex; align-items: center; justify-content: center; gap: 0.6rem; }
   .btn { display: inline-flex; align-items: center; gap: 0.45rem; border: none;
     background: var(--chip-bg); color: var(--chip-fg); border-radius: 999px;
@@ -84,218 +93,243 @@
     background: var(--fg); color: var(--bg); font-size: 0.75rem; line-height: 1.3;
     padding: 0.35rem 0.6rem; border-radius: 6px; white-space: nowrap; pointer-events: none; }
 
-  .disclosure { color: var(--muted); font-size: 0.72rem; line-height: 1.45; margin: 0; }
-  .disclosure span { display: block; }
-  .err { color: #c2410c; font-size: 0.75rem; margin: 0; }
-  @media (prefers-color-scheme: dark) { .err { color: #fb923c; } }
+  /* Issue 2: the disclosure must render on exactly TWO lines here. The reader is
+     wide enough (17rem) and the type small enough that line 2 does not wrap.
+     Each line is its own element, so the break is deterministic, not luck. */
+  .disclosure { color: var(--muted); font-size: 0.7rem; line-height: 1.4; margin: 0; }
+  .disclosure span { display: block; white-space: nowrap; }
 
-  /* "On this page" details below the header, full column width — untouched by the card */
-  .toc { margin-top: 1rem; border-radius: 10px; background: var(--card);
-    padding: 0.9rem 1.1rem; font-size: 0.85rem; color: var(--muted); }
+  .err { color: #c2410c; font-size: 0.72rem; margin: 0; }
+  @media (prefers-color-scheme: dark) { .err { color: #fb923c; } }
 
   .prose { font-family: Georgia, "Times New Roman", serif; margin-top: 1.25rem; }
   .prose p { margin: 0 0 1rem; }
   .hl { background: var(--highlight); border-radius: 3px;
     box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 
-  @media (max-width: 560px) {
-    .band { flex-direction: column; align-items: stretch; }
-    .reader-card { width: 100%; }
-  }
+  /* Mobile: the aside disappears, the band stacks, and the disclosure is allowed
+     to wrap to THREE lines (founder: keep 3 on mobile). */
+  .mobile-demo .page { grid-template-columns: 1fr; }
+  .mobile-demo .aside-demo { display: none; }
+  .mobile-demo .band { flex-direction: column; align-items: stretch; gap: 1rem; }
+  .mobile-demo .reader { width: 100%; }
+  .mobile-demo .dl-slot { max-width: none; }
+  .mobile-demo .disclosure span { white-space: normal; }
+  .mobile-demo .disclosure .l2 { display: inline; }
+  .mobile-demo .disclosure .l3 { display: inline; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Blog read-aloud — proposed UI (rev 4)</h1>
-  <p class="note">Static mock for the 2026-07-23-blog-tts run (T4 reference; <code>plan.md</code> criteria are
-  authoritative). Rev 4 per founder direction: the card sits <strong>to the right of the author block, no new
-  row</strong>, spanning vertically from the avatar's top to the bottom of the tags row; restricted width
-  (15rem); right edge flush with the article text column so it never overlaps "On this page" (which sits below,
-  full width). <strong>No borders anywhere</strong>: the card and controls are background-tinted only. Buttons are
-  centered in the card; the disclosure is two centered lines; the download bar is the <strong>shared animated TTS
-  download bar</strong> (one component with the accessibility widget's audio section) and sits above the controls.
-  Colors are placeholders; the real component uses HushBox theme tokens.</p>
+  <h1>Blog read-aloud — proposed UI (rev 6)</h1>
+  <p class="note">Static mock for the 2026-07-23-blog-tts run. Rev 6 addresses founder issues 2–5:
+  <b>(2)</b> the disclosure renders on exactly two lines on desktop (three allowed on mobile);
+  <b>(3)</b> the whole band is constrained to the article/content column, so the reader's right edge
+  aligns with the article and never sits over "On this page";
+  <b>(4)</b> the download bar moved out of the reader stack into the gap <i>between</i> the byline block
+  and the reader, filling the leftover width up to a max and adding no height;
+  <b>(5)</b> the reader's height is bounded by the byline+tags block.
+  Still borderless and background-free (G9). Colors are placeholders.</p>
 
   <!-- STATE 1: idle -->
   <section>
-    <h2>1 · Idle</h2>
+    <h2>1 · Idle — band ends at the article column, reader bounded by the byline block</h2>
     <div class="frame">
-      <p class="post-title">Why your AI chats deserve real encryption</p>
-      <div class="band">
-        <div class="band-left">
-          <div class="byline">
-            <div class="avatar">LH</div>
-            <div class="who">
-              <div class="name">Lome from HushBox</div>
-              <div class="meta">July 23, 2026 · 6 min read</div>
+      <div class="page">
+        <div class="content">
+          <p class="post-title">Why your AI chats deserve real encryption</p>
+          <div class="band">
+            <div class="band-left">
+              <div class="byline">
+                <div class="avatar">HT</div>
+                <div class="who">
+                  <div class="name">HushBox Team</div>
+                  <div class="meta">July 22, 2026 · 7 min read</div>
+                </div>
+              </div>
+              <div class="tags">
+                <span class="badge">privacy</span>
+                <span class="badge">security</span>
+                <span class="badge">legal</span>
+              </div>
+            </div>
+            <div class="dl-slot"><!-- reserved, empty when idle --></div>
+            <div class="reader">
+              <div class="controls">
+                <button class="btn" aria-pressed="false" aria-label="Listen to this post">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M2 1.5v9l8-4.5z"/></svg>
+                  Listen
+                </button>
+                <button class="iconbtn on" aria-pressed="true" aria-label="Highlight while reading">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+                  <span class="tip">Highlight while reading: on</span>
+                </button>
+              </div>
+              <p class="disclosure">
+                <span class="l1">Local text to speech. First listen downloads</span>
+                <span class="l2">the voice model (about 90 MB, one time).</span>
+              </p>
             </div>
           </div>
-          <div class="tags">
-            <span class="badge">privacy</span>
-            <span class="badge">encryption</span>
-            <span class="badge">engineering</span>
-          </div>
         </div>
-        <div class="reader-card">
-          <div class="controls">
-            <button class="btn" aria-pressed="false" aria-label="Listen to this post">
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M2 1.5v9l8-4.5z"/></svg>
-              Listen
-            </button>
-            <button class="iconbtn on" aria-pressed="true" aria-label="Highlight while reading">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
-              <span class="tip">Highlight while reading: on</span>
-            </button>
-          </div>
-          <p class="disclosure">
-            <span>Local text to speech.</span>
-            <span>First listen downloads the voice model (about 90 MB, one time).</span>
-          </p>
-        </div>
+        <div class="aside-demo">On this page ▸</div>
       </div>
-      <div class="toc">On this page ▸</div>
-      <p class="cap">Card top aligns with the avatar; card bottom with the tags row (the band stretches both columns
-      to equal height). Tooltip on the highlight icon shown on hover (shared /chat tooltip primitive). Light island;
-      no engine code loads until Listen is clicked.</p>
+      <p class="cap"><b>Issue 3 fixed:</b> the band lives inside the content column of the same grid the
+      article uses, so its right edge is the article's right edge. The aside is untouched.
+      <b>Issue 5:</b> the reader is a flex item in a stretch row whose height the byline+tags block
+      defines, and it clips rather than growing. <b>Issue 2:</b> two deterministic disclosure lines.</p>
     </div>
   </section>
 
   <!-- STATE 2: downloading -->
   <section>
-    <h2>2 · First click — shared download bar animates above the controls</h2>
+    <h2>2 · Downloading — bar fills the gap, band height unchanged</h2>
     <div class="frame">
-      <p class="post-title">Why your AI chats deserve real encryption</p>
-      <div class="band">
-        <div class="band-left">
-          <div class="byline">
-            <div class="avatar">LH</div>
-            <div class="who">
-              <div class="name">Lome from HushBox</div>
-              <div class="meta">July 23, 2026 · 6 min read</div>
+      <div class="page">
+        <div class="content">
+          <p class="post-title">Why your AI chats deserve real encryption</p>
+          <div class="band">
+            <div class="band-left">
+              <div class="byline">
+                <div class="avatar">HT</div>
+                <div class="who">
+                  <div class="name">HushBox Team</div>
+                  <div class="meta">July 22, 2026 · 7 min read</div>
+                </div>
+              </div>
+              <div class="tags">
+                <span class="badge">privacy</span>
+                <span class="badge">security</span>
+                <span class="badge">legal</span>
+              </div>
+            </div>
+            <div class="dl-slot" role="status">
+              <div class="dl-row"><span>Preparing the voice</span><span>38%</span></div>
+              <div class="dl-track"><span class="dl-fill"></span></div>
+            </div>
+            <div class="reader">
+              <div class="controls">
+                <button class="btn stop" aria-pressed="true" aria-label="Stop">
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><rect width="10" height="10" rx="1.5"/></svg>
+                  Stop
+                </button>
+                <button class="iconbtn on" aria-pressed="true" aria-label="Highlight while reading">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+                </button>
+              </div>
+              <p class="disclosure">
+                <span class="l1">Local text to speech. First listen downloads</span>
+                <span class="l2">the voice model (about 90 MB, one time).</span>
+              </p>
             </div>
           </div>
-          <div class="tags">
-            <span class="badge">privacy</span>
-            <span class="badge">encryption</span>
-            <span class="badge">engineering</span>
-          </div>
         </div>
-        <div class="reader-card">
-          <div class="dl" role="status">
-            <div class="row"><span>Preparing the voice</span><span>38%</span></div>
-            <div class="track"><span class="fill"></span></div>
-          </div>
-          <div class="controls">
-            <button class="btn stop" aria-pressed="true" aria-label="Stop">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><rect width="10" height="10" rx="1.5"/></svg>
-              Stop
-            </button>
-            <button class="iconbtn on" aria-pressed="true" aria-label="Highlight while reading">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
-            </button>
-          </div>
-          <p class="disclosure">
-            <span>Local text to speech.</span>
-            <span>First listen downloads the voice model (about 90 MB, one time).</span>
-          </p>
-        </div>
+        <div class="aside-demo">On this page ▸</div>
       </div>
-      <div class="toc">On this page ▸</div>
-      <p class="cap">The download bar is the SAME component the accessibility widget's audio section uses (one shared
-      implementation in packages/ui): animated fill while bytes move, percent label, animation off under reduced
-      motion. It occupies reserved space above the buttons; the card does not grow. Returning visitors skip this
-      state; the model is cached, shared with /chat on the same origin.</p>
+      <p class="cap"><b>Issue 4 fixed:</b> the bar occupies the reserved gap slot (vertically centred,
+      <code>max-width: 22rem</code>), so the band's height is identical to state 1 — compare the two
+      frames. Related bugs being fixed separately: it must not appear at all on a cached model
+      (issue 7) and must count 0→100 across the whole download, never start at 100 (issue 8).</p>
     </div>
   </section>
 
   <!-- STATE 3: playing -->
   <section>
-    <h2>3 · Playing — chunk highlight in the article</h2>
+    <h2>3 · Playing</h2>
     <div class="frame">
-      <p class="post-title">Why your AI chats deserve real encryption</p>
-      <div class="band">
-        <div class="band-left">
-          <div class="byline">
-            <div class="avatar">LH</div>
-            <div class="who">
-              <div class="name">Lome from HushBox</div>
-              <div class="meta">July 23, 2026 · 6 min read</div>
+      <div class="page">
+        <div class="content">
+          <p class="post-title">Why your AI chats deserve real encryption</p>
+          <div class="band">
+            <div class="band-left">
+              <div class="byline">
+                <div class="avatar">HT</div>
+                <div class="who">
+                  <div class="name">HushBox Team</div>
+                  <div class="meta">July 22, 2026 · 7 min read</div>
+                </div>
+              </div>
+              <div class="tags">
+                <span class="badge">privacy</span>
+                <span class="badge">security</span>
+                <span class="badge">legal</span>
+              </div>
+            </div>
+            <div class="dl-slot"></div>
+            <div class="reader">
+              <div class="controls">
+                <button class="btn stop" aria-pressed="true" aria-label="Stop">
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><rect width="10" height="10" rx="1.5"/></svg>
+                  Stop
+                </button>
+                <button class="iconbtn on" aria-pressed="true" aria-label="Highlight while reading">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+                </button>
+              </div>
+              <p class="disclosure">
+                <span class="l1">Local text to speech. First listen downloads</span>
+                <span class="l2">the voice model (about 90 MB, one time).</span>
+              </p>
             </div>
           </div>
-          <div class="tags">
-            <span class="badge">privacy</span>
-            <span class="badge">encryption</span>
-            <span class="badge">engineering</span>
+          <div class="prose">
+            <p>Most AI chat apps treat your conversations as their data. We built HushBox around the opposite assumption.</p>
+            <p><span class="hl">Every message is encrypted on your device before it ever leaves, and the keys never touch our servers.</span> That single constraint shapes everything else about how the product works.</p>
           </div>
         </div>
-        <div class="reader-card">
-          <div class="controls">
-            <button class="btn stop" aria-pressed="true" aria-label="Stop">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><rect width="10" height="10" rx="1.5"/></svg>
-              Stop
-            </button>
-            <button class="iconbtn on" aria-pressed="true" aria-label="Highlight while reading">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
-            </button>
-          </div>
-          <p class="disclosure">
-            <span>Local text to speech.</span>
-            <span>First listen downloads the voice model (about 90 MB, one time).</span>
-          </p>
-        </div>
+        <div class="aside-demo">On this page ▸</div>
       </div>
-      <div class="toc">On this page ▸</div>
-      <div class="prose">
-        <p>Most AI chat apps treat your conversations as their data. We built HushBox around the opposite assumption.</p>
-        <p><span class="hl">Every message is encrypted on your device before it ever leaves, and the keys never touch our servers.</span> That single constraint shapes everything else about how the product works.</p>
-        <p>It also means features like this one, reading a page aloud, have to run locally too.</p>
-      </div>
-      <p class="cap">The highlighted sentence is the current chunk (CSS Custom Highlight API; whole-paragraph tint as
-      fallback). Auto-scroll keeps it in view; Esc stops from anywhere. The card scrolls away with the header; Stop
-      remains reachable via Esc or scrolling back.</p>
+      <p class="cap">Toggling highlight off then back on must re-highlight the sentence being spoken
+      immediately, not at the next sentence (issue 6, fixed separately in code).</p>
     </div>
   </section>
 
-  <!-- STATE 4: error -->
+  <!-- STATE 4: mobile -->
   <section>
-    <h2>4 · Error — inline line in the card</h2>
-    <div class="frame">
-      <p class="post-title">Why your AI chats deserve real encryption</p>
-      <div class="band">
-        <div class="band-left">
-          <div class="byline">
-            <div class="avatar">LH</div>
-            <div class="who">
-              <div class="name">Lome from HushBox</div>
-              <div class="meta">July 23, 2026 · 6 min read</div>
+    <h2>4 · Mobile — stacked, three disclosure lines allowed</h2>
+    <div class="frame mobile-demo" style="max-width: 24rem;">
+      <div class="page">
+        <div class="content">
+          <p class="post-title" style="font-size:1.3rem">Why your AI chats deserve real encryption</p>
+          <div class="band">
+            <div class="band-left">
+              <div class="byline">
+                <div class="avatar">HT</div>
+                <div class="who">
+                  <div class="name">HushBox Team</div>
+                  <div class="meta">July 22, 2026 · 7 min read</div>
+                </div>
+              </div>
+              <div class="tags">
+                <span class="badge">privacy</span>
+                <span class="badge">security</span>
+                <span class="badge">legal</span>
+              </div>
+            </div>
+            <div class="dl-slot"></div>
+            <div class="reader">
+              <div class="controls">
+                <button class="btn" aria-pressed="false" aria-label="Listen to this post">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M2 1.5v9l8-4.5z"/></svg>
+                  Listen
+                </button>
+                <button class="iconbtn on" aria-pressed="true" aria-label="Highlight while reading">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+                </button>
+              </div>
+              <p class="disclosure">
+                <span class="l1">Local text to speech. First listen</span>
+                <span class="l2">downloads the voice model</span>
+                <span class="l3">(about 90 MB, one time).</span>
+              </p>
             </div>
           </div>
-          <div class="tags">
-            <span class="badge">privacy</span>
-            <span class="badge">encryption</span>
-            <span class="badge">engineering</span>
-          </div>
         </div>
-        <div class="reader-card">
-          <div class="controls">
-            <button class="btn" aria-pressed="false" aria-label="Listen to this post">
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><path d="M2 1.5v9l8-4.5z"/></svg>
-              Listen
-            </button>
-            <button class="iconbtn on" aria-pressed="true" aria-label="Highlight while reading">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
-            </button>
-          </div>
-          <p class="err" role="alert">Couldn't start playback. Try again.</p>
-          <p class="disclosure">
-            <span>Local text to speech.</span>
-            <span>First listen downloads the voice model (about 90 MB, one time).</span>
-          </p>
-        </div>
+        <div class="aside-demo">On this page ▸</div>
       </div>
-      <div class="toc">On this page ▸</div>
-      <p class="cap">Error is an added centered line inside the card; controls stay put. A retry reuses whatever the
-      cache already holds. Below 560px the card drops under the tags at full width (no room beside the byline).</p>
+      <p class="cap">On mobile the band stacks, the reader spans full width, and the disclosure wraps
+      naturally to three lines — the founder's explicit exception to the two-line desktop rule.
+      The height bound (issue 5) applies only where the band is a row.</p>
     </div>
   </section>
 </main>

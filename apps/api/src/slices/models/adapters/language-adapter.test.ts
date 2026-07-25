@@ -1174,10 +1174,10 @@ describe('wire message assembly (system + history)', () => {
   });
 
   it('pins the canonical request shape with the base system prompt (cassette baseline)', async () => {
-    // The wire now carries the base system prompt, so this baseline differs
-    // from the pre-system hash — every previously recorded cassette must be
-    // re-recorded (out-of-band founder work). The pin locks the NEW canonical
-    // shape (fixed clock) against unintended drift.
+    // This hash is the cassette lookup key derived from the canonical outbound
+    // request (fixed clock). Pinning it makes a change in what we send a deliberate
+    // edit: the literal moves whenever the request shape does, most often the system
+    // prompt text. Cassettes re-record themselves on the next CI run.
     const call = captureFetch(() => sseResponse(simpleTextChunks()));
     const adapter = createLanguageAdapter({
       apiKey: 'test-key',
@@ -1185,6 +1185,6 @@ describe('wire message assembly (system + history)', () => {
       now: fixedClock,
     });
     await collect(adapter.infer(textRequest('What is the capital of France?'), testDescriptor()));
-    expect(descriptorHash(await requestToDescriptor(call.request()))).toBe('38c94f4a2781f374');
+    expect(descriptorHash(await requestToDescriptor(call.request()))).toBe('db959d833936e56f');
   });
 });

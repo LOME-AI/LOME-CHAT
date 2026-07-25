@@ -39,7 +39,12 @@ import type { Outcome } from './outcomes.js';
 /** The billing reads/writes the budget surface composes (a subset of the port). */
 export type BudgetBilling = Pick<
   BillingStores,
-  'setMemberBudgetCapWithinTx' | 'readMemberBudget' | 'readConversationSpent' | 'readWallets'
+  | 'setMemberBudgetCapWithinTx'
+  | 'deleteMemberBudgetWithinTx'
+  | 'lockConversationSpentWithinTx'
+  | 'readMemberBudget'
+  | 'readConversationSpent'
+  | 'readWallets'
 >;
 
 /** A budget cap: a non-negative nano-USD amount. Negative caps are rejected here. */
@@ -96,13 +101,18 @@ export interface SetMemberBudgetParams {
  * forbidden; the caller must be an active admin+ member (a stranger or a
  * read/write member is forbidden, 403); and the target must be an active member
  * of THIS conversation. The cap upsert preserves cumulative spend (billing's
- * helper). `writeCap` is bound by the route to
+ * helper) and refuses a cap below the accrued spend atomically (the helper's
+ * WHERE-guarded conflict path — never check-then-act), surfaced as the typed
+ * `budget-below-spent` refusal. `writeCap` is bound by the route to
  * `billing.setMemberBudgetCapWithinTx(tx, …)` so the write runs inside the
  * caller's `byKey` transaction.
  */
 export function setMemberBudget(
   stores: ConversationsStores,
-  writeCap: (memberId: string, capNanoUsd: bigint) => ResultAsync<void, DomainError>,
+  writeCap: (
+    memberId: string,
+    capNanoUsd: bigint
+  ) => ResultAsync<'applied' | 'below-spent', DomainError>,
   params: SetMemberBudgetParams
 ): ResultAsync<SetBudgetOutcome, DomainError> {
   return stores.conversations.get(params.conversationId).andThen((conversation) => {
@@ -122,13 +132,17 @@ export function setMemberBudget(
 /** The gated write tail: the target must be an active member; the cap upsert preserves spend. */
 function writeActiveMemberCap(
   stores: ConversationsStores,
-  writeCap: (memberId: string, capNanoUsd: bigint) => ResultAsync<void, DomainError>,
+  writeCap: (
+    memberId: string,
+    capNanoUsd: bigint
+  ) => ResultAsync<'applied' | 'below-spent', DomainError>,
   params: SetMemberBudgetParams
 ): ResultAsync<SetBudgetOutcome, DomainError> {
   return stores.members.activeById(params.conversationId, params.memberId).andThen((member) => {
     if (member === null) return okAsync<SetBudgetOutcome, DomainError>({ refusal: 'not-found' });
     return writeCap(params.memberId, params.capNanoUsd).map(
-      (): SetBudgetOutcome => ({ updated: true })
+      (written): SetBudgetOutcome =>
+        written === 'applied' ? { updated: true } : { refusal: 'budget-below-spent' }
     );
   });
 }
@@ -140,12 +154,43 @@ export interface SetConversationBudgetParams {
 }
 
 /**
- * Owner-only per-conversation cap set. The conditional UPDATE on
- * (id, ownerUserId) is the only owner check — never check-then-act — and a
- * 0-row outcome is disambiguated exactly like `updateConversationTitle`: gone is
+ * Owner-only per-conversation cap set. Authorization is answered BEFORE the
+ * spend validation (a non-owner may not binary-search the accrued spend
+ * through cap probes), but the conditional UPDATE on (id, ownerUserId)
+ * remains the authoritative owner check — never check-then-act — with a
+ * 0-row outcome disambiguated exactly like `updateConversationTitle`: gone is
  * not-found, present but not owned is forbidden.
+ *
+ * The cap-vs-spend validation reads the accrued spend through billing's
+ * LOCKED read (`lockSpent`, bound by the route to
+ * `billing.lockConversationSpentWithinTx(tx, …)`): the spending row stays
+ * held FOR UPDATE for the rest of this transaction, so a concurrent
+ * settlement's spend accrual serializes behind the edit — the compare cannot
+ * go stale between validation and the cap write. Lock order (spending row
+ * before the conversations row) matches settlement's, so the two never
+ * deadlock.
  */
 export function setConversationBudget(
+  stores: ConversationsStores,
+  lockSpent: (conversationId: string) => ResultAsync<bigint, DomainError>,
+  params: SetConversationBudgetParams
+): ResultAsync<SetBudgetOutcome, DomainError> {
+  return stores.conversations.get(params.conversationId).andThen((record) => {
+    if (record === null) return okAsync<SetBudgetOutcome, DomainError>({ refusal: 'not-found' });
+    if (record.ownerUserId !== params.callerUserId) {
+      return okAsync<SetBudgetOutcome, DomainError>({ refusal: 'forbidden' });
+    }
+    return lockSpent(params.conversationId).andThen((spentNanoUsd) => {
+      if (params.capNanoUsd < spentNanoUsd) {
+        return okAsync<SetBudgetOutcome, DomainError>({ refusal: 'budget-below-spent' });
+      }
+      return writeOwnerConversationCap(stores, params);
+    });
+  });
+}
+
+/** The validated cap write: the conditional owner UPDATE plus its 0-row disambiguation. */
+function writeOwnerConversationCap(
   stores: ConversationsStores,
   params: SetConversationBudgetParams
 ): ResultAsync<SetBudgetOutcome, DomainError> {
@@ -160,8 +205,8 @@ export function setConversationBudget(
       return stores.conversations
         .get(params.conversationId)
         .map(
-          (record): SetBudgetOutcome =>
-            record === null ? { refusal: 'not-found' } : { refusal: 'forbidden' }
+          (row): SetBudgetOutcome =>
+            row === null ? { refusal: 'not-found' } : { refusal: 'forbidden' }
         );
     });
 }

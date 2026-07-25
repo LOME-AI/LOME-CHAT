@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { createMockPushSender } from './push-mock.js';
+import type { PushMessage } from '../ports/index.js';
 
-const message = {
+const message: PushMessage = {
   recipients: [
-    { userId: 'user-a', token: 'token-a' },
-    { userId: 'user-b', token: 'token-b' },
+    { platform: 'ios', userId: 'user-a', token: 'token-a' },
+    { platform: 'android', userId: 'user-b', token: 'token-b' },
   ],
   title: 'New Message',
   body: 'You have a new message',
@@ -16,7 +17,15 @@ describe('createMockPushSender', () => {
 
     const result = await sender.send(message);
 
-    expect(result._unsafeUnwrap()).toEqual({ successCount: 2, failureCount: 0 });
+    expect(result._unsafeUnwrap()).toEqual({
+      successCount: 2,
+      failureCount: 0,
+      deliveredTokens: [
+        { userId: 'user-a', token: 'token-a' },
+        { userId: 'user-b', token: 'token-b' },
+      ],
+      deadTokens: [],
+    });
   });
 
   it('records sent messages', async () => {

@@ -1,4 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import {
+  STORAGE_COST_PER_CHARACTER_NANO,
+  estimateTokenCount,
+  nanoUsdToFullDollarString,
+} from '@hushbox/shared';
 import { calculateMonthlyCost } from './calculate-cost';
 import type { Model } from '@hushbox/shared';
 
@@ -47,10 +52,22 @@ describe('calculateMonthlyCost', () => {
     expect(result.monthlyCost).toBeGreaterThan(0);
   });
 
-  it('includes the customer markup in the cost', () => {
-    const models = [makeModel()];
-    const result = calculateMonthlyCost(models);
-    expect(result.monthlyCost).toBeGreaterThan(0);
+  it('prices the wire-billable rates as-is: token sum plus storage, no fee applied', () => {
+    // The wire pricing is billable (fees baked at catalog ingestion), so the
+    // calculator is a pure sum: tokens × billable rates + chars × storage.
+    const model = makeModel({ pricing: { inputPerToken: '10000', outputPerToken: '20000' } });
+    const inputChars = 700; // system prompt (500) + user message (200)
+    const outputChars = 400;
+    const inputTokens = estimateTokenCount(inputChars.toString().padEnd(inputChars, ' '));
+    const outputTokens = estimateTokenCount(outputChars.toString().padEnd(outputChars, ' '));
+    const perMessageNano =
+      BigInt(inputTokens) * 10_000n +
+      BigInt(outputTokens) * 20_000n +
+      BigInt(inputChars + outputChars) * STORAGE_COST_PER_CHARACTER_NANO;
+    const expected = Number.parseFloat(
+      nanoUsdToFullDollarString((perMessageNano * 1500n).toString())
+    );
+    expect(calculateMonthlyCost([model]).monthlyCost).toBe(expected);
   });
 
   it('returns cost for 50 messages per day over 30 days', () => {

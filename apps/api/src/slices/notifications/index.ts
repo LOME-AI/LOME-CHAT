@@ -12,20 +12,29 @@ export {
   newsletterIssueEmail,
   passwordChangedEmail,
   passwordResetEmail,
-  sendPushForNewMessage,
   twoFactorDisabledEmail,
   twoFactorEnabledEmail,
   verificationEmail,
   welcomeEmail,
 } from './domain/index.js';
-export type {
-  AdminDigestAction,
-  EmailContent,
-  NewsletterIssueParams,
-  MessagePushDeps,
-  NewMessagePush,
+export { notifyEvent } from './domain/index.js';
+export type { NotifyEventDeps, NotifyEventInput } from './domain/index.js';
+export {
+  getNotificationPreferences,
+  putNotificationPreferencesBodySchema,
+  saveNotificationPreferences,
+  toPreferencesView,
 } from './domain/index.js';
+export type { NotificationPreferencesView } from './domain/index.js';
+export type { AdminDigestAction, EmailContent, NewsletterIssueParams } from './domain/index.js';
 export { createDeviceTokenStore } from './adapters/device-token-store-db.js';
+export { purgeStaleDeviceTokens } from './adapters/device-token-retention.js';
+export { createNotificationPreferencesStore } from './adapters/notification-preferences-store-db.js';
+export { createWebPushSender } from './adapters/push-webpush.js';
+export type { WebPushSenderConfig } from './adapters/push-webpush.js';
+export { createCompositePushSender } from './adapters/push-composite.js';
+export type { CompositePushSenderDeps } from './adapters/push-composite.js';
+export { createCollapseAliasDeriver } from './adapters/collapse-alias.js';
 export { createMockEmailSender } from './adapters/email-mock.js';
 export type { MockEmailSender, RecordedEmailBatch } from './adapters/email-mock.js';
 export { createResendEmailSender } from './adapters/email-resend.js';
@@ -41,7 +50,7 @@ export { createMockPushSender } from './adapters/push-mock.js';
 export type { MockPushSender } from './adapters/push-mock.js';
 export { createFcmPushSender } from './adapters/push-fcm.js';
 export type { FcmPushSenderConfig } from './adapters/push-fcm.js';
-export { createPushSenderFromEnv } from './adapters/push-sender-factory.js';
+export { createPushSenderFromEnv, listCapturedPushes } from './adapters/push-sender-factory.js';
 export type {
   BatchEmailSender,
   BatchSendOptions,
@@ -53,8 +62,12 @@ export type {
   EmailMessage,
   EmailSender,
   MembershipReader,
-  PresenceReader,
+  NotificationPreferences,
+  NotificationPreferencesStore,
   PushDelivery,
+  PushDeviceRef,
   PushMessage,
+  PushRecipient,
   PushSender,
 } from './ports/index.js';
+export { CATEGORY_TOGGLE, DEFAULT_NOTIFICATION_PREFERENCES } from './ports/index.js';

@@ -23,6 +23,18 @@ export {
 } from './tts-engine';
 export { SentenceChunker } from './sentence-chunker';
 export {
+  createDocumentReader,
+  type DocumentReader,
+  type DocumentReaderState,
+  type DocumentReaderChunk,
+  type CreateDocumentReaderOptions,
+} from './document-reader';
+export {
+  createChunkHighlighter,
+  type ChunkHighlighter,
+  type ChunkHighlightTarget,
+} from './chunk-highlighter';
+export {
   createTtsStreamFeeder,
   type TtsStreamFeeder,
   type CreateTtsStreamFeederOptions,

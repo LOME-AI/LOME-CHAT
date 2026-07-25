@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Web renderer (sandbox origin)</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- CLASSIC script (not type=module) on purpose: an inline module script would
+         count as a module load at page load, and older Chromium (e.g. Android
+         WebView / Chrome 113) then IGNORES any import map injected afterwards
+         ("import map added after module load"). Keeping the bootstrap classic and
+         using dynamic import() means the import map is always present before the
+         first module load. Carry-forward for T2's real renderer. -->
+    <script>
+      // Runs inside the cross-origin, sandboxed (allow-scripts only) iframe.
+      // Opaque origin: no access to parent. Communicates only via postMessage.
+      const send = (m) => parent.postMessage(m, '*');
+      const diag = (text) => send({ type: 'diag', text: String(text) });
+      window.addEventListener('error', (e) => diag('window.error: ' + (e.message || e.error)));
+      window.addEventListener('unhandledrejection', (e) => diag('unhandledrejection: ' + (e.reason && e.reason.stack || e.reason)));
+      const err = (requestId, code, message) => send({ type: 'error', requestId, code, message });
+
+      // esm.sh CDN endpoint (real code will make this env-driven — plan A2).
+      const CDN = 'https://esm.sh';
+
+      async function transpileBoth(code) {
+        // Measure Sucrase and Babel-standalone: both size (via resource timing)
+        // and transpile speed. Render via Sucrase (chosen primary).
+        const results = {};
+        // Sucrase
+        const t0 = performance.now();
+        const { transform } = await import(`${CDN}/sucrase@3.35.0`);
+        const sucraseLoadMs = performance.now() - t0;
+        const s0 = performance.now();
+        const sucraseOut = transform(code, {
+          transforms: ['jsx', 'typescript'],
+          jsxRuntime: 'classic',
+        }).code;
+        results.sucrase = { loadMs: sucraseLoadMs, transpileMs: performance.now() - s0 };
+        // Babel-standalone (measurement only)
+        try {
+          const b0 = performance.now();
+          const Babel = await import(`${CDN}/@babel/standalone@7.26.4`);
+          const babelLoadMs = performance.now() - b0;
+          const bb0 = performance.now();
+          Babel.transform(code, { presets: ['react'] });
+          results.babel = { loadMs: babelLoadMs, transpileMs: performance.now() - bb0 };
+        } catch (e) {
+          results.babel = { error: String(e) };
+        }
+        // Report transfer sizes from resource timing entries.
+        for (const entry of performance.getEntriesByType('resource')) {
+          if (entry.name.includes('sucrase')) results.sucrase.transferBytes = entry.transferSize || entry.encodedBodySize;
+          if (entry.name.includes('babel')) results.babel && (results.babel.transferBytes = entry.transferSize || entry.encodedBodySize);
+        }
+        send({ type: 'measure', measure: results });
+        return { code: sucraseOut, sucraseMs: results.sucrase.transpileMs };
+      }
+
+      async function renderReact(requestId, code) {
+        // Import map must be injected before the first module import of the graph.
+        const map = {
+          imports: {
+            react: `${CDN}/react@19.1.0`,
+            'react-dom/client': `${CDN}/react-dom@19.1.0/client`,
+            'canvas-confetti': `${CDN}/canvas-confetti@1.9.3`,
+          },
+        };
+        const im = document.createElement('script');
+        im.type = 'importmap';
+        im.textContent = JSON.stringify(map);
+        document.head.appendChild(im);
+
+        const { code: jsCode, sucraseMs } = await transpileBoth(code);
+        diag('transpiled head: ' + jsCode.slice(0, 120).replace(/\n/g, ' '));
+        const blob = new Blob([jsCode], { type: 'text/javascript' });
+        const url = URL.createObjectURL(blob);
+        try {
+          await import(url);
+        } catch (e) {
+          return err(requestId, 'import_failed', (e && e.stack) || String(e));
+        }
+        diag('module import resolved');
+        // React commit may not be flushed synchronously; poll a few frames.
+        let mounted = null;
+        for (let i = 0; i < 30 && !mounted; i++) {
+          mounted = document.getElementById('react-mounted');
+          if (!mounted) await new Promise((r) => setTimeout(r, 50));
+        }
+        if (!mounted) return err(requestId, 'not_mounted', 'react component did not mount');
+        send({
+          type: 'rendered',
+          requestId,
+          transpiler: 'sucrase',
+          transpileMs: Math.round(sucraseMs),
+          mountedText: mounted.textContent,
+        });
+      }
+
+      window.addEventListener('message', async (ev) => {
+        const msg = ev.data;
+        if (!msg || msg.type !== 'init') return;
+        try {
+          if (msg.kind === 'react') await renderReact(msg.requestId, msg.code);
+          else err(msg.requestId, 'unsupported_kind', String(msg.kind));
+        } catch (e) {
+          err(msg.requestId, 'exception', (e && e.stack) || String(e));
+        }
+      });
+
+      send({ type: 'ready' });
+    </script>
+  </body>
+</html>

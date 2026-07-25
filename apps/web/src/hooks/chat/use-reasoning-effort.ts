@@ -2,17 +2,22 @@ import { offeredEffortLabels, SMART_MODEL_ID } from '@hushbox/shared';
 import { useModels } from '@/hooks/models/models';
 import { useModelStore } from '@/stores/model';
 import { useReasoningEffortStore } from '@/stores/reasoning-effort';
-import type { ModelReasoning, ReasoningEffortSelection } from '@hushbox/shared';
+import type { EffortChoice, ModelReasoning, ReasoningEffortSelection } from '@hushbox/shared';
 
 /**
  * The structural slice of a wire catalog `Model` the reasoning derivations
  * read — exactly the shared plan's `ReasoningPlanModel` plus the id. A full
- * `Model` row satisfies it directly (top-level `contextLength`).
+ * `Model` row satisfies it directly (top-level `contextLength` and
+ * `maxOutputTokens`). `maxOutputTokens` is declared explicitly — the shared
+ * option authority's completion-cap term reads it, and an undeclared field
+ * would silently type-erase at this seam even though the runtime object
+ * carries it.
  */
 export interface EffortModel {
   readonly id: string;
   readonly reasoning?: ModelReasoning | undefined;
   readonly contextLength: number;
+  readonly maxOutputTokens?: number | undefined;
 }
 
 // The intersection gate is the shared authority (`offeredEffortLabels` in
@@ -26,6 +31,20 @@ export { offeredEffortLabels } from '@hushbox/shared';
  */
 export function offersEffortNone(models: readonly EffortModel[]): boolean {
   return models.every((model) => model.reasoning?.mandatory !== true);
+}
+
+/**
+ * Whether the server's CURRENT effort validation accepts this choice for the
+ * whole selection: it refuses any explicit level not offered by every
+ * selected model, and refuses `none` when any selected model has mandatory
+ * reasoning. The menu renders the union choice set but greys the choices
+ * this predicate rejects — selecting one would produce a send the server
+ * 400s. Dies (with the greying) when server-side per-model downgrade
+ * resolution lands; the union authority is `turnEffortOptions`.
+ */
+export function serverAcceptsChoice(models: readonly EffortModel[], choice: EffortChoice): boolean {
+  if (choice === 'none') return offersEffortNone(models);
+  return offeredEffortLabels(models).includes(choice);
 }
 
 export interface EffectiveSelectionInput {

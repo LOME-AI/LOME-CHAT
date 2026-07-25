@@ -39,6 +39,7 @@ import { useResolveDefaultModel } from '@/hooks/models/use-resolve-default-model
 import { useDocumentStore } from '@/stores/document';
 import type { FundingSource, MemberPrivilege, ChatModality } from '@hushbox/shared';
 import type { ChatSearchProps } from '@/components/chat/input/prompt-input';
+import type { ModelFloorGroupContext } from '@/hooks/billing/use-prompt-budget';
 import type { GroupChatProps, PromptInputRef } from '@/components/chat/message/types';
 import type { Message } from '@/lib/api';
 import type { QueuedMessage } from '@/stores/message-queue';
@@ -169,6 +170,17 @@ function renderQueuedPills(
 ): React.JSX.Element | null {
   if (queuedMessages === undefined || onCancelQueued === undefined) return null;
   return <QueuedMessages queued={queuedMessages} onCancel={onCancelQueued} className="mb-2" />;
+}
+
+/** The conversation's funding context for the model picker's affordability floor. */
+function buildFloorGroup(
+  groupChat: GroupChatProps | undefined
+): ModelFloorGroupContext | undefined {
+  if (groupChat === undefined) return undefined;
+  return {
+    conversationId: groupChat.conversationId,
+    currentUserPrivilege: groupChat.currentUserPrivilege,
+  };
 }
 
 export function ChatLayout({
@@ -348,6 +360,7 @@ export function ChatLayout({
           activeModality={activeModality}
           pickerOpen={pickerOpen}
           onPickerOpenChange={setPickerOpen}
+          floorGroup={buildFloorGroup(groupChat)}
           {...buildChatHeaderGroupProps(groupChat, handleFacepileClick)}
         />
       </div>

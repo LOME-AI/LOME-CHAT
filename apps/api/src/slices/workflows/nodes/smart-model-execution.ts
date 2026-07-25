@@ -289,7 +289,7 @@ async function classifierCall(
           charge: {
             keySuffix: 'classifier',
             billing: success.billing,
-            baseCostNanoUsd: success.costNanoUsd,
+            billableCostNanoUsd: success.costNanoUsd,
             isEstimated: success.isEstimated ?? false,
           },
         }),

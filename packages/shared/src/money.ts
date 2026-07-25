@@ -43,6 +43,11 @@ export function roundHalfEvenDiv(numerator: bigint, denominator: bigint): bigint
 /**
  * The one place the customer-facing markup lands on a provider base cost.
  * Rounds half-even exactly once; callers must never re-round the result.
+ *
+ * Fee-seam: this module is where fee application is DEFINED; the vendored
+ * fee-seams lint rule confines importers to the sanctioned seams and matches
+ * by name pattern — every fee-application helper here must keep the
+ * `applyMarkup` prefix so new helpers stay covered.
  */
 export function applyMarkup(baseCostNanoUsd: bigint): bigint {
   if (baseCostNanoUsd < 0n) {

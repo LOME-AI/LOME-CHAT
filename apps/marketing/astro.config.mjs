@@ -5,6 +5,14 @@ import react from '@astrojs/react';
 import sitemap from '@astrojs/sitemap';
 import tailwindcss from '@tailwindcss/vite';
 
+import { defaultClientConditions } from 'vite';
+
+import {
+  KOKORO_ORT_COMMON_INCLUDE,
+  ORT_EXTERN_WASM_CONDITION,
+  ortAssetsPlugin,
+} from '../../scripts/lib/ort-assets-plugin.ts';
+
 const vitePort = process.env['HB_VITE_PORT'] ?? '5173';
 const astroPort = process.env['HB_ASTRO_PORT'];
 
@@ -54,8 +62,28 @@ export default defineConfig({
     // with `apps/web`) reaches browser code. See
     // node_modules/astro/dist/core/create-vite.js:147.
     envPrefix: ['PUBLIC_', 'VITE_'],
+    optimizeDeps: {
+      // Fails the dev server at start if kokoro-js's undeclared
+      // `onnxruntime-common` import cannot be resolved, instead of letting the
+      // optimizer externalize it silently and cache that (see the constant).
+      include: KOKORO_ORT_COMMON_INCLUDE,
+    },
+    resolve: {
+      // Picks onnxruntime-web's extern-wasm build variant so the blog TTS
+      // worker does not drag a bundled ~21 MB wasm copy into the output
+      // alongside the self-hosted one ortAssetsPlugin emits (see the
+      // constant's own comment). `conditions` REPLACES Vite's defaults, so the
+      // spread is load-bearing: without it, module/browser resolution breaks
+      // across the whole site. Astro passes user `resolve.conditions` through
+      // untouched (its own create-vite.js sets none).
+      conditions: [ORT_EXTERN_WASM_CONDITION, ...defaultClientConditions],
+    },
     plugins: [
       tailwindcss(),
+      // Self-hosts the onnxruntime-web WASM runtime same-origin (under
+      // TTS_ORT_WASM_PATH) so the blog "Listen" TTS engine loads under the CSP
+      // with no third-party CDN. Shared with the web (Vite) build.
+      ortAssetsPlugin(),
       {
         name: 'spa-redirect',
         configureServer(server) {

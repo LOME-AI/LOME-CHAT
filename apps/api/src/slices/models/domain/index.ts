@@ -1,11 +1,10 @@
 export { CALL_SHAPE_FAMILIES, dispatchFamilyFor } from './dispatch.js';
 export {
-  callBaseNanoUsd,
-  estimateCallNanoUsd,
+  callBillableNanoUsd,
   estimateRunCeilingNanoUsd,
   mediaCallUsageFor,
-  priceMediaBaseNanoUsd,
-  priceUsageBaseNanoUsd,
+  priceMediaBillableNanoUsd,
+  priceUsageBillableNanoUsd,
 } from './estimate.js';
 export { createEstimateRun } from './estimate-run.js';
 export { findAdminDisabledModel } from './admin-disabled.js';
@@ -43,7 +42,7 @@ export { findTierLockedModel } from './tier-gate.js';
 export {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   trialEligibility,
-  trialMessageBaseNanoUsd,
+  trialMessageBillableNanoUsd,
 } from './trial-eligibility.js';
 export {
   TOOL_REGISTRY,

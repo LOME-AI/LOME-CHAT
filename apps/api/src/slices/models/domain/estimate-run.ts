@@ -3,17 +3,14 @@ import {
   ESTIMATED_IMAGE_BYTES,
   ESTIMATED_VIDEO_BYTES_PER_SECOND,
   STORAGE_COST_PER_CHARACTER_NANO,
+  WEB_SEARCH_RESERVATION_NANO_PER_MODEL,
   callShapeFamilyFor,
   nanoUSD,
   outputCharsPerTokenForTier,
   reservationCeiling,
   smartModelClassifierDimensions,
 } from '@hushbox/shared';
-import {
-  WORST_CASE_SEARCH_RESERVATION_NANO_USD,
-  estimateRunCeilingNanoUsd,
-  mediaCallUsageFor,
-} from './estimate.js';
+import { estimateRunCeilingNanoUsd, mediaCallUsageFor } from './estimate.js';
 import { classifierReserveLineItems } from './smart-model-candidates.js';
 import { WEB_SEARCH_TOOL_NAME } from './tool-registry.js';
 import { validationError } from '../../../lib/errors/index.js';
@@ -431,12 +428,12 @@ function declaredOutputCeiling(
  * search tool: the per-call worst case scaled by the node's enclosing fanOut
  * width and loop iterations (each fanned/looped invocation can search up to the
  * cap), and by nothing else — `maxSteps` is the search loop's OWN step cap,
- * already folded into `WORST_CASE_SEARCH_RESERVATION_NANO_USD`, so multiplying
+ * already folded into `WEB_SEARCH_RESERVATION_NANO_PER_MODEL`, so multiplying
  * by it too would double-count. Zero when the node declared no search tool.
  */
 function webSearchReservation(node: ModelCallNode, enclosure: EnclosureFactors): bigint {
   if (!node.tools.includes(WEB_SEARCH_TOOL_NAME)) return 0n;
-  return WORST_CASE_SEARCH_RESERVATION_NANO_USD * BigInt(enclosure.fanOut) * BigInt(enclosure.loop);
+  return WEB_SEARCH_RESERVATION_NANO_PER_MODEL * BigInt(enclosure.fanOut) * BigInt(enclosure.loop);
 }
 
 function estimateModelNode(

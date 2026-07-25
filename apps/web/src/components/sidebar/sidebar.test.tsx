@@ -81,10 +81,14 @@ vi.mock('@/lib/auth', () => ({
 }));
 
 import { useSession } from '@/lib/auth';
+import { useEnablePrompt } from '@/hooks/notifications/use-enable-prompt';
 import { Sidebar } from './sidebar';
 import type { ReactNode } from 'react';
 
 const mockUseSession = vi.mocked(useSession);
+const mockUseEnablePrompt = vi.mocked(useEnablePrompt);
+const enableOffer = vi.fn();
+const dismissOffer = vi.fn();
 
 const useParamsMock = vi.fn<() => { id: string | undefined }>(() => ({ id: undefined }));
 const useLocationMock = vi.fn<() => { pathname: string }>(() => ({ pathname: '/' }));
@@ -128,6 +132,15 @@ vi.mock('@/providers/stability-provider', () => ({
   }),
 }));
 
+vi.mock('@/hooks/notifications/use-enable-prompt', () => ({
+  useEnablePrompt: vi.fn(() => ({
+    isVisible: true,
+    isEnabling: false,
+    enable: vi.fn(),
+    dismiss: vi.fn(),
+  })),
+}));
+
 vi.mock('@hushbox/ui', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@hushbox/ui')>();
   return {
@@ -166,6 +179,7 @@ const testConv = {
   privilege: 'owner' as const,
   muted: false,
   pinned: false,
+  lastReadSeq: 0,
 };
 
 describe('Sidebar', () => {
@@ -174,6 +188,14 @@ describe('Sidebar', () => {
     useParamsMock.mockReturnValue({ id: undefined });
     useLocationMock.mockReturnValue({ pathname: '/' });
     vi.mocked(useIsMobile).mockReturnValue(false);
+    enableOffer.mockClear();
+    dismissOffer.mockClear();
+    mockUseEnablePrompt.mockReturnValue({
+      isVisible: true,
+      isEnabling: false,
+      enable: enableOffer,
+      dismiss: dismissOffer,
+    });
     mockUseSession.mockReturnValue({
       data: {
         user: {
@@ -510,6 +532,98 @@ describe('Sidebar', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe('notification offer', () => {
+    function offerRegion(): HTMLElement {
+      const region = screen.getByRole('button', { name: 'Enable' }).closest('[role="status"]');
+      if (region === null) throw new Error('the notification offer is not a status region');
+      return region as HTMLElement;
+    }
+
+    it('sits below the conversation list', () => {
+      render(<Sidebar />, { wrapper: createWrapper() });
+
+      const nav = screen.getByTestId(TEST_IDS.sidebarNav);
+      expect(nav.compareDocumentPosition(offerRegion())).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING as number
+      );
+    });
+
+    it('sits above the account footer', () => {
+      render(<Sidebar />, { wrapper: createWrapper() });
+
+      const footer = screen.getByTestId(TEST_IDS.sidebarFooter);
+      expect(footer.compareDocumentPosition(offerRegion())).toBe(
+        Node.DOCUMENT_POSITION_PRECEDING as number
+      );
+    });
+
+    it('carries the full card, not the compact button, while the sidebar is expanded', () => {
+      render(<Sidebar />, { wrapper: createWrapper() });
+
+      expect(screen.getByRole('button', { name: 'Enable' })).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: 'Turn on notifications' })
+      ).not.toBeInTheDocument();
+    });
+
+    it('shrinks to a compact button in the rail, which is too narrow for the card', () => {
+      useUIStore.setState({ sidebarOpen: false });
+
+      render(<Sidebar />, { wrapper: createWrapper() });
+
+      expect(screen.getByRole('button', { name: 'Turn on notifications' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Enable' })).not.toBeInTheDocument();
+    });
+
+    it('reveals the card by expanding the sidebar when the compact button is pressed', async () => {
+      const user = userEvent.setup();
+      useUIStore.setState({ sidebarOpen: false });
+
+      render(<Sidebar />, { wrapper: createWrapper() });
+      await user.click(screen.getByRole('button', { name: 'Turn on notifications' }));
+
+      expect(useUIStore.getState().sidebarOpen).toBe(true);
+      expect(screen.getByRole('button', { name: 'Enable' })).toBeInTheDocument();
+    });
+
+    it('leaves the offer unanswered when the compact button expands the sidebar', async () => {
+      const user = userEvent.setup();
+      useUIStore.setState({ sidebarOpen: false });
+
+      render(<Sidebar />, { wrapper: createWrapper() });
+      await user.click(screen.getByRole('button', { name: 'Turn on notifications' }));
+
+      expect(dismissOffer).not.toHaveBeenCalled();
+      expect(enableOffer).not.toHaveBeenCalled();
+    });
+
+    it('leaves the rail empty when the device is not owed the offer', () => {
+      mockUseEnablePrompt.mockReturnValue({
+        isVisible: false,
+        isEnabling: false,
+        enable: enableOffer,
+        dismiss: dismissOffer,
+      });
+      useUIStore.setState({ sidebarOpen: false });
+
+      render(<Sidebar />, { wrapper: createWrapper() });
+
+      expect(
+        screen.queryByRole('button', { name: 'Turn on notifications' })
+      ).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Enable' })).not.toBeInTheDocument();
+    });
+
+    it('renders inside the mobile drawer', () => {
+      vi.mocked(useIsMobile).mockReturnValue(true);
+      useUIStore.setState({ mobileSidebarOpen: true, sidebarOpen: false });
+
+      render(<Sidebar />, { wrapper: createWrapper() });
+
+      expect(screen.getByRole('button', { name: 'Enable' })).toBeInTheDocument();
     });
   });
 

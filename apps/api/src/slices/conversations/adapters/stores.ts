@@ -74,6 +74,7 @@ const memberColumns = {
   acceptedAt: conversationMembers.acceptedAt,
   muted: conversationMembers.muted,
   pinned: conversationMembers.pinned,
+  lastReadSeq: conversationMembers.lastReadSeq,
 } as const;
 
 function activeMember(conversationId: string, userId: string): ReturnType<typeof and> {
@@ -152,6 +153,7 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
               privilege: conversationMembers.privilege,
               muted: conversationMembers.muted,
               pinned: conversationMembers.pinned,
+              lastReadSeq: conversationMembers.lastReadSeq,
               acceptedAt: conversationMembers.acceptedAt,
               invitedByUsername: inviter.username,
             })
@@ -277,6 +279,7 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
                   acceptedAt: row.acceptedAt,
                   muted: row.muted,
                   pinned: row.pinned,
+                  lastReadSeq: row.lastReadSeq,
                 },
                 publicKey: row.publicKey,
                 displayName: row.displayName,
@@ -535,6 +538,18 @@ export function createConversationsStores(db: DbWriter): ConversationsStores {
             .returning({ id: conversationMembers.id }),
           storeFailure
         ).map((rows) => rows.length > 0),
+
+      advanceLastReadSeq: ({ conversationId, userId, lastReadSeq }) =>
+        fromPromise(
+          db
+            .update(conversationMembers)
+            .set({
+              lastReadSeq: sql`greatest(${conversationMembers.lastReadSeq}, ${lastReadSeq}::bigint)`,
+            })
+            .where(activeMember(conversationId, userId))
+            .returning({ lastReadSeq: conversationMembers.lastReadSeq }),
+          storeFailure
+        ).map((rows) => rows[0] ?? null),
 
       activeVisibilityByKey: (conversationId) => {
         const active = and(

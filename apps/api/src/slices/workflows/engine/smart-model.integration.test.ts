@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { PolicyHooks, TOTAL_FEE_RATE, nanoUSD, textTag } from '@hushbox/shared';
-import { applyMarkup } from '../../billing/index.js';
+import { PolicyHooks, nanoUSD, textTag, usdToNanoUsd } from '@hushbox/shared';
+import { providerUsdToBillableNanoUsd } from '../../billing/index.js';
 import { ok } from '../../../lib/result/index.js';
 import { smartModel } from '../builder/smart-model.js';
 import { workflowInputs } from '../builder/workflow-inputs.js';
@@ -14,7 +14,12 @@ import {
   reducerCode,
 } from './workflow-capabilities.js';
 import { setupIntegrationProvider } from '../../models/adapters/integration-setup.js';
-import type { ModelDescriptor, SettlementRequest, WorkflowDefinition } from '@hushbox/shared';
+import type {
+  InferenceEvent,
+  ModelDescriptor,
+  SettlementRequest,
+  WorkflowDefinition,
+} from '@hushbox/shared';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { ModelProvider } from '../../models/index.js';
 import type { TransformCompute } from '../../media/index.js';
@@ -152,6 +157,8 @@ function smartModelDefinition(): WorkflowDefinition {
 interface LiveRun {
   readonly outcome: { readonly outcome: string };
   readonly settlement: SettlementRequest | undefined;
+  /** Every stream envelope the run emitted — the terminal finish carries the raw inline cost. */
+  readonly events: readonly { readonly event: InferenceEvent }[];
 }
 
 /**
@@ -160,7 +167,7 @@ interface LiveRun {
  */
 function expectBilledTextGeneration(charge: SettlementRequest['charges'][number]): void {
   expect(charge.modality).toBe('text');
-  expect(charge.baseCostNanoUsd).toBeGreaterThan(0n);
+  expect(charge.billableCostNanoUsd).toBeGreaterThan(0n);
   expect(charge.isEstimated).toBe(false);
   expect(charge.generationId?.length ?? 0).toBeGreaterThan(0);
   expect(charge.tokens?.outputTokens ?? 0).toBeGreaterThan(0);
@@ -168,6 +175,7 @@ function expectBilledTextGeneration(charge: SettlementRequest['charges'][number]
 
 async function runSmartModelTurn(provider: ModelProvider): Promise<LiveRun> {
   const settlements: SettlementRequest[] = [];
+  const events: { readonly event: InferenceEvent }[] = [];
   const execution = createLiveExecutionRegistry({
     provider,
     models: {
@@ -199,10 +207,12 @@ async function runSmartModelTurn(provider: ModelProvider): Promise<LiveRun> {
       },
     },
     runKey: RUN_KEY,
-    emit: () => {},
+    emit: (envelope) => {
+      events.push(envelope);
+    },
   });
   const outcome = await handle.done;
-  return { outcome, settlement: settlements[0] };
+  return { outcome, settlement: settlements[0], events };
 }
 
 describe('smart-model turn — factory-resolved classifier + answer', () => {
@@ -250,30 +260,35 @@ describe('smart-model turn — factory-resolved classifier + answer', () => {
     // the first live event — no explicit recordServiceEvidence call here.
   });
 
-  it("applies the markup fee to each generation's real inline cost (cost × (1 + fee rate))", () => {
+  it('charges the answer generation exactly the port conversion of its real inline cost', () => {
     const settlement = run.settlement;
     expect(settlement).toBeDefined();
     if (settlement === undefined) return;
 
-    for (const charge of settlement.charges) {
-      const base = charge.baseCostNanoUsd;
-      const marked = applyMarkup(base);
-      // Message cost is strictly greater than the base provider cost (> 0).
-      expect(marked).toBeGreaterThan(base);
-      expect(marked).toBeGreaterThan(0n);
-      // applyMarkup == cost × (1 + TOTAL_FEE_RATE), within half-even rounding
-      // (≤ 0.5 nano absolute). Mirror the markup rule in bigint nano-USD — the
-      // fee rate expressed in basis points exactly as money.ts derives
-      // MARKUP_BASIS_POINTS from the shared TOTAL_FEE_RATE — and divide truncating.
-      // Truncation differs from applyMarkup's half-even rounding by at most 1 nano,
-      // so an absolute ≤ 1-nano bound holds at every cost magnitude while still
-      // catching any real divergence in the markup rule (float relative error,
-      // which the removed check used, exceeded 1e-6 for realistic small costs).
-      const basis = 10_000n;
-      const markupBasisPoints = BigInt(Math.round(TOTAL_FEE_RATE * 10_000));
-      const reference = (base * (basis + markupBasisPoints)) / basis;
-      const delta = marked > reference ? marked - reference : reference - marked;
-      expect(delta).toBeLessThanOrEqual(1n);
-    }
+    // The answer generation streams through `emit`, so its terminal finish
+    // event carries the raw inline provider cost the gateway reported. The
+    // charge must be EXACTLY the port helper's conversion of that figure —
+    // the reference is the production seam itself, never a re-typed fee
+    // formula (the old basis-point reconstruction was a sync contract).
+    const finish = run.events
+      .map((envelope) => envelope.event)
+      .findLast((event) => event.kind === 'finish');
+    expect(finish?.kind).toBe('finish');
+    const inlineUsd =
+      (finish?.kind === 'finish' ? finish.metadata.providerCostUsd : undefined) ?? 0;
+    expect(inlineUsd).toBeGreaterThan(0);
+
+    const answerCharge = settlement.charges.find((charge) => charge.key === 'answer');
+    expect(answerCharge?.billableCostNanoUsd).toBe(providerUsdToBillableNanoUsd(inlineUsd));
+    // The conversion is the only fee application: billable strictly exceeds
+    // the raw nano conversion of the same figure.
+    expect(providerUsdToBillableNanoUsd(inlineUsd)).toBeGreaterThan(usdToNanoUsd(inlineUsd));
+    const classifierCharge = settlement.charges.find(
+      (charge) => charge.key === 'answer#classifier'
+    );
+    // The classifier runs emit-free (invisible to the stream), so its raw
+    // inline cost is unobservable here; the port unit pins cover the
+    // conversion, and the first test asserts it billed a positive inline cost.
+    expect(classifierCharge?.billableCostNanoUsd ?? 0n).toBeGreaterThan(0n);
   });
 });

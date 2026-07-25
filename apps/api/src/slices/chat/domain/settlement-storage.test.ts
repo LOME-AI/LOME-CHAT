@@ -19,7 +19,7 @@ function textCharge(key: string): SettlementCharge {
     modelId: 'm',
     providerName: 'p',
     modality: 'text',
-    baseCostNanoUsd: 1000n,
+    billableCostNanoUsd: 1000n,
     isEstimated: false,
   };
 }

@@ -20,6 +20,9 @@ export const accessibilityPreferencesSchema = z.object({
   // Reading aids
   magnifier: z.boolean().default(false),
   readingGuide: z.boolean().default(false),
+  // Blog/document read-aloud: highlight the sentence currently being spoken.
+  // Default on; toggled from the blog "Listen" control, shared across readers.
+  readingHighlight: z.boolean().default(true),
 
   // Audio
   ttsEnabled: z.boolean().default(false),

@@ -198,6 +198,17 @@ jobs:
             test-weights-${{ runner.os }}-main-
             test-weights-${{ runner.os }}-
 
+      # Self-hosted Pyodide assets (~26 MB) the sandbox suite runs against. The
+      # bytes are gitignored and fetched from a pinned CDN by the sandbox
+      # `fetch-pyodide` turbo task (a dependency of its `test` task). Cache them
+      # keyed on the fetch script's pins so the download happens once per pin
+      # change; on a cache hit the fetch task's idempotency guard skips it.
+      - name: Cache Pyodide assets
+        uses: useblacksmith/cache@v5
+        with:
+          path: apps/sandbox/public/pyodide
+          key: pyodide-${{ hashFiles('apps/sandbox/scripts/fetch-pyodide.sh') }}
+
       - name: Run tests
         run: pnpm test
         env:
@@ -260,10 +271,24 @@ jobs:
       - name: Verify production environment
         run: pnpm verify:env --mode=production
 
+      # The sandbox origin's dist ships the self-hosted Pyodide assets (~26 MB,
+      # gitignored), pulled from a pinned CDN by the `fetch-pyodide` turbo task
+      # that `build` depends on. Cache them on the fetch script's pins so the
+      # download happens once per pin change; on a hit the fetch task's
+      # idempotency guard skips it.
+      - name: Cache Pyodide assets
+        uses: useblacksmith/cache@v5
+        with:
+          path: apps/sandbox/public/pyodide
+          key: pyodide-${{ hashFiles('apps/sandbox/scripts/fetch-pyodide.sh') }}
+
       - name: Build
         run: pnpm build
         # BEGIN GENERATED: build-env
         env:
+          ESM_CDN_URL: https://esm.sh
+          VITE_SANDBOX_ORIGIN_URL: https://sandbox.hushbox.ai
+          VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
           VITE_API_URL: https://api.hushbox.ai
           VITE_HELCIM_JS_TOKEN: ${{ secrets.VITE_HELCIM_JS_TOKEN_PRODUCTION }}
           VITE_PLATFORM: web
@@ -281,6 +306,7 @@ jobs:
         # BEGIN GENERATED: headers-env
         env:
           VITE_API_URL: https://api.hushbox.ai
+          SANDBOX_ORIGIN_URL: https://sandbox.hushbox.ai
         # END GENERATED: headers-env
 
       - name: Upload web build artifact
@@ -294,6 +320,15 @@ jobs:
         with:
           name: admin-dist
           path: apps/admin/dist
+
+      # The sandbox origin is deployed from this dist (static pages + Pyodide +
+      # the env-derived config.js); the deploy job never builds, so it travels
+      # as an artifact like the web and admin bundles.
+      - name: Upload sandbox build artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: sandbox-dist
+          path: apps/sandbox/dist
 
       - name: Build mobile OTA bundles (parallel)
         if: needs.version.result == 'success'
@@ -310,6 +345,8 @@ jobs:
           wait
         # BEGIN GENERATED: build-env-mobile
         env:
+          VITE_SANDBOX_ORIGIN_URL: https://sandbox.hushbox.ai
+          VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
           VITE_API_URL: https://api.hushbox.ai
           VITE_HELCIM_JS_TOKEN: ${{ secrets.VITE_HELCIM_JS_TOKEN_PRODUCTION }}
           VITE_PLATFORM: web
@@ -543,6 +580,19 @@ jobs:
           name: admin-e2e-dist
           path: apps/admin/dist
 
+      # The document-rendering E2E specs load the sandbox origin, which serves the
+      # self-hosted Pyodide assets (~26 MB, gitignored). Cache them on the fetch
+      # script's pins and fetch on a cache miss; the fetch is idempotent (skips
+      # when the pinned set is already present).
+      - name: Cache Pyodide assets
+        uses: useblacksmith/cache@v5
+        with:
+          path: apps/sandbox/public/pyodide
+          key: pyodide-${{ hashFiles('apps/sandbox/scripts/fetch-pyodide.sh') }}
+
+      - name: Fetch Pyodide assets
+        run: pnpm --filter @hushbox/sandbox fetch-pyodide
+
       - name: Run E2E tests (${{ matrix.project }})
         run: pnpm e2e --project=${{ matrix.project }} --grep-invert "$E2E_GREP_INVERT"
         env:
@@ -745,6 +795,10 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY_PRODUCTION }}
       FCM_PROJECT_ID: ${{ secrets.FCM_PROJECT_ID }}
       FCM_SERVICE_ACCOUNT_JSON: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}
+      VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+      VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+      VAPID_SUBJECT: mailto:notifications@hushbox.ai
+      NOTIFICATION_TAG_SECRET: ${{ secrets.NOTIFICATION_TAG_SECRET }}
       HELCIM_API_TOKEN: ${{ secrets.HELCIM_API_TOKEN_PRODUCTION }}
       LINEAR_API_KEY_READ: ${{ secrets.LINEAR_API_KEY_READ }}
       HELCIM_WEBHOOK_VERIFIER: ${{ secrets.HELCIM_WEBHOOK_VERIFIER_PRODUCTION }}
@@ -833,6 +887,12 @@ jobs:
           name: admin-dist
           path: apps/admin/dist
 
+      - name: Download sandbox build artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: sandbox-dist
+          path: apps/sandbox/dist
+
       # Publish-then-promote: the OTA bundle + per-platform checksums must exist
       # in R2 / as worker secrets BEFORE APP_VERSION is set. Setting APP_VERSION
       # (below) is what makes /updates/current advertise the new version; if the
@@ -891,6 +951,9 @@ jobs:
           echo "${{ secrets.OPENROUTER_API_KEY_PRODUCTION }}" | pnpm exec wrangler secret put OPENROUTER_API_KEY
           echo "${{ secrets.FCM_PROJECT_ID }}" | pnpm exec wrangler secret put FCM_PROJECT_ID
           echo "${{ secrets.FCM_SERVICE_ACCOUNT_JSON }}" | pnpm exec wrangler secret put FCM_SERVICE_ACCOUNT_JSON
+          echo "${{ secrets.VAPID_PUBLIC_KEY }}" | pnpm exec wrangler secret put VAPID_PUBLIC_KEY
+          echo "${{ secrets.VAPID_PRIVATE_KEY }}" | pnpm exec wrangler secret put VAPID_PRIVATE_KEY
+          echo "${{ secrets.NOTIFICATION_TAG_SECRET }}" | pnpm exec wrangler secret put NOTIFICATION_TAG_SECRET
           echo "${{ secrets.HELCIM_API_TOKEN_PRODUCTION }}" | pnpm exec wrangler secret put HELCIM_API_TOKEN
           echo "${{ secrets.LINEAR_API_KEY_READ }}" | pnpm exec wrangler secret put LINEAR_API_KEY_READ
           echo "${{ secrets.HELCIM_WEBHOOK_VERIFIER_PRODUCTION }}" | pnpm exec wrangler secret put HELCIM_WEBHOOK_VERIFIER
@@ -908,7 +971,7 @@ jobs:
         run: |
           secrets=$(pnpm exec wrangler secret list)
           # BEGIN GENERATED: verify-secrets
-          for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD ADMIN_ACTOR_ALLOWLIST ADMIN_SQL_PANEL_DATABASE_URL CLOUDFLARE_ACCESS_LOG_API_TOKEN CLOUDFLARE_ACCOUNT_ID APP_VERSION RESEND_API_KEY RESEND_WEBHOOK_SECRET OPENROUTER_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SENTRY_DSN; do
+          for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD ADMIN_ACTOR_ALLOWLIST ADMIN_SQL_PANEL_DATABASE_URL CLOUDFLARE_ACCESS_LOG_API_TOKEN CLOUDFLARE_ACCOUNT_ID APP_VERSION RESEND_API_KEY RESEND_WEBHOOK_SECRET OPENROUTER_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY NOTIFICATION_TAG_SECRET HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SENTRY_DSN; do
           # END GENERATED: verify-secrets
             if ! echo "$secrets" | grep -q "$secret"; then
               echo "ERROR: Secret $secret not found in Workers"
@@ -968,6 +1031,13 @@ jobs:
 
       - name: Deploy Admin assets Worker
         working-directory: apps/admin
+        run: pnpm exec wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy Sandbox assets Worker
+        working-directory: apps/sandbox
         run: pnpm exec wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -47,14 +47,16 @@ import type {
  * engine hands it an `emit` seam, every inference event rides the run's stream
  * to the client; otherwise the node resolves quietly to its value.
  *
- * Money never moves here, but the base (pre-markup) cost is decided here and
- * carried up for settlement to charge once. OpenRouter returns the
- * authoritative inline cost for text and video (summed across agentic steps on
- * the terminal finish), which is charged directly (`isEstimated=false`). Image
- * carries no inline cost by design, so it always bills the deterministic
- * catalog estimate (`isEstimated=true`). A missing text/video cost is
- * pathological: it falls back to the estimate, flags `isEstimated`, and fires a
- * Sentry alert. A negative or absurd provider cost takes the same fallback.
+ * Money never moves here, but the BILLABLE cost is decided here and carried up
+ * for settlement to charge as-is. OpenRouter returns the authoritative inline
+ * cost for text and video (summed across agentic steps on the terminal
+ * finish); the injected port conversion turns it billable — the only markup
+ * application on the money path — and it is charged directly
+ * (`isEstimated=false`). Image carries no inline cost by design, so it always
+ * bills the deterministic billable catalog estimate (`isEstimated=true`). A
+ * missing text/video cost is pathological: it falls back to the billable
+ * estimate, flags `isEstimated`, and fires a Sentry alert. A negative or
+ * absurd provider cost takes the same fallback.
  */
 
 type ModelCallNode = Extract<Node, { type: 'modelCall' }>;
@@ -73,14 +75,15 @@ export interface ModelBinding {
   readonly descriptor: ModelDescriptor;
   readonly ports: NodePortDeclaration;
   /**
-   * The catalog token estimate for observed language/embedding usage, in base
-   * (pre-markup) nano-USD. Used as the billed cost only on the
-   * missing/absurd-provider-cost fallback; settlement applies the markup once.
+   * The catalog token estimate for observed language/embedding usage, in
+   * billable nano-USD (catalog rates are billable). Used as the billed cost
+   * only on the missing/absurd-provider-cost fallback; settlement charges it
+   * directly, with no further fee application.
    */
   readonly price: (usage: Usage) => Result<bigint, DomainError>;
   /**
-   * Deterministic media price (base, pre-markup nano-USD) from catalog rates
-   * and the call's request parameters — image's billed amount, video's
+   * Deterministic media price (billable nano-USD, from the billable catalog
+   * rates) and the call's request parameters — image's billed amount, video's
    * fallback and sanity bound. Optional so language-only bindings (and their
    * test fakes) need not carry it; a media-family cost decision without it
    * fails closed.
@@ -96,10 +99,12 @@ export interface ModelCallStreamDeps {
   readonly provider: ModelProvider;
   readonly binding: ModelBinding;
   /**
-   * Injected money conversion (nodes stay pure — no slice-barrel value imports).
-   * Converts the provider's inline USD cost to base (pre-markup) nano-USD.
+   * Injected port charge conversion (nodes stay pure — no slice-barrel value
+   * imports). Converts the provider's inline USD cost to BILLABLE nano-USD —
+   * the ModelProvider port seam, the only markup application on the money
+   * path (BILLING.md §Fee Structure).
    */
-  readonly usdToNanoUsd: (usd: number) => bigint;
+  readonly usdToBillableNanoUsd: (usd: number) => bigint;
   /**
    * Best-effort alerting for the pathological missing/absurd provider-cost
    * path (never for image, whose estimate is expected). Optional so pure-logic
@@ -332,7 +337,12 @@ function settleAbortedPartial(
   const billing = billingMetadataOf(deps.binding.descriptor, request, accumulator);
   const inlineUsd = usableAbortCostUsd(accumulator);
   if (inlineUsd !== undefined) {
-    return ok({ value, costNanoUsd: deps.usdToNanoUsd(inlineUsd), isEstimated: false, billing });
+    return ok({
+      value,
+      costNanoUsd: deps.usdToBillableNanoUsd(inlineUsd),
+      isEstimated: false,
+      billing,
+    });
   }
   if (accumulator.media !== undefined && deps.binding.priceMedia !== undefined) {
     const estimate = deps.binding.priceMedia(request.parameters);
@@ -480,9 +490,13 @@ function decideCost(
   // and that is expected — no alert. Every other family should carry the
   // authoritative inline cost; use it when valid.
   if (family !== 'image') {
-    const inlineBase = validInlineBase(inlineCostUsdOf(accumulator), estimate, deps.usdToNanoUsd);
-    if (inlineBase !== undefined) {
-      return ok({ costNanoUsd: inlineBase, isEstimated: false });
+    const inlineBillable = validInlineBillable(
+      inlineCostUsdOf(accumulator),
+      estimate,
+      deps.usdToBillableNanoUsd
+    );
+    if (inlineBillable !== undefined) {
+      return ok({ costNanoUsd: inlineBillable, isEstimated: false });
     }
     // Pathological — a missing, negative, or absurd cost. Alert (model id only,
     // never content), then bill the estimate: never charge 0, never skip.
@@ -531,25 +545,27 @@ function inlineCostUsdOf(accumulator: CallAccumulator): number | undefined {
 }
 
 /**
- * The base nano-USD to charge for a valid inline cost, or undefined when it is
- * missing, negative/non-finite, or absurdly large relative to the estimate
- * (each routed to the estimate+alert fallback).
+ * The billable nano-USD to charge for a valid inline cost, or undefined when
+ * it is missing, negative/non-finite, or absurdly large relative to the
+ * billable catalog estimate (each routed to the estimate+alert fallback). The
+ * sanity bound compares billable to billable — both sides carry the same
+ * baked fee, so the ratio is fee-free.
  */
-function validInlineBase(
+function validInlineBillable(
   inlineUsd: number | undefined,
   estimate: Result<bigint, DomainError>,
-  usdToNanoUsd: (usd: number) => bigint
+  usdToBillableNanoUsd: (usd: number) => bigint
 ): bigint | undefined {
   if (inlineUsd === undefined || !Number.isFinite(inlineUsd) || inlineUsd < 0) return undefined;
-  const base = usdToNanoUsd(inlineUsd);
+  const billable = usdToBillableNanoUsd(inlineUsd);
   if (
     estimate.isOk() &&
     estimate.value > 0n &&
-    base > estimate.value * PROVIDER_COST_SANITY_MULTIPLE
+    billable > estimate.value * PROVIDER_COST_SANITY_MULTIPLE
   ) {
     return undefined;
   }
-  return base;
+  return billable;
 }
 
 function absorb(accumulator: CallAccumulator, event: InferenceEvent): void {

@@ -14,8 +14,10 @@ import {
   computePageCsp,
   deriveApiOrigin,
   deriveLocalR2Origin,
+  deriveSandboxOrigin,
 } from './generate-headers.js';
 import { parseHeadersFile, matchHeaders } from './lib/headers-vite-plugin.js';
+import { TTS_MODEL_CONNECT_SRC } from '../packages/shared/src/tts-hosts.js';
 
 let repoRoot: string;
 
@@ -78,22 +80,46 @@ function stripComments(content: string): string {
     .join('\n');
 }
 
+/**
+ * Pull one directive's token list out of a CSP header value. Splits on `;`,
+ * finds the directive by name, and returns its space-separated tokens (the
+ * name itself dropped).
+ */
+function directiveTokens(csp: string | string[] | undefined, name: string): string[] {
+  if (typeof csp !== 'string') throw new Error(`expected a single CSP string, got ${typeof csp}`);
+  const directive = csp
+    .split(';')
+    .map((d) => d.trim())
+    .find((d) => d === name || d.startsWith(`${name} `));
+  if (directive === undefined) throw new Error(`no ${name} directive in CSP`);
+  return directive.split(/\s+/).slice(1);
+}
+
 // Most tests don't care about MinIO; clearing this keeps them deterministic
 // regardless of what's in the dev shell when `pnpm test` is run.
 // Tests that DO care opt in by passing `minioApiPort` explicitly or by
 // manipulating `process.env.HB_MINIO_API_PORT` inside the test body.
 let originalMinioPort: string | undefined;
+// generateHeaders reads SANDBOX_ORIGIN_URL for the app-origin frame-src and
+// fail-fasts when it is unset. Pin a deterministic prod-shaped value so tests
+// that don't care get a stable (localhost-free) frame-src; tests that DO care
+// pass an explicit `sandboxOrigin` option or manipulate the env in-body.
+let originalSandboxOrigin: string | undefined;
 
 beforeEach(async () => {
   repoRoot = await makeTemporaryRoot();
   originalMinioPort = process.env['HB_MINIO_API_PORT'];
   delete process.env['HB_MINIO_API_PORT'];
+  originalSandboxOrigin = process.env['SANDBOX_ORIGIN_URL'];
+  process.env['SANDBOX_ORIGIN_URL'] = 'https://sandbox.hushbox.ai';
 });
 
 afterEach(async () => {
   await fs.rm(repoRoot, { recursive: true, force: true });
   if (originalMinioPort === undefined) delete process.env['HB_MINIO_API_PORT'];
   else process.env['HB_MINIO_API_PORT'] = originalMinioPort;
+  if (originalSandboxOrigin === undefined) delete process.env['SANDBOX_ORIGIN_URL'];
+  else process.env['SANDBOX_ORIGIN_URL'] = originalSandboxOrigin;
 });
 
 describe('computePageCsp', () => {
@@ -145,8 +171,9 @@ describe('generateHeaders', () => {
 
     expect(result.pagesProcessed).toBe(MARKETING_ROUTES.length);
     // Each marketing page emits two blocks (`/route` + `/route/`), plus the SPA
-    // `/*` fallback and the two `/demo` + `/demo/*` iframe-override blocks.
-    expect(result.blocksEmitted).toBe(MARKETING_ROUTES.length * 2 + 3);
+    // `/*` fallback, the two `/demo` + `/demo/*` iframe-override blocks, and the
+    // `/sw.js` no-cache block.
+    expect(result.blocksEmitted).toBe(MARKETING_ROUTES.length * 2 + 4);
     const content = await fs.readFile(result.outputPath, 'utf8');
     for (const route of MARKETING_ROUTES) {
       expect(content).toMatch(new RegExp(`^${route}$`, 'm'));
@@ -574,6 +601,38 @@ describe('generateHeaders', () => {
     expect(nonComment).not.toContain('localhost');
   });
 
+  it('adds every shared TTS model host to the SPA connect-src (superset of the constant)', async () => {
+    await seedAllMarketingRoutes(path.join(repoRoot, 'apps/web/dist'));
+    const result = await generateHeaders({ repoRoot, apiUrl: 'https://api.hushbox.ai' });
+    const rules = parseHeadersFile(await fs.readFile(result.outputPath, 'utf8'));
+    // `/chat` matches only the SPA `/*` block (no per-path marketing override),
+    // so this is the strict policy the web app + TTS worker run under.
+    const connectSource = directiveTokens(
+      matchHeaders(rules, ROUTES.CHAT)['Content-Security-Policy'],
+      'connect-src'
+    );
+    for (const host of TTS_MODEL_CONNECT_SRC) {
+      expect(connectSource, `connect-src must allow ${host}`).toContain(host);
+    }
+  });
+
+  it('adds only the HF model hosts to connect-src — no jsdelivr, no wildcard broader than *.hf.co', async () => {
+    await seedAllMarketingRoutes(path.join(repoRoot, 'apps/web/dist'));
+    const result = await generateHeaders({ repoRoot, apiUrl: 'https://api.hushbox.ai' });
+    const content = await fs.readFile(result.outputPath, 'utf8');
+    expect(content).not.toContain('jsdelivr');
+    const rules = parseHeadersFile(content);
+    const connectSource = directiveTokens(
+      matchHeaders(rules, ROUTES.CHAT)['Content-Security-Policy'],
+      'connect-src'
+    );
+    // The only Hugging Face tokens present are exactly the shared constant's —
+    // no broader wildcard (e.g. `https://*.co`) slipped in.
+    const hfTokens = connectSource.filter((t) => t.includes('hf.co') || t.includes('huggingface'));
+    const byName = (a: string, b: string): number => a.localeCompare(b);
+    expect(hfTokens.toSorted(byName)).toEqual([...TTS_MODEL_CONNECT_SRC].toSorted(byName));
+  });
+
   it('does not leak HB_MINIO_API_PORT into the prod CSP', async () => {
     // Even if the prod CI/CD env somehow has HB_MINIO_API_PORT set, the
     // localhost-only gate in deriveLocalR2Origin must keep it out.
@@ -696,6 +755,26 @@ describe('generateHeaders', () => {
   });
 });
 
+describe('generateHeaders — /sw.js no-cache', () => {
+  it('emits a /sw.js block that disables caching of the stable service worker', async () => {
+    // The service worker ships at a stable, unhashed URL, so the browser must
+    // revalidate it on every load rather than serve a stale copy — otherwise a
+    // deployed SW change would never reach installed clients.
+    await seedAllMarketingRoutes(path.join(repoRoot, 'apps/web/dist'));
+    const result = await generateHeaders({ repoRoot, apiUrl: 'https://api.hushbox.ai' });
+    const rules = parseHeadersFile(await fs.readFile(result.outputPath, 'utf8'));
+    const headers = matchHeaders(rules, '/sw.js');
+    expect(headers['Cache-Control']).toBe('no-cache');
+  });
+
+  it('leaves other routes without the sw no-cache directive', async () => {
+    await seedAllMarketingRoutes(path.join(repoRoot, 'apps/web/dist'));
+    const result = await generateHeaders({ repoRoot, apiUrl: 'https://api.hushbox.ai' });
+    const rules = parseHeadersFile(await fs.readFile(result.outputPath, 'utf8'));
+    expect(matchHeaders(rules, ROUTES.CHAT)['Cache-Control']).toBeUndefined();
+  });
+});
+
 describe('generateHeaders — /demo iframe override', () => {
   it('emits /demo and /demo/* override blocks', async () => {
     await seedAllMarketingRoutes(path.join(repoRoot, 'apps/web/dist'));
@@ -754,6 +833,149 @@ describe('generateHeaders — /demo iframe override', () => {
       "script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' https://secure.myhelcim.com"
     );
     expect(csp).not.toContain('sha256-');
+  });
+});
+
+describe('generateHeaders — sandbox frame-src', () => {
+  it('adds frame-src pointing at the env sandbox origin on the SPA /* block', async () => {
+    await seedAllMarketingRoutes(path.join(repoRoot, 'apps/web/dist'));
+    const result = await generateHeaders({
+      repoRoot,
+      apiUrl: 'https://api.hushbox.ai',
+      sandboxOrigin: 'https://sandbox.hushbox.ai',
+    });
+    const rules = parseHeadersFile(await fs.readFile(result.outputPath, 'utf8'));
+    const frameSource = directiveTokens(
+      matchHeaders(rules, ROUTES.CHAT)['Content-Security-Policy'],
+      'frame-src'
+    );
+    expect(frameSource).toContain('https://sandbox.hushbox.ai');
+  });
+
+  it("keeps 'self' in frame-src so same-origin framing (the /demo embed) still works", async () => {
+    await seedAllMarketingRoutes(path.join(repoRoot, 'apps/web/dist'));
+    const result = await generateHeaders({
+      repoRoot,
+      apiUrl: 'https://api.hushbox.ai',
+      sandboxOrigin: 'https://sandbox.hushbox.ai',
+    });
+    const rules = parseHeadersFile(await fs.readFile(result.outputPath, 'utf8'));
+    const frameSource = directiveTokens(
+      matchHeaders(rules, ROUTES.CHAT)['Content-Security-Policy'],
+      'frame-src'
+    );
+    expect(frameSource).toContain("'self'");
+  });
+
+  it('emits only the sandbox origin (not the full URL with path) in frame-src', async () => {
+    await seedAllMarketingRoutes(path.join(repoRoot, 'apps/web/dist'));
+    const result = await generateHeaders({
+      repoRoot,
+      apiUrl: 'https://api.hushbox.ai',
+      sandboxOrigin: 'https://sandbox.hushbox.ai/render.html?x=1',
+    });
+    const rules = parseHeadersFile(await fs.readFile(result.outputPath, 'utf8'));
+    const frameSource = directiveTokens(
+      matchHeaders(rules, ROUTES.CHAT)['Content-Security-Policy'],
+      'frame-src'
+    );
+    expect(frameSource).toContain('https://sandbox.hushbox.ai');
+    expect(frameSource).not.toContain('https://sandbox.hushbox.ai/render.html?x=1');
+  });
+
+  it('templates a per-worktree dev sandbox origin into frame-src', async () => {
+    await seedAllMarketingRoutes(path.join(repoRoot, 'apps/web/dist'));
+    const result = await generateHeaders({
+      repoRoot,
+      apiUrl: 'http://localhost:8787',
+      sandboxOrigin: 'http://localhost:7400',
+    });
+    const rules = parseHeadersFile(await fs.readFile(result.outputPath, 'utf8'));
+    const frameSource = directiveTokens(
+      matchHeaders(rules, ROUTES.CHAT)['Content-Security-Policy'],
+      'frame-src'
+    );
+    expect(frameSource).toContain('http://localhost:7400');
+  });
+
+  it('carries frame-src onto the marketing per-path blocks too (so /welcome can embed the sandbox)', async () => {
+    await seedAllMarketingRoutes(path.join(repoRoot, 'apps/web/dist'));
+    const result = await generateHeaders({
+      repoRoot,
+      apiUrl: 'https://api.hushbox.ai',
+      sandboxOrigin: 'https://sandbox.hushbox.ai',
+    });
+    const rules = parseHeadersFile(await fs.readFile(result.outputPath, 'utf8'));
+    const frameSource = directiveTokens(
+      matchHeaders(rules, '/welcome/')['Content-Security-Policy'],
+      'frame-src'
+    );
+    expect(frameSource).toContain("'self'");
+    expect(frameSource).toContain('https://sandbox.hushbox.ai');
+  });
+
+  it('does not loosen the existing SPA fetch/script policy when adding frame-src', async () => {
+    // Regression guard: the new directive is additive. Every pre-existing
+    // directive on an ordinary SPA route stays byte-for-byte intact.
+    await seedAllMarketingRoutes(path.join(repoRoot, 'apps/web/dist'));
+    const result = await generateHeaders({
+      repoRoot,
+      apiUrl: 'https://api.hushbox.ai',
+      sandboxOrigin: 'https://sandbox.hushbox.ai',
+    });
+    const rules = parseHeadersFile(await fs.readFile(result.outputPath, 'utf8'));
+    const csp = String(matchHeaders(rules, ROUTES.CHAT)['Content-Security-Policy']);
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain(
+      "script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' https://secure.myhelcim.com"
+    );
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("base-uri 'self'");
+    expect(csp).toContain("form-action 'self'");
+  });
+
+  it('reads SANDBOX_ORIGIN_URL from process.env when the option is not passed', async () => {
+    await seedAllMarketingRoutes(path.join(repoRoot, 'apps/web/dist'));
+    process.env['SANDBOX_ORIGIN_URL'] = 'https://sandbox.example.test';
+    const result = await generateHeaders({ repoRoot, apiUrl: 'https://api.hushbox.ai' });
+    const rules = parseHeadersFile(await fs.readFile(result.outputPath, 'utf8'));
+    const frameSource = directiveTokens(
+      matchHeaders(rules, ROUTES.CHAT)['Content-Security-Policy'],
+      'frame-src'
+    );
+    expect(frameSource).toContain('https://sandbox.example.test');
+  });
+
+  it('throws when SANDBOX_ORIGIN_URL is not set anywhere', async () => {
+    await seedAllMarketingRoutes(path.join(repoRoot, 'apps/web/dist'));
+    delete process.env['SANDBOX_ORIGIN_URL'];
+    await expect(generateHeaders({ repoRoot, apiUrl: 'https://api.hushbox.ai' })).rejects.toThrow(
+      /SANDBOX_ORIGIN_URL/
+    );
+  });
+});
+
+describe('deriveSandboxOrigin', () => {
+  it('returns the origin unchanged for a bare origin URL', () => {
+    expect(deriveSandboxOrigin('https://sandbox.hushbox.ai')).toBe('https://sandbox.hushbox.ai');
+  });
+
+  it('strips path and query, keeping origin only', () => {
+    expect(deriveSandboxOrigin('https://sandbox.hushbox.ai/render.html?x=1')).toBe(
+      'https://sandbox.hushbox.ai'
+    );
+  });
+
+  it('preserves an explicit dev port', () => {
+    expect(deriveSandboxOrigin('http://localhost:7400')).toBe('http://localhost:7400');
+  });
+
+  it('throws on a malformed URL', () => {
+    expect(() => deriveSandboxOrigin('not-a-url')).toThrow(/not a valid URL/);
+  });
+
+  it('throws on a non-http(s) scheme', () => {
+    expect(() => deriveSandboxOrigin('capacitor://localhost')).toThrow(/must use http or https/);
   });
 });
 

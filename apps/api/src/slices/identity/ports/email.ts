@@ -3,7 +3,7 @@ import type { ResultAsync } from '../../../lib/result/index.js';
 
 /**
  * The narrow, identity-owned verification-email port (mirroring how the
- * notifications slice left PresenceReader/MembershipReader as unbound ports).
+ * notifications slice leaves `MembershipReader` an unbound port).
  * It is bound at the composition root to an adapter that composes the
  * notifications slice's `verificationEmail` template + `EmailSender` and owns
  * the frontend-URL construction — so identity never imports notifications

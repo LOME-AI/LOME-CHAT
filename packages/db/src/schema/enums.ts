@@ -70,7 +70,7 @@ export const messageSenderTypeEnum = pgEnum('message_sender_type', ['user', 'ass
 /** Content modalities that rest as content_items (modality minus embedding). */
 export const contentItemTypeEnum = pgEnum('content_item_type', ['text', 'image', 'audio', 'video']);
 
-export const devicePlatformEnum = pgEnum('device_platform', ['ios', 'android']);
+export const devicePlatformEnum = pgEnum('device_platform', ['ios', 'android', 'web']);
 
 /**
  * Chargeback auto-defense vs explicit admin lock. Derives from the single

@@ -16,23 +16,16 @@ import { applyMarkupCeil, usdToNanoUsd } from '../money.js';
 import type { NanoLineItem } from './types.js';
 
 /**
- * One model's worst-case web-search reservation in BASE (provider) nano-USD:
- * `MAX_SEARCH_TOOL_CALLS × SEARCH_COST_PER_CALL`. Single-sourced from the shared
- * search constants so the reservation can never drift from the runtime cap.
- * Transitional export: consumed only by the server estimate's worst-case
- * constant until the port-conversion task rebases it on the billable figure.
- */
-export const WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL: bigint =
-  BigInt(MAX_SEARCH_TOOL_CALLS) * usdToNanoUsd(SEARCH_COST_PER_CALL);
-
-/**
  * One model's worst-case web-search reservation, BILLABLE at definition: the
- * provider base with the customer markup baked exactly once, ceil-rounded
+ * provider base (`MAX_SEARCH_TOOL_CALLS × SEARCH_COST_PER_CALL`, single-sourced
+ * from the shared search constants so the reservation can never drift from the
+ * runtime cap) with the customer markup baked exactly once, ceil-rounded
  * (over-reserve, matching catalog rate baking). This is the figure estimate
- * manifests carry, so the estimator itself holds no fee logic.
+ * manifests AND the server admission worst case carry, so no consumer holds
+ * fee logic.
  */
 export const WEB_SEARCH_RESERVATION_NANO_PER_MODEL: bigint = applyMarkupCeil(
-  WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL
+  BigInt(MAX_SEARCH_TOOL_CALLS) * usdToNanoUsd(SEARCH_COST_PER_CALL)
 );
 
 /**

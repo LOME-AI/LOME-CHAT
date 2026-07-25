@@ -2,25 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import { MAX_SEARCH_TOOL_CALLS, SEARCH_COST_PER_CALL } from '../constants.js';
 import { applyMarkupCeil, usdToNanoUsd } from '../money.js';
-import {
-  WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL,
-  WEB_SEARCH_RESERVATION_NANO_PER_MODEL,
-  webSearchLineItem,
-} from './search-reservation.js';
-
-describe('WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL', () => {
-  it('is MAX_SEARCH_TOOL_CALLS × the provider per-call rate in nano-USD', () => {
-    expect(WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL).toBe(
-      BigInt(MAX_SEARCH_TOOL_CALLS) * usdToNanoUsd(SEARCH_COST_PER_CALL)
-    );
-    expect(WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL).toBe(50_000_000n);
-  });
-});
+import { WEB_SEARCH_RESERVATION_NANO_PER_MODEL, webSearchLineItem } from './search-reservation.js';
 
 describe('WEB_SEARCH_RESERVATION_NANO_PER_MODEL', () => {
   it('is the provider base made billable once, ceil-rounded, at definition', () => {
     expect(WEB_SEARCH_RESERVATION_NANO_PER_MODEL).toBe(
-      applyMarkupCeil(WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL)
+      applyMarkupCeil(BigInt(MAX_SEARCH_TOOL_CALLS) * usdToNanoUsd(SEARCH_COST_PER_CALL))
     );
     expect(WEB_SEARCH_RESERVATION_NANO_PER_MODEL).toBe(57_500_000n);
   });

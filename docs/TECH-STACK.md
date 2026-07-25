@@ -62,24 +62,25 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ## Frontend
 
-| Technology               | Purpose                                                                                                                                      |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| **React 19**             | UI framework. Largest ecosystem, best Capacitor support, excellent for text-heavy interfaces.                                                |
-| **Vite**                 | Build tool and dev server. Fast HMR, simple config, no SSR complexity for SPA.                                                               |
-| **rolldown-vite**        | Rust-based drop-in for Vite's bundler. Faster builds; applied workspace-wide via a pnpm override.                                            |
-| **TanStack Router**      | Routing. Fully type-safe routes, params, and search params. Compile-time errors for invalid routes.                                          |
-| **TanStack Query**       | Server state management. Caching, background refetching, request deduplication for all API calls.                                            |
-| **Zustand**              | Client state management. Lightweight, minimal boilerplate for UI state not tied to server.                                                   |
-| **shadcn/ui**            | Source of accessible primitives (Radix-based) in `packages/ui`. Copy-paste ownership; extended in-house with composites and domain features. |
-| **Tailwind CSS**         | Styling. Utility-first, consistent design tokens, pairs with shadcn/ui.                                                                      |
-| **Sandpack** _(planned)_ | Browser code execution. Renders HTML/React/CSS in iframe sandbox for artifact previews.                                                      |
-| **input-otp**            | OTP input component. Accessible, mobile-friendly 6-digit code entry for 2FA verification.                                                    |
-| **react-qrcode-logo**    | QR code generation. Renders TOTP provisioning URIs for authenticator app setup.                                                              |
-| **Streamdown**           | Markdown rendering with plugin system. Plugins: `@streamdown/code` (Shiki), `@streamdown/mermaid`, `@streamdown/math` (KaTeX).               |
-| **Shiki**                | Syntax highlighting for code blocks (via `@streamdown/code`).                                                                                |
-| **Framer Motion**        | Animation library for transitions and micro-interactions.                                                                                    |
-| **Lucide React**         | Icon library. SVG icons used throughout UI.                                                                                                  |
-| **React Virtuoso**       | Virtual scrolling for long message lists.                                                                                                    |
+| Technology            | Purpose                                                                                                                                            |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **React 19**          | UI framework. Largest ecosystem, best Capacitor support, excellent for text-heavy interfaces.                                                      |
+| **Vite**              | Build tool and dev server. Fast HMR, simple config, no SSR complexity for SPA.                                                                     |
+| **rolldown-vite**     | Rust-based drop-in for Vite's bundler. Faster builds; applied workspace-wide via a pnpm override.                                                  |
+| **TanStack Router**   | Routing. Fully type-safe routes, params, and search params. Compile-time errors for invalid routes.                                                |
+| **TanStack Query**    | Server state management. Caching, background refetching, request deduplication for all API calls.                                                  |
+| **Zustand**           | Client state management. Lightweight, minimal boilerplate for UI state not tied to server.                                                         |
+| **shadcn/ui**         | Source of accessible primitives (Radix-based) in `packages/ui`. Copy-paste ownership; extended in-house with composites and domain features.       |
+| **Tailwind CSS**      | Styling. Utility-first, consistent design tokens, pairs with shadcn/ui.                                                                            |
+| **input-otp**         | OTP input component. Accessible, mobile-friendly 6-digit code entry for 2FA verification.                                                          |
+| **react-qrcode-logo** | QR code generation. Renders TOTP provisioning URIs for authenticator app setup.                                                                    |
+| **Streamdown**        | Markdown rendering with plugin system. Plugins: `@streamdown/code` (Shiki), `@streamdown/mermaid`, `@streamdown/math` (KaTeX).                     |
+| **Shiki**             | Syntax highlighting for code blocks (via `@streamdown/code`).                                                                                      |
+| **Framer Motion**     | Animation library for transitions and micro-interactions.                                                                                          |
+| **Lucide React**      | Icon library. SVG icons used throughout UI.                                                                                                        |
+| **React Virtuoso**    | Virtual scrolling for long message lists.                                                                                                          |
+| **kokoro-js**         | On-device text-to-speech (Kokoro-82M ONNX). Powers chat read-aloud and blog read-aloud; runs fully in-browser, no audio/text sent to servers.      |
+| **onnxruntime-web**   | WASM inference runtime under kokoro-js. The `.wasm` is self-hosted same-origin; model weights load from Hugging Face (allowlisted in the SPA CSP). |
 
 ---
 
@@ -93,26 +94,28 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ## Mobile
 
-| Technology    | Purpose                                                                         |
-| ------------- | ------------------------------------------------------------------------------- |
-| **Capacitor** | Native wrapper. Same React codebase runs on iOS/Android with native API access. |
+| Technology                   | Purpose                                                                                                                                                                                   |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Capacitor**                | Native wrapper. Same React codebase runs on iOS/Android with native API access.                                                                                                           |
+| **@capacitor-community/fcm** | APNs→FCM token bridge on iOS. Coexists with `@capacitor/push-notifications` (which stays the registration/presentation surface); without it iOS yields a raw APNs token that FCM rejects. |
 
 ---
 
 ## Backend
 
-| Technology                   | Purpose                                                                                                                 |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| **Hono**                     | API framework. Ultrafast, runs on Workers/Node/Bun, native streaming support.                                           |
-| **Zod**                      | Schema validation. Runtime validation + TypeScript inference. Shared schemas between frontend/backend.                  |
-| **@hono/zod-validator**      | Input validation middleware. Zod schemas validate request body/params/query in Hono route chains.                       |
-| **hono/client**              | Typed RPC client. `hc<AppType>()` infers types from Hono route chains. Ships with `hono`, zero additional dependencies. |
-| **neverthrow**               | Typed `Result` error channel at service seams. Must-use enforced by a vendored lint rule.                               |
-| **ts-pattern**               | Exhaustive matching (DomainError→code, node dispatch); compiler catches unhandled variants.                             |
-| **cockatiel**                | Retry/timeout policies on external calls, built only via the policy factory. No in-isolate breakers.                    |
-| **eslint-plugin-boundaries** | Enforces slice/package boundaries and intra-slice layers from the import graph.                                         |
-| **ts-morph**                 | Structural architecture tests lint can't express (idempotency wrapping, schema-object scoping).                         |
-| **jose**                     | Cloudflare Access JWT verification on the product Worker's admin routes.                                                |
+| Technology                   | Purpose                                                                                                                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Hono**                     | API framework. Ultrafast, runs on Workers/Node/Bun, native streaming support.                                                                                                                    |
+| **Zod**                      | Schema validation. Runtime validation + TypeScript inference. Shared schemas between frontend/backend.                                                                                           |
+| **@hono/zod-validator**      | Input validation middleware. Zod schemas validate request body/params/query in Hono route chains.                                                                                                |
+| **hono/client**              | Typed RPC client. `hc<AppType>()` infers types from Hono route chains. Ships with `hono`, zero additional dependencies.                                                                          |
+| **neverthrow**               | Typed `Result` error channel at service seams. Must-use enforced by a vendored lint rule.                                                                                                        |
+| **ts-pattern**               | Exhaustive matching (DomainError→code, node dispatch); compiler catches unhandled variants.                                                                                                      |
+| **cockatiel**                | Retry/timeout policies on external calls, built only via the policy factory. No in-isolate breakers.                                                                                             |
+| **eslint-plugin-boundaries** | Enforces slice/package boundaries and intra-slice layers from the import graph.                                                                                                                  |
+| **ts-morph**                 | Structural architecture tests lint can't express (idempotency wrapping, schema-object scoping).                                                                                                  |
+| **jose**                     | Cloudflare Access JWT verification on the product Worker's admin routes; ES256 VAPID signing for Web Push.                                                                                       |
+| **Web Push** _(in-house)_    | RFC 8291/8188/8292 sender on WebCrypto (aes128gcm + VAPID). No third-party library — every audited candidate implemented the legacy `aesgcm` encoding (which Apple rejects) or was unmaintained. |
 
 ---
 
@@ -136,11 +139,11 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ## Hosting
 
-| Technology                     | Purpose                                                                                                                                    |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Cloudflare Workers**         | API hosting: one product Worker (the admin plane is a slice on it); an assets-only Worker serves the admin SPA on `admin.hushbox.ai`.      |
-| **Cloudflare Pages**           | Frontend hosting. Deploys Vite app and Astro marketing site.                                                                               |
-| **Cloudflare Durable Objects** | Two roles: ConversationRoom (realtime hub, stream coordination, in-process flow executor) and JobDispatcher (alarm-clocked job execution). |
+| Technology                     | Purpose                                                                                                                                                                                                                                               |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Cloudflare Workers**         | API hosting: one product Worker (the admin plane is a slice on it); an assets-only Worker serves the admin SPA on `admin.hushbox.ai`; a second assets-only Worker serves the document sandbox origin (untrusted code execution) on its own subdomain. |
+| **Cloudflare Pages**           | Frontend hosting. Deploys Vite app and Astro marketing site.                                                                                                                                                                                          |
+| **Cloudflare Durable Objects** | Two roles: ConversationRoom (realtime hub, stream coordination, in-process flow executor) and JobDispatcher (alarm-clocked job execution).                                                                                                            |
 
 ---
 
@@ -156,10 +159,12 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ## Code Execution
 
-| Technology                                           | Purpose                                                                                                                          |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| **Cloudflare Containers / Sandbox SDK** _(deferred)_ | Server-side heavy compute (transcode, code execution) when a feature forces it. Same vendor; behind the `TransformCompute` port. |
-| **Sandpack** _(planned)_                             | Client-side sandbox. Browser iframe for HTML/React/CSS preview. No server needed.                                                |
+| Technology                                           | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Cloudflare Containers / Sandbox SDK** _(deferred)_ | Server-side heavy compute (transcode, code execution) when a feature forces it. Same vendor; behind the `TransformCompute` port.                                                                                                                                                                                                                                                                                                                            |
+| **Document sandbox** (in-house)                      | Client-side execution of AI-generated documents (`html`/`js`/`react`/`python`). Sandboxed cross-origin iframe on a credential-free assets Worker; bare npm specifiers rewritten to absolute esm.sh URLs at transpile time (no import map — one less engine-support dependency, and the frame is reusable across re-runs). Uses no service worker — the property that lets one codepath run in browsers and Capacitor WebViews. Design: `docs/DOCUMENTS.md`. |
+| **Sucrase**                                          | In-browser JSX/TSX transpile inside the sandbox (~40 KB gz, ~4 ms). Babel-standalone (637 KB, ~16 ms) is the fallback only if a syntax gap appears.                                                                                                                                                                                                                                                                                                         |
+| **Pyodide**                                          | CPython on WebAssembly, self-hosted and version-pinned, run on the sandbox iframe's main thread (its required module worker cannot spawn from an opaque origin). numpy/pandas/matplotlib ship in the distribution; pure-Python PyPI installs via micropip.                                                                                                                                                                                                  |
 
 ---
 
@@ -204,12 +209,12 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 
 ## Analytics & Observability
 
-| Technology                   | Purpose                                                                                         |
-| ---------------------------- | ----------------------------------------------------------------------------------------------- |
-| **Cloudflare Workers Logs**  | Structured logs, allowlisted fields; Logpush to R2 for retention.                               |
-| **Sentry**                   | Unexpected errors only, backend only. Scrubbed at the Telemetry port; `errorCode` fingerprints. |
-| **Cloudflare OTel tracing**  | Vendor-neutral tracing (open beta; Sentry tracing is the fallback).                             |
-| **PostHog** _(deferred)_     | Product analytics, if ever: self-hosted, no autocapture, never session replay.                  |
+| Technology                  | Purpose                                                                                         |
+| --------------------------- | ----------------------------------------------------------------------------------------------- |
+| **Cloudflare Workers Logs** | Structured logs, allowlisted fields; Logpush to R2 for retention.                               |
+| **Sentry**                  | Unexpected errors only, backend only. Scrubbed at the Telemetry port; `errorCode` fingerprints. |
+| **Cloudflare OTel tracing** | Vendor-neutral tracing (open beta; Sentry tracing is the fallback).                             |
+| **PostHog** _(deferred)_    | Product analytics, if ever: self-hosted, no autocapture, never session replay.                  |
 
 > Aggregate/business metrics are not instrumented today. Reintroduce Workers Analytics Engine (SQL API + a named watcher per metric) or the deferred PostHog when aggregate measurement is needed.
 
@@ -267,7 +272,8 @@ Our security doesn't depend on hiding how things work. The source code is visibl
 │   ├── web/              # React + Vite (main application)
 │   ├── marketing/        # Astro (marketing site)
 │   ├── api/              # Product Worker — vertical slices (map in ARCHITECTURE.md)
-│   └── admin/            # Admin SPA (static assets on admin.hushbox.ai, behind Access)
+│   ├── admin/            # Admin SPA (static assets on admin.hushbox.ai, behind Access)
+│   └── sandbox/          # Document sandbox origin (static assets; runs untrusted document code)
 │
 ├── packages/
 │   ├── ui/               # Shared component library: primitives, composites, hooks, utilities

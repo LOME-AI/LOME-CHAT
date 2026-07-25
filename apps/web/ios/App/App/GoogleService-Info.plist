@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  PLACEHOLDER Firebase config so the iOS build links and runs in dev/CI. It
+  carries no real credentials and will not authenticate against Firebase. The
+  production GoogleService-Info.plist is a founder-provided secret downloaded
+  from the Firebase console (iOS app for bundle id ai.hushbox.app) and must
+  replace this file on the release build. See docs/NOTIFICATIONS.md.
+-->
+<plist version="1.0">
+<dict>
+	<key>API_KEY</key>
+	<string>PLACEHOLDER-REPLACE-WITH-PRODUCTION-VALUE</string>
+	<key>GCM_SENDER_ID</key>
+	<string>000000000000</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>ai.hushbox.app</string>
+	<key>PROJECT_ID</key>
+	<string>hushbox-placeholder</string>
+	<key>STORAGE_BUCKET</key>
+	<string>hushbox-placeholder.appspot.com</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<false></false>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<false></false>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:000000000000:ios:0000000000000000000000</string>
+</dict>
+</plist>

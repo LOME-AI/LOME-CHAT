@@ -10,8 +10,8 @@ import {
 } from '@hushbox/db';
 import { REALTIME_REDIS_KEYS } from '../../../lib/redis/define-key.js';
 import { createMembershipRevoker, membershipCacheKey } from './membership.js';
+import { createPushMembershipReader } from './push-membership-reader.js';
 import {
-  createPushMembershipReader,
   createRedisUserRoomTracker,
   createRoomBindings,
   openRoomSourceDb,

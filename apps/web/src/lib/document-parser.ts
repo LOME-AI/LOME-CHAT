@@ -1,15 +1,28 @@
 import { bundledLanguagesInfo } from 'shiki';
+import {
+  MIN_LINES_FOR_DOCUMENT,
+  RUNNABLE_DOCUMENT_KINDS,
+  type RunnableDocumentKind,
+} from '@hushbox/shared/documents';
 
 export interface Document {
   id: string;
-  type: 'code' | 'mermaid' | 'html' | 'react';
+  // 'code' = highlighted source only; 'mermaid' = trusted in-app diagram; the
+  // RunnableDocumentKind values ('html' | 'js' | 'react' | 'python') execute in
+  // the sandbox-origin iframe.
+  type: 'code' | 'mermaid' | RunnableDocumentKind;
   language?: string;
   title: string;
   content: string;
   lineCount: number;
+  /**
+   * Whether the message carrying this document is still being written. It comes
+   * from chat state, the only authority on that question — never from reading
+   * the markdown, which cannot say where a half-written block ends without
+   * agreeing with the renderer's parser about block structure.
+   */
+  isStreaming: boolean;
 }
-
-export const MIN_LINES_FOR_DOCUMENT = 15;
 
 const DISPLAY_NAMES = new Map<string, string>();
 for (const lang of bundledLanguagesInfo) {
@@ -54,7 +67,14 @@ export function getDocumentType(language: string): Document['type'] {
   if (lang === 'mermaid') return 'mermaid';
   if (lang === 'html') return 'html';
   if (lang === 'jsx' || lang === 'tsx') return 'react';
+  if (lang === 'js' || lang === 'javascript') return 'js';
+  if (lang === 'python') return 'python';
   return 'code';
+}
+
+/** Whether a document type executes in the sandbox iframe (vs. mermaid/code, rendered in-app). */
+export function isRunnableDocument(type: Document['type']): type is RunnableDocumentKind {
+  return (RUNNABLE_DOCUMENT_KINDS as readonly string[]).includes(type);
 }
 
 export function generateDocumentId(content: string): string {

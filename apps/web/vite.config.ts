@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv, type Plugin } from 'vite';
+import { defaultClientConditions, defineConfig, loadEnv, build, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import { TanStackRouterVite } from '@tanstack/router-plugin/vite';
 import tailwindcss from '@tailwindcss/vite';
@@ -8,6 +8,11 @@ import { transformStreamdownSource } from './src/lib/inline-streamdown-lazy-impo
 import { resolveDeviceKeyStoreE2eVariant } from './src/lib/device-key-store-e2e-resolution';
 import { previewDirectoryIndexFallback } from './src/lib/preview-directory-index-fallback';
 import { headersPlugin } from '../../scripts/lib/headers-vite-plugin';
+import {
+  KOKORO_ORT_COMMON_INCLUDE,
+  ORT_EXTERN_WASM_CONDITION,
+  ortAssetsPlugin,
+} from '../../scripts/lib/ort-assets-plugin';
 
 const envDir = resolve(__dirname, '../..');
 
@@ -139,6 +144,65 @@ function sharedFaviconPlugin(): Plugin {
   };
 }
 
+// Serves the PWA manifest's app icon at a stable `/icon.png`, emitted from the
+// single canonical app-icon source (shared with the native asset generator) so
+// there is no committed duplicate. Mirrors sharedFaviconPlugin.
+function pwaIconPlugin(): Plugin {
+  const iconPath = resolve(__dirname, 'resources/assets/icon-only.png');
+  return {
+    name: 'pwa-icon',
+    configureServer(server) {
+      server.middlewares.use('/icon.png', (_req, res) => {
+        res.setHeader('Content-Type', 'image/png');
+        createReadStream(iconPath).pipe(res);
+      });
+    },
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'icon.png', source: readFileSync(iconPath) });
+    },
+  };
+}
+
+// Builds the push-only service worker as a SECOND, self-contained bundle emitted
+// to a STABLE unhashed `dist/sw.js` — the SW URL is its identity, so a hashed
+// name is unusable, and it must be one file (a service worker cannot import
+// sibling hashed chunks). A separate Vite lib build (IIFE, inlined) runs after
+// the main bundle is written; `emptyOutDir: false` so it lands alongside it in
+// the same dist/ that Pages and `cap sync` consume.
+function serviceWorkerBuildPlugin(mode: string): Plugin {
+  return {
+    name: 'service-worker-build',
+    apply: 'build',
+    async closeBundle() {
+      await build({
+        configFile: false,
+        root: __dirname,
+        mode,
+        logLevel: 'warn',
+        resolve: { alias: { '@': resolve(__dirname, './src') } },
+        build: {
+          outDir: resolve(__dirname, 'dist'),
+          emptyOutDir: false,
+          minify: mode !== 'development',
+          lib: {
+            entry: resolve(__dirname, 'src/sw/sw.ts'),
+            formats: ['iife'],
+            name: 'hushboxServiceWorker',
+            fileName: () => 'sw.js',
+          },
+          rollupOptions: {
+            // The worker imports only the notification schemas from the
+            // `@hushbox/shared` barrel; treat modules as side-effect-free so the
+            // rest of the barrel (billing, estimate, ...) tree-shakes out instead
+            // of shipping in the worker bundle.
+            treeshake: { moduleSideEffects: false },
+          },
+        },
+      });
+    },
+  };
+}
+
 export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, envDir, 'VITE_');
 
@@ -163,6 +227,12 @@ export default defineConfig(({ mode, command }) => {
       apiPreconnectPlugin(env['VITE_API_URL']),
       inlineStreamdownLazyImports(),
       sharedFaviconPlugin(),
+      pwaIconPlugin(),
+      serviceWorkerBuildPlugin(mode),
+      // Self-hosts the onnxruntime-web WASM runtime same-origin (under
+      // TTS_ORT_WASM_PATH) so the on-device TTS engine loads under the CSP with
+      // no third-party CDN. Shared with the marketing (Astro) build.
+      ortAssetsPlugin(),
       devAssetsPlugin(),
       marketingRedirectPlugin(),
       // Must run BEFORE previewDirectoryIndexFallback so we match against the
@@ -184,7 +254,19 @@ export default defineConfig(({ mode, command }) => {
         },
       },
     },
+    optimizeDeps: {
+      // Fails the dev server at start if kokoro-js's undeclared
+      // `onnxruntime-common` import cannot be resolved, instead of letting the
+      // optimizer externalize it silently and cache that (see the constant).
+      include: KOKORO_ORT_COMMON_INCLUDE,
+    },
     resolve: {
+      // Picks onnxruntime-web's extern-wasm build variant so the TTS worker
+      // does not drag a bundled ~21 MB wasm copy into the output alongside the
+      // self-hosted one ortAssetsPlugin emits (see the constant's own comment).
+      // `conditions` REPLACES Vite's defaults, so the spread is load-bearing:
+      // without it, module/browser resolution breaks across the whole app.
+      conditions: [ORT_EXTERN_WASM_CONDITION, ...defaultClientConditions],
       alias: {
         '@': resolve(__dirname, './src'),
       },

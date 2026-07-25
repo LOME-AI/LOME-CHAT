@@ -10,6 +10,8 @@ import {
   removeMember,
 } from './members.js';
 import { conversationRecord, fakeStores, memberRecord, userRow } from './test-fixtures.js';
+import type { ResultAsync } from '../../../lib/result/index.js';
+import type { DomainError } from '../../../lib/errors/index.js';
 import type { RotationBody } from './schemas.js';
 
 /**
@@ -33,6 +35,9 @@ function rotationBody(expectedEpoch: number, memberKeys: Uint8Array[]): Rotation
     encryptedTitle: B64,
   };
 }
+
+/** Departure budget-row deleter double: these arms never reach the budget write. */
+const noopDeleteBudget = (): ResultAsync<void, DomainError> => okAsync();
 
 const owner = memberRecord();
 const targetMember = memberRecord({ id: 'm-target', userId: 'target', privilege: 'write' });
@@ -158,7 +163,7 @@ describe('removeMember link-guest gating', () => {
         activeById: () => okAsync(memberRecord({ id: 'm-link', userId: null, privilege: 'read' })),
       },
     });
-    const result = await removeMember(stores, {
+    const result = await removeMember(stores, noopDeleteBudget, {
       conversationId: 'c1',
       memberId: 'm-link',
       callerUserId: 'owner',
@@ -179,7 +184,7 @@ describe('removeMember defect arms', () => {
       users: { byId: () => okAsync(null) },
     });
     await expect(
-      removeMember(stores, {
+      removeMember(stores, noopDeleteBudget, {
         conversationId: 'c1',
         memberId: 'm-target',
         callerUserId: 'owner',
@@ -206,7 +211,7 @@ describe('removeMember defect arms', () => {
       users: { byId: (id) => userRow(id, TARGET_KEY) },
     });
     await expect(
-      removeMember(stores, {
+      removeMember(stores, noopDeleteBudget, {
         conversationId: 'c1',
         memberId: 'm-target',
         callerUserId: 'owner',
@@ -229,7 +234,7 @@ describe('leaveConversation defect arms', () => {
       },
     });
     await expect(
-      leaveConversation(stores, { conversationId: 'c1', callerUserId: 'owner' })
+      leaveConversation(stores, noopDeleteBudget, { conversationId: 'c1', callerUserId: 'owner' })
     ).rejects.toThrow(/does not own the conversation row/);
   });
 
@@ -250,7 +255,7 @@ describe('leaveConversation defect arms', () => {
       users: { byId: (id) => userRow(id, TARGET_KEY) },
     });
     await expect(
-      leaveConversation(stores, {
+      leaveConversation(stores, noopDeleteBudget, {
         conversationId: 'c1',
         callerUserId: 'target',
         rotation: rotationBody(1, [OWNER_KEY]),
@@ -272,7 +277,7 @@ describe('removeMember authorization ladder', () => {
         activeById: () => okAsync(peerAdmin),
       },
     });
-    const result = await removeMember(stores, {
+    const result = await removeMember(stores, noopDeleteBudget, {
       conversationId: 'c1',
       memberId: 'm-peer',
       callerUserId: 'admin1',
@@ -288,7 +293,7 @@ describe('removeMember authorization ladder', () => {
       conversations: { lockForUpdate: () => okAsync(conversationRecord()) },
       members: { activeByUser: () => okAsync(writeTarget) },
     });
-    const result = await removeMember(stores, {
+    const result = await removeMember(stores, noopDeleteBudget, {
       conversationId: 'c1',
       memberId: 'm-other',
       callerUserId: 'target',

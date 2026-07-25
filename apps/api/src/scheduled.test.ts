@@ -96,6 +96,7 @@ describe('cronEntriesFor', () => {
       'jobs-succeeded-prune',
       'jobs-discarded-prune',
       'account-deletion-events-purge',
+      'stale-device-token-purge',
       'admin-daily-digest',
       'public-stats-snapshot',
     ]);

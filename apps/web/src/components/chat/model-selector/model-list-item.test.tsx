@@ -41,6 +41,7 @@ function baseProps(overrides: Partial<ModelListItemProps> = {}): ModelListItemPr
     isSelected: false,
     isDisabled: false,
     isPremium: false,
+    isBelowFloor: false,
     canAccessPremium: true,
     isAuthenticated: true,
     isLinkGuest: false,

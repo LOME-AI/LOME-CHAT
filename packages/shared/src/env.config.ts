@@ -103,6 +103,53 @@ export const envConfig = {
     [Mode.Production]: 'https://admin.hushbox.ai',
   },
 
+  // The dedicated, credential-free sandbox origin that serves the document
+  // renderer pages + self-hosted Pyodide assets (ARCHITECTURE §sandbox). Read at
+  // BUILD time only — the app-origin CSP `frame-src` allows it, and the sandbox
+  // dev/build tooling bakes it — so it is a Scripts var (no runtime Worker
+  // consumer, no production secret). The web app's own iframe `src` reads the
+  // VITE_ mirror. Dev points at the local sandbox dev server; `pnpm dev` offsets
+  // the port per-worktree.
+  SANDBOX_ORIGIN_URL: {
+    to: [Destination.Scripts],
+    [Mode.Development]: 'http://localhost:7400',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: 'https://sandbox.hushbox.ai',
+  },
+
+  // Frontend mirror of SANDBOX_ORIGIN_URL — the value the web bundle reads at
+  // runtime to point the document-panel sandbox iframe `src` at the renderer
+  // pages, and the app-origin CSP `frame-src` in index.html (Vite substitutes
+  // %VITE_SANDBOX_ORIGIN_URL% at build time). Kept value-identical to
+  // SANDBOX_ORIGIN_URL per mode (both offset by the same per-worktree port
+  // rewrite in dev), so the frame-src allowlist and the iframe origin never
+  // diverge.
+  VITE_SANDBOX_ORIGIN_URL: {
+    to: [Destination.Frontend],
+    [Mode.Development]: 'http://localhost:7400',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: 'https://sandbox.hushbox.ai',
+  },
+
+  // Module-CDN base URL the document renderer assembles its import map against.
+  // Production and dev-default resolve npm ES modules from
+  // esm.sh; the test modes point at a local static stub served by the sandbox
+  // origin, so CI and local tests are deterministic and never hit live network
+  // (mirrors the AI-cassette doctrine). Baked into the renderer at sandbox
+  // build/serve time — a Scripts var, read via the sandbox tooling.
+  ESM_CDN_URL: {
+    to: [Destination.Scripts],
+    [Mode.Development]: 'https://esm.sh',
+    [Mode.CiVitest]: 'http://localhost:7400/esm-stub',
+    [Mode.E2E]: ref(Mode.CiVitest),
+    [Mode.CiE2E]: ref(Mode.CiVitest),
+    [Mode.Production]: 'https://esm.sh',
+  },
+
   CI: {
     to: [Destination.Backend],
     [Mode.CiVitest]: 'true',
@@ -340,6 +387,74 @@ export const envConfig = {
     [Mode.E2E]: ref(Mode.Development),
     [Mode.CiE2E]: ref(Mode.E2E),
     [Mode.Production]: secret('GOOGLE_SERVICES_JSON_BASE64'),
+  },
+
+  // Web Push (RFC 8292 VAPID) application-server keypair for the in-house
+  // browser push sender. The public key is published to browsers (also shipped
+  // to the frontend as VITE_VAPID_PUBLIC_KEY for PushManager.subscribe); the
+  // private key signs the per-request VAPID JWT. Dev/CI carry a committed
+  // throwaway P-256 keypair — harmless, since dev/CI push only ever reaches the
+  // in-process mock sender, never a real push service. Production keys are
+  // Workers secrets minted out-of-band. Base64url: public = 65-byte
+  // uncompressed point, private = 32-byte scalar (classic web-push wire form).
+  VAPID_PUBLIC_KEY: {
+    to: [Destination.Backend],
+    [Mode.Development]:
+      'BOeIadxzr8jCEiJstuK2__fGtYo6wWP0HMZDdYl-RWBXoSB9O1Bs4Dd4gPtm5WijJcYxrmH-i1QTCTzaj9xJ4tE',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: secret('VAPID_PUBLIC_KEY'),
+  },
+
+  VAPID_PRIVATE_KEY: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'SQ6hnT9IQ-46JeC7tl_zN_tJjH0v76csKdFBGcCYTx0',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: secret('VAPID_PRIVATE_KEY'),
+  },
+
+  // RFC 8292 §2.1 `sub`: a mailto:/https: URI the push service can use to
+  // contact the sender. Not a secret; identical across modes.
+  VAPID_SUBJECT: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'mailto:notifications@hushbox.ai',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: 'mailto:notifications@hushbox.ai',
+  },
+
+  // The VAPID public key, shipped to the browser for PushManager.subscribe.
+  // Same value as VAPID_PUBLIC_KEY; a separate VITE_ entry so it reaches the
+  // frontend bundle. Public by design — safe to expose.
+  VITE_VAPID_PUBLIC_KEY: {
+    to: [Destination.Frontend],
+    [Mode.Development]:
+      'BOeIadxzr8jCEiJstuK2__fGtYo6wWP0HMZDdYl-RWBXoSB9O1Bs4Dd4gPtm5WijJcYxrmH-i1QTCTzaj9xJ4tE',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: secret('VITE_VAPID_PUBLIC_KEY'),
+  },
+
+  // HMAC key that derives the per-conversation push collapse alias (the
+  // FCM collapse_key / notification tag and the Web Push Topic header). The
+  // alias replaces the raw conversationId in every push-service-visible header
+  // so the push services never see it. Needed in every mode because the alias
+  // is stamped on all sends, including the dev/CI mock — hence a committed
+  // throwaway value here (never used to protect anything; the raw id is not a
+  // secret to FCM, which already sees it in the data payload). Production is a
+  // Workers secret minted out-of-band.
+  NOTIFICATION_TAG_SECRET: {
+    to: [Destination.Backend],
+    [Mode.Development]: 'NoCxqgOg_DdFAxJ9q7q4Sv7QGroKx5qGWtPO88qV14U',
+    [Mode.CiVitest]: ref(Mode.Development),
+    [Mode.E2E]: ref(Mode.Development),
+    [Mode.CiE2E]: ref(Mode.E2E),
+    [Mode.Production]: secret('NOTIFICATION_TAG_SECRET'),
   },
 
   HELCIM_API_TOKEN: {
@@ -586,6 +701,17 @@ export const backendEnvSchema = z.object({
   LINEAR_API_KEY_READ: z.string().min(1).optional(),
   FCM_PROJECT_ID: z.string().optional(),
   FCM_SERVICE_ACCOUNT_JSON: z.string().optional(),
+  // Web Push VAPID keys. Optional in the schema because dev/CI satisfy them
+  // from envConfig's committed throwaway keypair and the real webpush sender is
+  // only constructed in production (dev/CI push goes to the mock); the
+  // production fail-fast lives where the sender is wired.
+  VAPID_PUBLIC_KEY: z.string().min(1).optional(),
+  VAPID_PRIVATE_KEY: z.string().min(1).optional(),
+  VAPID_SUBJECT: z.string().min(1).optional(),
+  // Required in every mode (no fallback): the push collapse-alias HMAC key is
+  // stamped on all sends including the dev/CI mock, so envConfig supplies a
+  // value for each mode and absence is a bad bootstrap that must fail fast.
+  NOTIFICATION_TAG_SECRET: z.string().min(1),
   // Redis
   UPSTASH_REDIS_REST_URL: z.string().url(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(1),
@@ -643,6 +769,11 @@ export const frontendEnvSchema = z.object({
   // field would throw at web-app module load. Defined for every mode in
   // envConfig (production `https://hushbox.ai`), so it is present when needed.
   VITE_WEB_URL: z.string().url().optional(),
+  // Optional (like VITE_ADMIN_URL): the VAPID public key for PushManager.
+  // subscribe. Read behind a push-capability gate in the web client, and it
+  // carries no value in modes that omit it, so a required field would throw at
+  // web-app module load.
+  VITE_VAPID_PUBLIC_KEY: z.string().min(1).optional(),
 });
 
 export type FrontendEnv = z.infer<typeof frontendEnvSchema>;

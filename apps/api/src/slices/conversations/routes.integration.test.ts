@@ -12,6 +12,7 @@ import {
   epochMembers,
   epochs,
   llmCompletions,
+  memberBudgets,
   messages,
   sharedLinks,
   sharedMessages,
@@ -4513,5 +4514,91 @@ describe('conversations routes: link-guest websocket upgrade', () => {
     );
     expect(res.status).toBe(503);
     expect(upgrades).toHaveLength(0);
+  });
+});
+
+describe('conversations routes: membership lifecycle owns budget rows', () => {
+  async function budgetRow(memberId: string): Promise<{ budgetNanoUsd: bigint }[]> {
+    return db
+      .select({ budgetNanoUsd: memberBudgets.budgetNanoUsd })
+      .from(memberBudgets)
+      .where(eq(memberBudgets.memberId, memberId));
+  }
+
+  it('removal deletes the removed member’s budget row in the same transaction', async () => {
+    const owner = await newUser();
+    const member = await newUser();
+    const id = await createConversation(owner);
+    const memberId = await addFullHistory(owner, id, member);
+    await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 500n, spentNanoUsd: 100n });
+
+    const res = await send(
+      'POST',
+      `/conversations/${id}/members/${memberId}/remove`,
+      owner.cookie,
+      {
+        rotation: rotationFor(1, [owner.publicKey]),
+      }
+    );
+
+    expect(res.status).toBe(200);
+    expect(await budgetRow(memberId)).toHaveLength(0);
+  });
+
+  it('removal leaves the budget rows of remaining members alone', async () => {
+    const owner = await newUser();
+    const removed = await newUser();
+    const staying = await newUser();
+    const id = await createConversation(owner);
+    const removedId = await addFullHistory(owner, id, removed);
+    const stayingId = await addFullHistory(owner, id, staying);
+    await db.insert(memberBudgets).values({ memberId: removedId, budgetNanoUsd: 500n });
+    await db.insert(memberBudgets).values({ memberId: stayingId, budgetNanoUsd: 700n });
+
+    const res = await send(
+      'POST',
+      `/conversations/${id}/members/${removedId}/remove`,
+      owner.cookie,
+      { rotation: rotationFor(1, [owner.publicKey, staying.publicKey]) }
+    );
+
+    expect(res.status).toBe(200);
+    expect(await budgetRow(removedId)).toHaveLength(0);
+    expect(await budgetRow(stayingId)).toHaveLength(1);
+  });
+
+  it('a failed removal (stale epoch) deletes nothing — the row rides the same transaction', async () => {
+    const owner = await newUser();
+    const member = await newUser();
+    const id = await createConversation(owner);
+    const memberId = await addFullHistory(owner, id, member);
+    await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 500n });
+
+    const res = await send(
+      'POST',
+      `/conversations/${id}/members/${memberId}/remove`,
+      owner.cookie,
+      {
+        rotation: rotationFor(7, [owner.publicKey]),
+      }
+    );
+
+    expect(res.status).toBe(409);
+    expect(await budgetRow(memberId)).toHaveLength(1);
+  });
+
+  it('a voluntary leave also deletes the departing member’s budget row (same lifecycle seam)', async () => {
+    const owner = await newUser();
+    const member = await newUser();
+    const id = await createConversation(owner);
+    const memberId = await addFullHistory(owner, id, member);
+    await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 500n, spentNanoUsd: 42n });
+
+    const res = await send('POST', `/conversations/${id}/leave`, member.cookie, {
+      rotation: rotationFor(1, [owner.publicKey]),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await budgetRow(memberId)).toHaveLength(0);
   });
 });

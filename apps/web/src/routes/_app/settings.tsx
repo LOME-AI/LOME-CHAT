@@ -18,6 +18,7 @@ import { RecoveryPhraseModal } from '@/components/auth/recovery-phrase-modal';
 import { RegenerateConfirmModal } from '@/components/auth/regenerate-confirm-modal';
 import { CustomInstructionsModal } from '@/components/settings/custom-instructions-modal';
 import { MailingListCard } from '@/components/settings/mailing-list-card';
+import { NotificationsCard } from '@/components/settings/notifications-card';
 import { DeleteAccountModal } from '@/components/settings/delete-account-modal';
 
 export const Route = createFileRoute('/_app/settings')({
@@ -219,6 +220,8 @@ function SettingsPage(): React.JSX.Element {
         </Card>
 
         <MailingListCard />
+
+        <NotificationsCard />
 
         <Card>
           <CardHeader>

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   resolveClientBilling,
   deriveClientFundingInputs,
+  payerSizingTier,
   type ClientBillingInput,
   type ResolveBillingResult,
 } from './client-billing.js';
@@ -387,5 +388,82 @@ describe('deriveClientFundingInputs — routes through the shared core', () => {
       })
     );
     expect(fundingInputs.callerOwnPurchasedBalanceNanoUsd).toBe(-100n * NANO_PER_CENT);
+  });
+});
+
+describe('payerSizingTier — owner-funded means owner-priced (BILLING §Group Funding 1)', () => {
+  it("prices a free-tier member's owner-funded preview at the PAYER's tier: paid", () => {
+    // Server parity: turn-definition's tierForFunding sizes an owner-funded turn
+    // from the admitted wallet's kind — the owner's purchased wallet ⇒ 'paid'.
+    // The client must size the same turn identically, not at the caller's own tier.
+    expect(
+      payerSizingTier({
+        tier: 'free',
+        purchasedBalanceNanoUsd: 0n,
+        group: {
+          effectiveRemainingNanoUsd: 100n * NANO_PER_CENT,
+          ownerBalanceNanoUsd: 1000n * NANO_PER_CENT,
+        },
+      })
+    ).toBe('paid');
+  });
+
+  it("prices a guest's owner-funded preview at paid (a guest never pays, the owner does)", () => {
+    expect(
+      payerSizingTier({
+        tier: 'guest',
+        purchasedBalanceNanoUsd: 0n,
+        group: {
+          effectiveRemainingNanoUsd: 1n,
+          ownerBalanceNanoUsd: 50n * NANO_PER_CENT,
+        },
+      })
+    ).toBe('paid');
+  });
+
+  it("falls back to the CALLER's own tier once the group headroom is exhausted", () => {
+    // Exhausted headroom ⇒ a signed-in member self-funds; sizing follows the
+    // sender's own tier again (the sender's tier applies only when the sender pays).
+    expect(
+      payerSizingTier({
+        tier: 'free',
+        purchasedBalanceNanoUsd: 0n,
+        group: { effectiveRemainingNanoUsd: 0n, ownerBalanceNanoUsd: 1000n * NANO_PER_CENT },
+      })
+    ).toBe('free');
+  });
+
+  it('negative owner balance means zero headroom: caller tier sizes the turn', () => {
+    expect(
+      payerSizingTier({
+        tier: 'free',
+        purchasedBalanceNanoUsd: 0n,
+        group: {
+          effectiveRemainingNanoUsd: 100n * NANO_PER_CENT,
+          ownerBalanceNanoUsd: -1n,
+        },
+      })
+    ).toBe('free');
+  });
+
+  it('solo turns (no group context) keep the caller tier', () => {
+    expect(payerSizingTier({ tier: 'paid', purchasedBalanceNanoUsd: 5n })).toBe('paid');
+    expect(payerSizingTier({ tier: 'trial', purchasedBalanceNanoUsd: 0n })).toBe('trial');
+  });
+
+  it('agrees with resolveClientBilling: owner_balance verdict ⇔ paid sizing tier', () => {
+    // The sizing tier derives from the SAME shared core resolveClientBilling
+    // routes through, so who-pays and how-it-sizes can never drift.
+    const base = input({
+      tier: 'free',
+      purchasedBalanceNanoUsd: 0n,
+      freeAllowanceNanoUsd: 0n,
+      group: {
+        effectiveRemainingNanoUsd: 100n * NANO_PER_CENT,
+        ownerBalanceNanoUsd: 1000n * NANO_PER_CENT,
+      },
+    });
+    expect(resolveClientBilling(base)).toEqual({ fundingSource: 'owner_balance' });
+    expect(payerSizingTier(base)).toBe('paid');
   });
 });

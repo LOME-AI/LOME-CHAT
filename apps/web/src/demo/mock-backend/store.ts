@@ -100,6 +100,7 @@ export interface DemoConversationDetail {
     pinned: boolean;
     accepted: boolean;
     visibleFromEpoch: number;
+    lastReadSeq: number;
   };
   forks: GetConversationResponse['forks'];
 }
@@ -174,6 +175,8 @@ const DEMO_MEMBERSHIP: GetConversationResponse['membership'] = {
   pinned: false,
   accepted: true,
   visibleFromEpoch: 1,
+  // The demo never acknowledges reads — there is no server to PATCH.
+  lastReadSeq: 0,
 };
 
 /** The lone member of a solo (non-group) conversation: the demo user. */
@@ -730,6 +733,7 @@ export class DemoBackendStore {
       privilege: 'owner',
       muted: false,
       pinned: false,
+      lastReadSeq: 0,
     };
     const response: GetConversationResponse = {
       conversation,
@@ -831,6 +835,7 @@ export class DemoBackendStore {
       privilege: 'owner',
       muted: false,
       pinned: false,
+      lastReadSeq: 0,
     };
 
     const response: GetConversationResponse = {

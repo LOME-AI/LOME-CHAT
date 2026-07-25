@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Worker probe</title></head>
+  <body>
+    <pre id="out">running...</pre>
+    <script type="module">
+      const out = document.getElementById('out');
+      const line = (s) => { out.textContent += '\n' + s; };
+      out.textContent = 'origin=' + location.origin + ' (opaque if "null")';
+      function probe(label, type) {
+        return new Promise((resolve) => {
+          try {
+            const b = new Blob(["self.onmessage=()=>self.postMessage('pong')"], { type: 'text/javascript' });
+            const w = new Worker(URL.createObjectURL(b), type === 'module' ? { type: 'module' } : undefined);
+            const to = setTimeout(() => { line(label + ': TIMEOUT'); resolve(); }, 3000);
+            w.onmessage = (e) => { clearTimeout(to); line(label + ': ' + e.data); w.terminate(); resolve(); };
+            w.onerror = (e) => { clearTimeout(to); line(label + ' ERROR msg=' + JSON.stringify(e.message)); resolve(); };
+            w.postMessage('ping');
+          } catch (e) { line(label + ' THREW: ' + e); resolve(); }
+        });
+      }
+      (async () => {
+        await probe('classic-blob', 'classic');
+        await probe('module-blob', 'module');
+        // Same-origin module worker from a real URL (only meaningful at real origin).
+        try {
+          const w = new Worker('./probe-worker.mjs', { type: 'module' });
+          const to = setTimeout(() => { line('module-url: TIMEOUT'); }, 3000);
+          w.onmessage = (e) => { clearTimeout(to); line('module-url: ' + e.data); w.terminate(); };
+          w.onerror = (e) => { clearTimeout(to); line('module-url ERROR msg=' + JSON.stringify(e.message)); };
+          w.postMessage('ping');
+        } catch (e) { line('module-url THREW: ' + e); }
+        line('DONE');
+      })();
+    </script>
+  </body>
+</html>

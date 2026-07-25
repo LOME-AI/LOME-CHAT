@@ -33,7 +33,7 @@ let serviceAccountJson: string;
 let fetchImpl: Mock<typeof fetch>;
 
 const message: PushMessage = {
-  recipients: [{ userId: 'user-1', token: 'device-token-abc' }],
+  recipients: [{ platform: 'ios', userId: 'user-1', token: 'device-token-abc' }],
   title: 'New Message',
   body: 'Hello from HushBox',
 };

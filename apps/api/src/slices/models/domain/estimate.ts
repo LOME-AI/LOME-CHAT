@@ -1,13 +1,11 @@
 import {
   ERROR_CODES,
-  WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL,
   NO_STORAGE,
   callManifest as sharedCallManifest,
   estimateRunCeilingNanoUsd as sharedEstimateRunCeilingNanoUsd,
   evaluateManifest,
   outputTokensOf,
 } from '@hushbox/shared';
-import { applyMarkup } from '../../billing/index.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import type {
@@ -24,29 +22,12 @@ import type { Result } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 
 /**
- * The worst-case pre-flight web-search reservation for ONE model call that
- * enabled the search tool: `MAX_SEARCH_TOOL_CALLS` invocations at the
- * conservative per-call rate, marked up once. Single-sourced from the shared
- * estimator core's `WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL` (the nano-USD
- * bigint analogue of legacy `worstCaseSearchCost()`), so the reservation can
- * never drift from the runtime search cap. Search cost is a provider cost (not
- * pass-through storage), so it takes the markup like any inference charge. The
- * run's admission ceiling adds this on top of a web-search node's token ceiling
- * so a turn that cannot afford the worst-case search spend is refused up front,
- * rather than admitted and killed mid-run by the cost circuit. Settlement bills
- * the provider's actual search cost (folded into `usage.cost`), never this
- * reservation.
- */
-export const WORST_CASE_SEARCH_RESERVATION_NANO_USD: bigint = applyMarkup(
-  WEB_SEARCH_RESERVATION_BASE_NANO_PER_MODEL
-);
-
-/**
- * Estimate computation — catalog rates are its ONLY price source. Estimates
- * feed admission holds and the settlement's `isEstimated` charge; the
+ * Estimate computation — the billable catalog rates are its ONLY price source,
+ * so every amount here is billable with no fee math anywhere in this module.
+ * Estimates feed admission holds and the settlement's `isEstimated` charge; the
  * authoritative charged cost lives in billing's settlement flow and is never
- * consulted here. Every cost formula (per-token sums, media rate × units, the
- * markup fold, the ceiling multiplier) lives ONCE in the shared estimator core
+ * consulted here. Every cost formula (per-token sums, media rate × units,
+ * the ceiling multiplier) lives ONCE in the shared estimator core
  * (`@hushbox/shared/estimate`); this module is the thin server adapter that
  * drives the core's `callManifest` / `estimateRunCeilingNanoUsd` /
  * `buildMediaLineItems` and translates the core's `EstimateResult` union into
@@ -68,11 +49,12 @@ function fromEstimate<T>(result: EstimateResult<T>): Result<T, DomainError> {
 }
 
 /**
- * One call's pre-markup {@link Manifest} from the shared core, on the domain
+ * One call's billable {@link Manifest} from the shared core, on the domain
  * `Result` channel. The token path prices per-model input/output rates plus an
  * output-storage rate item; the media path prices `rate × units` plus a
  * media-storage item. With {@link NO_STORAGE} the storage items are zero/discarded
- * and only the provider cost survives (the base and provider-ceiling pricers).
+ * and only the provider cost survives (the billable-call and provider-ceiling
+ * pricers).
  */
 function callManifest(
   pricing: Pricing,
@@ -83,14 +65,16 @@ function callManifest(
 }
 
 /**
- * One call's BASE (pre-markup) cost from catalog rates — tokens or media units.
- * Folds ONLY the marked-up (provider) line items via the shared
- * `evaluateManifest` (storage is pass-through, excluded): this recovers the
- * provider base settlement charges and marks up exactly once downstream in
- * `chargeWithinTx`; `estimateCallNanoUsd` and the run-ceiling estimate wrap this
- * with `applyMarkup` for their customer-facing amounts.
+ * One call's BILLABLE cost from the billable catalog rates — tokens or media
+ * units. Folds ONLY the provider line items via the shared `evaluateManifest`
+ * (storage is pass-through, excluded): this is the customer-facing model cost
+ * as-is — settlement's estimate-path charges bill it directly, with no
+ * further fee application anywhere downstream.
  */
-export function callBaseNanoUsd(pricing: Pricing, usage: CallUsage): Result<bigint, DomainError> {
+export function callBillableNanoUsd(
+  pricing: Pricing,
+  usage: CallUsage
+): Result<bigint, DomainError> {
   return callManifest(pricing, usage, NO_STORAGE).map((manifest) =>
     evaluateManifest(manifest, outputTokensOf(usage), { scope: 'provider-only' })
   );
@@ -182,19 +166,19 @@ function videoCallUsage(params: Record<string, unknown>): Result<CallUsage, Doma
 }
 
 /**
- * A media call's BASE (pre-markup) deterministic price from catalog rates and
- * request parameters. Exact by construction for image (charged as-is at
+ * A media call's BILLABLE deterministic price from the billable catalog rates
+ * and request parameters. Exact by construction for image (charged as-is at
  * settlement); for video it is the admission ceiling, the
  * pathological-missing-cost fallback, and the inline-cost sanity bound. A
  * resolution absent from the pricing matrix fails closed inside the rate
  * lookup.
  */
-export function priceMediaBaseNanoUsd(
+export function priceMediaBillableNanoUsd(
   pricing: Pricing,
   family: CallShapeFamily | undefined,
   params: Record<string, unknown>
 ): Result<bigint, DomainError> {
-  return mediaCallUsageFor(family, params).andThen((usage) => callBaseNanoUsd(pricing, usage));
+  return mediaCallUsageFor(family, params).andThen((usage) => callBillableNanoUsd(pricing, usage));
 }
 
 /**
@@ -216,33 +200,23 @@ function callUsageFromUsage(usage: Usage): CallUsage {
 }
 
 /**
- * One call's BASE (pre-markup) estimate from observed `Usage` — the amount a
- * model binding's `price` returns. The 15% markup lands exactly once downstream
- * in settlement's `chargeWithinTx`, never here.
+ * One call's BILLABLE estimate from observed `Usage` — the amount a model
+ * binding's `price` returns. Settlement charges it directly on the
+ * estimate-fallback path; no fee lands anywhere downstream. A `0n` result is
+ * a legal no-charge (settlement is never balance-guarded).
  */
-export function priceUsageBaseNanoUsd(pricing: Pricing, usage: Usage): Result<bigint, DomainError> {
-  return callBaseNanoUsd(pricing, callUsageFromUsage(usage));
-}
-
-/**
- * One call's customer-facing estimate: catalog base cost with the markup.
- * This is the settlement-side estimate over observed usage, where a `0n`
- * result is a legal no-charge (settlement is never balance-guarded).
- * Admission callers must use `estimateRunCeilingNanoUsd`, which rejects a
- * zero ceiling — a zero admission hold is a caller bug.
- */
-export function estimateCallNanoUsd(
+export function priceUsageBillableNanoUsd(
   pricing: Pricing,
-  usage: CallUsage
+  usage: Usage
 ): Result<bigint, DomainError> {
-  return callBaseNanoUsd(pricing, usage).map((base) => applyMarkup(base));
+  return callBillableNanoUsd(pricing, callUsageFromUsage(usage));
 }
 
 /**
  * The admission estimate: the per-call ceiling cost priced across the run's
- * declared worst case, via the shared core `estimateRunCeilingNanoUsd` (markup
- * applied once to the marked-up subtotal, then multiplied by width × steps ×
- * iterations), surfaced on the domain `Result` channel. With `storage` present
+ * declared worst case, via the shared core `estimateRunCeilingNanoUsd` (the
+ * billable per-call ceiling multiplied by width × steps × iterations),
+ * surfaced on the domain `Result` channel. With `storage` present
  * the node's output-storage (token nodes) or media-storage (media nodes) rides
  * the ceiling, unmarked; absent, only provider cost is priced. A zero ceiling is
  * rejected — it would place a zero admission hold (free admission), which is

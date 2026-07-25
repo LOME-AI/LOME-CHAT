@@ -1,0 +1,86 @@
+appId: ai.hushbox.app
+name: Runnable document renders in the on-device WebView sandbox
+tags:
+  - should
+androidWebViewHierarchy: devtools
+env:
+  # See 10-core-user-flow.yaml for the full reasoning. Short version:
+  # Maestro spends ~10 s per character on Capacitor WebViews on docker-android
+  # (issue #2718), so log in with the shortest legal username (3 chars) rather
+  # than the 27-char email. `tmu` is the seeded MOBILE_TEST_PERSONA username.
+  TEST_USERNAME: tmu
+  TEST_PASSWORD: pass1234
+---
+- launchApp:
+    clearState: true
+
+# Wait for the app to stabilize on the unauthenticated landing page.
+- extendedWaitUntil:
+    visible: 'Sign up'
+    timeout: 45000
+
+# /login is not deep-linkable (auth routes fall back to home), so reach it via
+# in-app links: the trial banner's "Sign up", then "Log in" on the signup page.
+- tapOn: 'Sign up'
+- extendedWaitUntil:
+    visible: 'Create your account'
+    timeout: 10000
+- tapOn: 'Log in'
+- extendedWaitUntil:
+    visible: 'Welcome back'
+    timeout: 10000
+- tapOn: 'Email or Username'
+- inputText: ${TEST_USERNAME}
+- hideKeyboard
+- tapOn: 'Password'
+- inputText: ${TEST_PASSWORD}
+- hideKeyboard
+- tapOn: 'Log in'
+
+# Wait for the authenticated chat page (an element unique to chat, not login).
+- extendedWaitUntil:
+    visible:
+      id: 'model-selector-button'
+    timeout: 15000
+
+# Open the conversation sidebar. On mobile the sidebar is a drawer whose only
+# opener is the hamburger button — the sidebar's own contents (chat rows, footer
+# trigger) live *inside* that drawer and don't exist in the DOM until it opens.
+# `hamburger-button` carries a literal HTML `id`, which Maestro's `id:` selector
+# matches (`id:` matches an `id` attribute, never `data-testid`).
+- tapOn:
+    id: 'hamburger-button'
+
+# Tap the seeded HTML-document conversation by its title. The harness seeds it
+# with the title "Mobile render proof", so the chat row carries that stable,
+# unique text — tappable regardless of how many conversations the persona has.
+- extendedWaitUntil:
+    visible: 'Mobile render proof'
+    timeout: 15000
+- tapOn: 'Mobile render proof'
+
+# The assistant message carries a fenced HTML block, which the parser surfaces
+# as a runnable document card whose title is the language display name, "HTML".
+# Tapping that card text opens the panel. Budget covers decrypt + markdown render.
+- extendedWaitUntil:
+    visible: 'HTML'
+    timeout: 30000
+- tapOn: 'HTML'
+
+# Opening the card mounts the document panel and its sandbox iframe. The panel
+# container carries a literal `id` so Maestro's `id:` selector resolves it.
+- extendedWaitUntil:
+    visible:
+      id: 'document-panel'
+    timeout: 10000
+
+# The real proof: the panel mirrors the sandbox bridge lifecycle into an
+# app-origin status element whose text reads "Preview rendered" ONLY after the
+# cross-origin sandbox iframe posts `rendered`. Asserting that text (an
+# app-origin DOM node the devtools hierarchy enumerates) proves the document
+# actually executed and painted inside the WebView sandbox — not merely that
+# the panel opened. Deep iframe content is cross-origin and unreliable to read;
+# this status mirror is the reliable signal by design.
+- extendedWaitUntil:
+    visible: 'Preview rendered'
+    timeout: 30000

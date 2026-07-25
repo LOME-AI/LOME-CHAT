@@ -4,6 +4,7 @@ import { isNotNull, sql } from 'drizzle-orm';
 import { contentItems } from './content-items';
 import { conversations } from './conversations';
 import { modalityEnum } from './enums';
+import { sharedLinks } from './shared-links';
 import { users } from './users';
 
 /**
@@ -18,6 +19,23 @@ export const usageRecords = pgTable(
       .primaryKey()
       .default(sql`uuidv7()`),
     userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+    // The turn's SENDER, first-class and independently queryable beside
+    // `userId`. The two resolve to different people on a group turn, and
+    // `userId` is NOT the charged wallet's owner: it is the initiating member
+    // on a user turn — even when an owner-funded turn debits the OWNER's
+    // wallet — and the owner on a link-guest turn (a guest has no users row).
+    // Grouping spend by `user_id` therefore groups by initiator; who funded it
+    // is recoverable only from the ledger legs. Exactly one side is
+    // written at insert, mirroring conversation_members' principal pair:
+    // senderUserId for a member sender, senderLinkId for a link-guest sender
+    // (a guest has no users row, so a users FK alone cannot record it). Both
+    // stay nullable with ON DELETE SET NULL — financial retention survives the
+    // sender's hard deletion, so a both-null row is the pseudonymized state,
+    // never an insert-time state.
+    senderUserId: uuid('sender_user_id').references(() => users.id, { onDelete: 'set null' }),
+    senderLinkId: uuid('sender_link_id').references(() => sharedLinks.id, {
+      onDelete: 'set null',
+    }),
     contentItemId: uuid('content_item_id').references(() => contentItems.id, {
       onDelete: 'set null',
     }),
@@ -49,6 +67,13 @@ export const usageRecords = pgTable(
     index('usage_records_content_item_id_idx')
       .on(table.contentItemId)
       .where(isNotNull(table.contentItemId)),
+    // Sender-keyed spend queries plus the deletion path's SET NULL scans.
+    index('usage_records_sender_user_id_idx')
+      .on(table.senderUserId)
+      .where(isNotNull(table.senderUserId)),
+    index('usage_records_sender_link_id_idx')
+      .on(table.senderLinkId)
+      .where(isNotNull(table.senderLinkId)),
     // Per-conversation spend analytics groups the caller's rows by conversation.
     index('usage_records_conversation_id_idx')
       .on(table.conversationId)

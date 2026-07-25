@@ -33,6 +33,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MARKETING_ROUTES, ROUTES } from '../packages/shared/src/routes.js';
+import { TTS_MODEL_CONNECT_SRC } from '../packages/shared/src/tts-hosts.js';
 import { isMainModule } from './lib/is-main.js';
 import { runMain } from './lib/run-main.js';
 import type { Dirent } from 'node:fs';
@@ -60,6 +61,15 @@ export interface GenerateHeadersOptions {
    * wildcard already baked into connect-src.
    */
   readonly minioApiPort?: string;
+  /**
+   * The document sandbox origin the app-origin CSP `frame-src` must allow, so
+   * the app can embed the cross-origin renderer iframe. Defaults to
+   * `process.env.SANDBOX_ORIGIN_URL` (a build-time value written to
+   * `.env.scripts` by `scripts/generate-env.ts`, per-mode: the local dev server
+   * in dev/E2E, `https://sandbox.hushbox.ai` in production). Absence fail-fasts
+   * — every mode must name the sandbox origin, there is no fallback.
+   */
+  readonly sandboxOrigin?: string;
 }
 
 export interface GenerateHeadersResult {
@@ -94,7 +104,8 @@ const DEFAULT_OUTPUT = `${DEFAULT_DIST}/_headers`;
  */
 function buildSpaHeaders(
   apiOrigin: ApiOrigin,
-  localR2Origin: string | null
+  localR2Origin: string | null,
+  sandboxOrigin: string
 ): readonly { name: string; value: string }[] {
   // Local MinIO emulator (dev/E2E only — see deriveLocalR2Origin). Prod R2
   // reads are covered by the `*.r2.cloudflarestorage.com` wildcard below;
@@ -105,12 +116,21 @@ function buildSpaHeaders(
   // card-tokenization request back to the same origin. Both directives
   // need the host or the payment form fails at mount (script-src) or at
   // submit (connect-src). See apps/web/src/lib/helcim-loader.ts.
+  //
+  // `TTS_MODEL_CONNECT_SRC` (huggingface.co + *.hf.co) is the on-device
+  // Kokoro TTS model download: the accessibility reader and the blog "Listen"
+  // control fetch model/tokenizer files from the hub, which 302-redirect large
+  // weights to the Xet CDN on a region-variable *.hf.co subdomain. Sourced
+  // from the same shared constant the worker pins `env.remoteHost` from, so the
+  // fetched host and this allowlist cannot drift. The onnxruntime WASM runtime
+  // is self-hosted same-origin (see tts.worker.ts), so no third-party CDN.
   const connectSource = [
     "'self'",
     apiOrigin.http,
     'https://*.r2.cloudflarestorage.com',
     'https://*.r2.dev',
     'https://secure.myhelcim.com',
+    ...TTS_MODEL_CONNECT_SRC,
     apiOrigin.ws,
     ...(localR2Origin === null ? [] : [localR2Origin]),
   ].join(' ');
@@ -140,6 +160,13 @@ function buildSpaHeaders(
         "media-src 'self' blob:; " +
         `connect-src ${connectSource}; ` +
         "font-src 'self' data:; " +
+        // The document renderer embeds a cross-origin sandboxed iframe served
+        // from the dedicated, credential-free document sandbox origin, so that
+        // origin must be an allowed frame-src. 'self' is kept because same-origin
+        // framing (the /welcome page embedding the /demo SPA) previously relied
+        // on the default-src 'self' fallback that this explicit directive
+        // overrides — dropping it would re-block the demo iframe.
+        `frame-src 'self' ${sandboxOrigin}; ` +
         "frame-ancestors 'none'; " +
         "base-uri 'self'; " +
         "form-action 'self'",
@@ -232,6 +259,28 @@ export function deriveLocalR2Origin(apiOrigin: ApiOrigin, minioApiPort?: string)
   return `http://localhost:${minioApiPort}`;
 }
 
+/**
+ * Resolve the bare origin (`scheme://host[:port]`) the app-origin CSP
+ * `frame-src` allows, from the build-time `SANDBOX_ORIGIN_URL`. Strips any path
+ * so the emitted token is an origin, not a URL. Throws on a malformed or
+ * non-http(s) value rather than emitting a `frame-src` the browser silently
+ * ignores while the renderer iframe fails to load.
+ */
+export function deriveSandboxOrigin(sandboxUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(sandboxUrl);
+  } catch {
+    throw new Error(
+      `SANDBOX_ORIGIN_URL is not a valid URL: "${sandboxUrl}". Set it in the build env or via pnpm generate:env.`
+    );
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`SANDBOX_ORIGIN_URL must use http or https, got "${parsed.protocol}"`);
+  }
+  return parsed.origin;
+}
+
 const FILE_BANNER = `# Auto-generated from scripts/generate-headers.ts — do not edit by hand.
 # Source of truth for marketing route list: packages/shared/src/routes.ts → MARKETING_ROUTES
 # Source of truth for SPA policy: scripts/generate-headers.ts → SPA_HEADERS
@@ -267,6 +316,11 @@ const FILE_BANNER = `# Auto-generated from scripts/generate-headers.ts — do no
 #    MinIO emulator at http://localhost:<HB_MINIO_API_PORT> is appended for dev/E2E
 #    builds (the port is slot-offset for worktrees; see scripts/worktree.ts); prod builds
 #    skip it since the *.r2.cloudflarestorage.com wildcard already covers prod reads.
+#  - frame-src 'self' + sandbox origin: the document renderer embeds a
+#    cross-origin sandboxed iframe served from the dedicated, credential-free
+#    document sandbox origin (SANDBOX_ORIGIN_URL, per-mode). 'self' is retained
+#    so the same-origin /demo embed keeps working — before this directive
+#    existed, frames fell through to default-src 'self'.
 #  - frame-ancestors 'none': belt-and-suspenders with X-Frame-Options: DENY.
 #    Exception: /demo and /demo/* relax to frame-ancestors 'self' + X-Frame-Options
 #    SAMEORIGIN so the marketing /welcome page can embed the demo SPA in a
@@ -295,6 +349,14 @@ export async function generateHeaders(
   const envMinioApiPort = process.env['HB_MINIO_API_PORT'];
   const minioApiPort = options.minioApiPort ?? envMinioApiPort;
   const localR2Origin = deriveLocalR2Origin(apiOrigin, minioApiPort);
+  const sandboxOriginUrl = options.sandboxOrigin ?? process.env['SANDBOX_ORIGIN_URL'];
+  if (!sandboxOriginUrl) {
+    throw new Error(
+      `SANDBOX_ORIGIN_URL must be set (got undefined). The generated CSP's frame-src ` +
+        `must allow the document sandbox origin so the app can embed its renderer iframe.`
+    );
+  }
+  const sandboxOrigin = deriveSandboxOrigin(sandboxOriginUrl);
 
   await assertDirectory(distributionDir);
   const pages = await findMarketingPages(distributionDir);
@@ -314,14 +376,14 @@ export async function generateHeaders(
   // dist/marketing errors first.
   const spaHeaders = await inlineSpaShellHashes(
     distributionDir,
-    buildSpaHeaders(apiOrigin, localR2Origin)
+    buildSpaHeaders(apiOrigin, localR2Origin, sandboxOrigin)
   );
 
   // `/*` first: Cloudflare applies rules top-to-bottom, and a per-path
   // `! Content-Security-Policy` only deletes a CSP an earlier rule set. With
   // `/*` last, its hashless CSP would append after the per-path block and the
   // browser's intersection of the two policies blocks every inline script.
-  const blocks: string[] = [formatSpaBlock(spaHeaders)];
+  const blocks: string[] = [formatSpaBlock(spaHeaders), formatServiceWorkerBlock()];
   // The interactive product demo runs the SPA in an <iframe> on the
   // same-origin marketing /welcome page; /demo + /demo/* relax the strict
   // frame headers to same-origin only. Emitted right after `/*` so their
@@ -518,6 +580,17 @@ function formatDemoBlock(
     lines.push(`  ${header.name}: ${header.value}`);
   }
   return `${lines.join('\n')}\n`;
+}
+
+/**
+ * No-cache block for the push-only service worker. It ships at a stable,
+ * unhashed `/sw.js` (the URL is the SW's identity), so the browser must
+ * revalidate it on every load — without this, a deployed SW change could never
+ * reach an installed client holding a cached copy. The `/*` block sets no
+ * `Cache-Control`, so appending this one adds the directive without a conflict.
+ */
+function formatServiceWorkerBlock(): string {
+  return '/sw.js\n  Cache-Control: no-cache\n';
 }
 
 function formatSpaBlock(spaHeaders: readonly { name: string; value: string }[]): string {

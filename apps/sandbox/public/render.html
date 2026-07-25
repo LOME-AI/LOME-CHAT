@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HushBox document renderer</title>
+  </head>
+  <body>
+    <!--
+      Both scripts are CLASSIC (never type="module"): a module script is
+      deferred, and these must run before anything else in the frame — render.js
+      closes the WebRTC egress channel as its first act, ahead of any document
+      code. config.js publishes the env-derived module-CDN base; render.js is the
+      bundled renderer (bare-specifier resolution, in-browser JSX transpile, and
+      the typed parent<->frame bridge) served from this sandbox origin.
+    -->
+    <script src="/config.js"></script>
+    <script src="/render.js"></script>
+    <main id="document-root"></main>
+  </body>
+</html>

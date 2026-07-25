@@ -72,6 +72,22 @@ export interface ClientBillingInput {
 }
 
 /**
+ * The funding-relevant subset of {@link ClientBillingInput}: who pays depends
+ * only on the caller's tier, raw balance, model tier, and the served group
+ * figures — never on the estimate or the affordability balances.
+ * `ClientBillingInput` is structurally assignable to it.
+ */
+export interface ClientFundingContext {
+  tier: UserTier;
+  purchasedBalanceNanoUsd: bigint;
+  isPremiumModel: boolean;
+  group?: {
+    effectiveRemainingNanoUsd: bigint;
+    ownerBalanceNanoUsd: bigint;
+  };
+}
+
+/**
  * Map the client's served nano numbers onto the core's {@link FundingInputs}.
  * `effectiveRemainingNanoUsd` is already the backend's clamped group minimum,
  * so the member/conversation dimensions collapse onto it (the owner balance is
@@ -80,7 +96,7 @@ export interface ClientBillingInput {
  * the core reads its sign for premium access, which a cushioned spendable
  * would falsify.
  */
-export function deriveClientFundingInputs(input: ClientBillingInput): FundingInputs {
+export function deriveClientFundingInputs(input: ClientFundingContext): FundingInputs {
   const isGuest = input.tier === 'guest';
 
   if (input.group === undefined) {
@@ -104,6 +120,27 @@ export function deriveClientFundingInputs(input: ClientBillingInput): FundingInp
     callerOwnPurchasedBalanceNanoUsd: input.purchasedBalanceNanoUsd,
     isPremiumModel: input.isPremiumModel,
   };
+}
+
+/**
+ * The tier the client SIZES a turn with (input-token ratio, output-storage
+ * ratio, cushion inputs): owner-funded means owner-priced (BILLING §Group
+ * Funding 1) — an owner-funded turn is estimated exactly as if the owner sent
+ * it, and the owner's admitted wallet is a purchased one, so the payer tier is
+ * `paid` by construction (the server derives the same tier from the admitted
+ * wallet's kind). Everywhere the sender pays — solo turns, exhausted-headroom
+ * fall-through, guests refused — sizing keeps the caller's own tier. Routes
+ * through the SAME shared funding core as {@link resolveClientBilling}
+ * (`isPremiumModel` is irrelevant to who-pays, so it is fixed `false` here,
+ * mirroring the server's turn-context derivation), so the who-pays verdict and
+ * the sizing tier can never drift.
+ */
+export function payerSizingTier(input: Omit<ClientFundingContext, 'isPremiumModel'>): UserTier {
+  if (input.group === undefined) return input.tier;
+  const decision = resolveFundingDecision(
+    deriveClientFundingInputs({ ...input, isPremiumModel: false })
+  );
+  return decision.payer === 'owner' ? 'paid' : input.tier;
 }
 
 /**

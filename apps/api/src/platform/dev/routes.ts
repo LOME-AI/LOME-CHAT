@@ -26,6 +26,7 @@ import {
   chargebackLockEmail,
   findCapturedEmail,
   listCapturedEmails,
+  listCapturedPushes,
   newsletterConfirmationEmail,
   newsletterIssueEmail,
   passwordChangedEmail,
@@ -114,6 +115,10 @@ function liftDevWork<T>(work: Promise<T>): ResultAsync<T, DomainError> {
 
 const conversationBodySchema = z.object({
   ownerEmail: z.email(),
+  // Optional plaintext title, encrypted to the epoch by the seed factory; lets a
+  // caller give the seeded conversation a stable, human-tappable chat-row label
+  // (empty ⇒ the untitled placeholder). Ignored on the multi-model path.
+  title: z.string().optional(),
   messages: z
     .array(z.object({ content: z.string(), senderType: z.enum(['user', 'ai']) }))
     .optional(),
@@ -293,6 +298,7 @@ async function seedConversationWork(
     ownerEmail: rest.ownerEmail,
     seedAiModel: requireSeed(seedAiModel, 'seed model'),
     ...(rest.messages === undefined ? {} : { messages: rest.messages }),
+    ...(rest.title === undefined ? {} : { title: rest.title }),
   });
 }
 
@@ -728,6 +734,25 @@ export function createDevManifest() {
           return c.json(createErrorResponse(ERROR_CODES.NOT_FOUND), 404);
         }
         return c.html(captured.message.html);
+      })
+      // The dev push log: what the factory-built mock transports actually
+      // received, one entry per platform partition of a send. Device tokens
+      // and subscription endpoints are credentials and are deliberately not
+      // exposed — a recipient shows as its platform and owner only.
+      .get('/push', routeClass('dev-only'), (c) => {
+        const sends = listCapturedPushes().map(({ id, message }) => ({
+          id,
+          category: message.data?.['category'] ?? null,
+          tag: message.collapseKey ?? null,
+          title: message.title,
+          body: message.body,
+          payload: message.data ?? {},
+          recipients: message.recipients.map((recipient) => ({
+            platform: recipient.platform,
+            userId: recipient.userId,
+          })),
+        }));
+        return c.json({ sends });
       }),
   });
 }

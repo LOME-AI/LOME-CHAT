@@ -127,9 +127,11 @@ function displayUsd(nanoUsd: bigint): number {
 }
 
 /**
- * Post-commit, best-effort: fold a settled trial run's ACTUAL provider cost
- * (Σ base cost — what WE spent, never the marked-up price a trial user is not
- * charged) into the daily counter, and alert ONCE if this run crossed the cap.
+ * Post-commit, best-effort: fold a settled trial run's billable cost
+ * (Σ billable — raw provider cost is never retained past the port, so the
+ * billable figure is the only spend record; the ~15% overstatement of our
+ * actual spend tightens the abuse cap, accepted) into the daily counter, and
+ * alert ONCE if this run crossed the cap.
  *
  * Runs OUTSIDE the fenced settlement transaction (which is DB-only — no Redis
  * call inside it, ever). A lost increment slightly under-counts an abuse budget,
@@ -142,7 +144,7 @@ export async function recordTrialSpend(
   now: Date,
   charges: readonly SettlementCharge[]
 ): Promise<void> {
-  const total = charges.reduce((sum, charge) => sum + charge.baseCostNanoUsd, 0n);
+  const total = charges.reduce((sum, charge) => sum + charge.billableCostNanoUsd, 0n);
   if (total <= 0n) return;
   await incrementTrialSpend({ redis: deps.redis }, { amountNanoUsd: total, now }).match(
     (increment) => {

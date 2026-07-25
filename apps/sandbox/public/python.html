@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HushBox Python runtime</title>
+  </head>
+  <body>
+    <!--
+      python.js is CLASSIC (never type="module"), matching the web renderer's
+      bootstrap discipline. It bundles the typed parent<->frame bridge and the
+      Pyodide orchestration; the pinned Pyodide loader is a runtime import from
+      /pyodide/ on this same origin (self-hosted — nothing from a public CDN at
+      runtime). Pyodide runs on this iframe's MAIN THREAD, not a worker: a module
+      worker cannot be spawned from a blob:null URL inside an opaque allow-scripts
+      sandbox, and Pyodide 314 rejects classic workers. "Stop" is the parent
+      tearing down this iframe, never worker.terminate().
+    -->
+    <script src="/python.js"></script>
+  </body>
+</html>

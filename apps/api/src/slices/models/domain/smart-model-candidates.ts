@@ -3,7 +3,6 @@ import {
   classifierReserveLineItems,
   outputCharsPerTokenForTier,
 } from '@hushbox/shared';
-import { applyMarkup } from '../../billing/index.js';
 import { isTextModel } from './trial-eligibility.js';
 import type {
   ModelDescriptor,
@@ -108,21 +107,22 @@ export function isEngineTextModel(descriptor: ModelDescriptor): boolean {
   return isTextModel(descriptor);
 }
 
-/** input + output per-token base rates — the price the classifier pick sorts on. */
-function combinedBasePrice(descriptor: ModelDescriptor): bigint {
+/** input + output per-token billable rates — the price the classifier pick sorts on. */
+function combinedRate(descriptor: ModelDescriptor): bigint {
   const input = descriptor.pricing['inputPerToken'];
   const output = descriptor.pricing['outputPerToken'];
   return (typeof input === 'bigint' ? input : 0n) + (typeof output === 'bigint' ? output : 0n);
 }
 
 /**
- * The classifier call's worst-case BASE (pre-markup) PROVIDER cost — the
+ * The classifier call's worst-case BILLABLE provider cost — the
  * `classifier-tokens` component of the shared {@link classifierReserveLineItems},
- * excluding storage. This is the amount admission and the paid affordability
- * filter mark up (storage is pass-through and is added, unmarked, only where the
+ * excluding storage. Rates are billable at catalog ingestion, so this figure
+ * is already customer-priced: admission and the paid affordability filter use
+ * it as-is (storage is pass-through and is added, unmarked, only where the
  * turn persists). `undefined` when the classifier lacks a plain per-token rate.
  */
-export function classifierWorstCaseBaseNanoUsd(
+export function classifierWorstCaseNanoUsd(
   classifier: ModelDescriptor,
   textCatalog: readonly { readonly id: string; readonly description?: string | undefined }[]
 ): bigint | undefined {
@@ -137,18 +137,9 @@ export function classifierWorstCaseBaseNanoUsd(
   return items?.find((item) => item.kind === 'provider')?.fixedNano;
 }
 
-/** The paid filter's classifier reserve: the worst case, customer-priced. */
-function classifierWorstCaseNanoUsd(
-  classifier: ModelDescriptor,
-  textCatalog: readonly ModelDescriptor[]
-): bigint | undefined {
-  const base = classifierWorstCaseBaseNanoUsd(classifier, textCatalog);
-  return base === undefined ? undefined : applyMarkup(base);
-}
-
 export function ascendingByPrice(a: ModelDescriptor, b: ModelDescriptor): number {
-  const left = combinedBasePrice(a);
-  const right = combinedBasePrice(b);
+  const left = combinedRate(a);
+  const right = combinedRate(b);
   if (left < right) return -1;
   if (left > right) return 1;
   return 0;
@@ -166,9 +157,9 @@ export interface EffortClassifierPick {
   /** The cheapest priceable engine-text model — the effort classifier. */
   readonly classifierModelId: string;
   /**
-   * The classifier call's worst-case reserve, customer-priced (marked up),
-   * with the prompt overhead rendered against the single pinned candidate —
-   * the same basis admission's smartModel reserve prices the node at.
+   * The classifier call's worst-case billable reserve, with the prompt
+   * overhead rendered against the single pinned candidate — the same basis
+   * admission's smartModel reserve prices the node at.
    */
   readonly classifierWorstCaseNanoUsd: bigint;
 }
@@ -178,8 +169,9 @@ export interface EffortClassifierPick {
  * user's own choice (a single candidate — no routing), so only the effort
  * dimension classifies, and the classifier is the cheapest priceable
  * engine-text model in the exposed catalog — the same derivation Smart Model
- * uses. `null` when no text model can price the call (the caller falls back
- * to the placeholder auto resolution, classifier-free).
+ * uses. `null` when no text model can price the call; the caller refuses the
+ * send with the typed classifier-unavailable code rather than picking an
+ * effort itself.
  */
 export function pickEffortClassifier(
   descriptors: readonly ModelDescriptor[],
@@ -198,11 +190,13 @@ export function pickEffortClassifier(
 function toPoolCandidate(descriptor: ModelDescriptor): SmartModelPoolCandidate {
   const pricing: Pricing = descriptor.pricing;
   const contextLength = descriptor.limits['contextLength'];
+  const maxOutputTokens = descriptor.limits['maxOutputTokens'];
   return {
     id: descriptor.id,
     ...(descriptor.description === undefined ? {} : { description: descriptor.description }),
     pricing,
     ...(contextLength === undefined ? {} : { contextLength }),
+    ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
   };
 }
 

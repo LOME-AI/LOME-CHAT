@@ -33,6 +33,7 @@ import {
   parseErrorMessage,
   type UserData,
 } from './auth';
+import { notificationChannel } from '@/lib/notification-channel';
 import { urlFromFetchInput } from '@/test-utils/fetch-mock';
 import { decryptedCache } from '@/lib/decrypted-message-cache';
 
@@ -98,6 +99,10 @@ vi.mock('./auth-client.js', () => ({
 
 vi.mock('./link-guest-auth.js', () => ({
   getLinkGuestAuth: vi.fn(() => null),
+}));
+
+vi.mock('@/lib/notification-channel', () => ({
+  notificationChannel: { unregister: vi.fn(() => Promise.resolve()) },
 }));
 
 vi.mock('@hushbox/crypto', () => ({
@@ -1287,6 +1292,26 @@ describe('auth', () => {
       expect(mockPrivateKey[0]).toBe(0);
     });
 
+    it('stops push delivery to this device before the session ends', async () => {
+      useAuthStore.setState({ user: testUser, isAuthenticated: true });
+      vi.mocked(fetch).mockResolvedValue({ ok: true } as Response);
+
+      await signOutAndClearCache();
+
+      expect(notificationChannel.unregister).toHaveBeenCalled();
+    });
+
+    it('signs out even when unregistering push fails', async () => {
+      useAuthStore.setState({ user: testUser, isAuthenticated: true });
+      vi.mocked(fetch).mockResolvedValue({ ok: true } as Response);
+      vi.mocked(notificationChannel.unregister).mockRejectedValueOnce(new Error('offline'));
+
+      await signOutAndClearCache();
+
+      expect(clearStoredAuth).toHaveBeenCalled();
+      expect(useAuthStore.getState().isAuthenticated).toBe(false);
+    });
+
     it('should throw if logout request fails', async () => {
       useAuthStore.setState({
         user: testUser,
@@ -1334,6 +1359,7 @@ describe('auth', () => {
         title: 'Secret',
         content: 'decrypted secret content',
         lineCount: 1,
+        isStreaming: false,
       });
 
       vi.mocked(fetch).mockResolvedValue({ ok: true } as Response);
@@ -1405,6 +1431,7 @@ describe('auth', () => {
         title: 'Secret',
         content: 'decrypted secret content',
         lineCount: 1,
+        isStreaming: false,
       });
 
       clearLocalAuthState();

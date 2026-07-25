@@ -1,5 +1,6 @@
 import {
   pgTable,
+  bigint,
   boolean,
   check,
   index,
@@ -33,6 +34,12 @@ export const conversationMembers = pgTable(
     acceptedAt: timestamp('accepted_at', { withTimezone: true }),
     muted: boolean('muted').notNull().default(false),
     pinned: boolean('pinned').notNull().default(false),
+    // Durable read cursor: the highest message sequence this member has read.
+    // Defaults to 0 — nothing read, since message sequences start at 1. Written
+    // monotonically (GREATEST) so replays and out-of-order writes never regress.
+    lastReadSeq: bigint('last_read_seq', { mode: 'bigint' })
+      .notNull()
+      .default(sql`0`),
     invitedByUserId: uuid('invited_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),

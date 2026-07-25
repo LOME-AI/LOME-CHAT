@@ -1,0 +1,28 @@
+{
+  "name": "@hushbox/sandbox",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/serve.ts",
+    "build": "tsx src/build.ts",
+    "build:render": "tsx src/render/build-bundle.ts",
+    "build:python": "tsx src/python/build-python-bundle.ts",
+    "fetch-pyodide": "bash scripts/fetch-pyodide.sh",
+    "lint": "eslint .",
+    "typecheck": "tsgo --noEmit",
+    "test": "tsx ../../scripts/with-env.ts tsx ../../scripts/run-package-tests.ts",
+    "test:watch": "tsx ../../scripts/with-env.ts vitest"
+  },
+  "devDependencies": {
+    "@hushbox/config": "workspace:*",
+    "@playwright/test": "1.60.0",
+    "@types/node": "^25.9.3",
+    "esbuild": "0.25.12",
+    "sucrase": "3.35.1",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.8",
+    "wrangler": "^4.100.0"
+  }
+}

@@ -1,0 +1,860 @@
+# Plan — Push & browser notification system (2026-07-23-notifications)
+
+Tier 2. Orchestrated via subagent-driven-dev. Design record: `research/` in this run dir
+(`current-system.md`, `loved-features.md`, `platform-capabilities.md`,
+`webpush-library.md`, `server-pipeline-design.md`, `client-design.md`). Where a research
+doc conflicts with this plan, THIS PLAN WINS — founder rulings landed after the analysts
+wrote (notably: mute stays a boolean, no duration tiers; unread badge is client-only).
+
+## Founder rulings (binding)
+
+- FCM is the single mobile gateway (no direct APNs). iOS shell fix via
+  `@capacitor-community/fcm` (dependency approved 2026-07-24, round 3 — it coexists with
+  `@capacitor/push-notifications`; `@capacitor-firebase/messaging` was REJECTED because it
+  forbids coexistence and would force an Android rewrite + the `firebase` JS SDK).
+- Web Push sender is written in-house (no new dependency; clean-room RFC 8291/8188/8292;
+  `web-push-neo` is MPL-2.0 — reference only, never vendor/copy its code).
+- ALL notification payloads are generic and content-free: event type + conversationId
+  deep link only. Never sender names, conversation titles, message content, or any
+  user-generated text. No on-device decryption enrichment, no NSE.
+- Controls: account-level per-category toggles (messages / run completions / membership),
+  quiet hours, global switch — all explicit and server-evaluated. Per-conversation mute
+  stays the existing BOOLEAN (no duration tiers — rejected). No per-device management UI.
+- Permission UX: remove ask-on-mount; one-time dismissible "enable notifications?"
+  surface that also points to Settings. No smart/value-moment priming (rejected).
+- Dismiss-on-read-elsewhere: kept (collapse/tag + durable read cursor + lazy client clear).
+- Unread badge: client-only activity badge ("activity since you looked away") — hybrid
+  and server-authoritative variants rejected for this run.
+- Schema approved: new `notification_preferences` table; `device_tokens` web extension +
+  `lastSeenAt`; `conversation_members.lastReadSeq`. REJECTED: any mute schema change.
+- PWA manifest approved (app becomes installable; that side effect is accepted).
+- Doctrine doc `docs/NOTIFICATIONS.md` + DEVELOPMENT.md index entry: written AFTER design
+  (now), BEFORE implementation — Task 00.
+- Quiet hours: suppressed events are dropped (no deferred delivery, no badge-only mode).
+- No message queues/jobs for delivery: notifications are best-effort, fired at the
+  composition root. The only scheduled work is the stale-token retention delete.
+
+## Global Constraints
+
+- G1 **Generic payload law**: no push payload, notification title/body, tag, or Topic
+  header may carry user-generated text or a raw conversationId in any
+  push-service-visible header. Notification text is a fixed per-category string. The
+  Web Push `Topic`/tag value is a derived alias (truncated HMAC of conversationId with a
+  server secret), never the raw id. (FCM data payloads may carry the raw conversationId
+  as today — FCM sees it regardless; document, don't widen.)
+- G2 **Best-effort law**: notification delivery never blocks, never joins, and never
+  fails a domain transaction; call sites use `waitUntil`/fire-and-forget at the
+  composition root. No jobs rows for delivery.
+- G3 **Server-evaluated controls**: prefs, quiet hours, mute, and presence suppression
+  are evaluated in ONE pure decision function in the notifications slice domain. The
+  client never re-implements "should this user be notified" (display-point routing —
+  focused-tab suppression in the SW — is allowed: it decides where to show, not whether
+  to send).
+- G4 **One lifecycle**: web subscriptions live in `device_tokens` (platform `web`);
+  registration is `byUpsert`; dead-token detection is reactive on send (FCM
+  UNREGISTERED / Web Push 404+410 → existing `deadTokens` prune); the retention cron
+  deletes only stale-by-`lastSeenAt` rows. No second cleanup mechanism.
+- G5 **Registry law**: all new env vars (`VAPID_PRIVATE_KEY`, `VAPID_PUBLIC_KEY` /
+  `VITE_VAPID_PUBLIC_KEY`, `VAPID_SUBJECT`) are env.config registry entries with values
+  for every mode (committed throwaway keypair for development/ciVitest/ciE2E; production
+  via Workers secrets). Fail-fast at factory construction. No `??` fallbacks.
+- G6 **Type-safety**: SW written in TypeScript against WebWorker lib types; push payloads
+  validated with a shared Zod schema from `@hushbox/shared` on both send (api) and
+  receive (SW); the conversation-id validator is the single shared implementation
+  (hoisted, One Implementation Shared) — no second copy anywhere.
+- G7 **TDD + coverage**: every task test-first per AGENT-RULES; 95% per-file line/branch/
+  function coverage on files the task owns; scoped checks green after the LAST edit
+  (including `eslint <owned files>` exit-0 run from the package dir).
+- G8 **Accessibility**: all new UI uses `@hushbox/ui` primitives, labelled controls,
+  `fieldset/legend` for grouped settings, `role="status"`/`aria-live="polite"` for the
+  prompt and unread announcements; sound is opt-in, default off, never the sole signal.
+- G9 **Mocks only at true external seams**: FCM HTTP seam and Web Push HTTP seam are
+  mockable; internal slices are never mocked. Dev/CI push goes through the mock sender
+  with the capture layer (`/dev/push`).
+- G10 **No git writes** by any agent. Docs other than `docs/NOTIFICATIONS.md`,
+  `docs/DEVELOPMENT.md` (Task 00) and generated files are read-only.
+- G11 **No plan/task-ID labels in shipped code** (durable-naming, CODE-RULES): never
+  embed task numbers, plan-section refs, "spike", "T04"/"G6"-style tags, or run-dir
+  references in production code, comments, or test names. Reference behavior, not this
+  run's bookkeeping. Auditors check for this.
+
+## Interfaces (contracts between tasks)
+
+- I1 `packages/shared` exports (Task 01):
+  - `notificationCategorySchema = z.enum(['message', 'runCompletion', 'membership'])` and
+    `NotificationCategory`.
+  - `pushEventPayloadSchema` — the generic wire payload:
+    `{ category: NotificationCategory, conversationId: uuid }` (extensible object,
+    strict).
+  - `conversationIdSchema` (the hoisted UUID validator; replaces the inline regex in
+    `apps/web/src/capacitor/provider.tsx:21`).
+- I2 `packages/db` (Task 02):
+  - `notificationPreferences` table: `userId` PK/FK, `globalEnabled bool NOT NULL
+    DEFAULT true`, `messages bool NOT NULL DEFAULT true`, `runCompletion bool NOT NULL
+    DEFAULT true`, `membership bool NOT NULL DEFAULT true`,
+    `quietHoursStartMinutes int NULL`, `quietHoursEndMinutes int NULL` (both-or-neither
+    CHECK), `timezone text NULL` (required-with-quiet-hours CHECK), timestamps.
+    Missing row = all defaults (lazy — no backfill).
+  - `deviceTokens`: `devicePlatformEnum` gains `'web'`; new nullable `p256dh text`,
+    `auth text`, CHECK (`platform='web'` ⟺ both keys present); `lastSeenAt timestamptz
+    NOT NULL DEFAULT now()`; `token` column holds the Web Push endpoint for web rows
+    (unique already).
+  - `conversationMembers`: `lastReadSeq bigint NOT NULL DEFAULT 0`.
+- I3 notifications slice barrel (Task 04): `notifyEvent(deps, { category,
+  conversationId, actorUserId, recipientUserIds?, presentUserIds })` — best-effort,
+  channel-blind; plus prefs read/write domain fns and routes
+  (`GET/PUT /notifications/preferences`), and web-subscription registration
+  (`POST /notifications/device-tokens` discriminated-union body or sibling route —
+  implementer's call, Zod-typed `{endpoint, keys:{p256dh, auth}}`, `byUpsert`).
+- I4 `PushSender` port (Task 03/04): recipient discriminated union
+  `{platform:'ios'|'android', token} | {platform:'web', endpoint, p256dh, auth}`; result
+  carries per-recipient outcomes + `deadTokens`. Composite adapter partitions by
+  platform → FCM adapter | webpush adapter. **Collapse identity — two layers, resolved
+  during Task 07 (do not re-litigate):** (a) PUSH-SERVICE-VISIBLE collapse hints the
+  SERVER sends — the Web Push `Topic` HEADER and the FCM `collapse_key` — MUST be the
+  derived alias `base64url(HMAC-SHA-256(NOTIFICATION_TAG_SECRET, conversationId))≤32`
+  (G1; these are readable by Google/Mozilla/Apple). (b) The DEVICE-LOCAL notification
+  `tag` the client sets on the DISPLAYED notification (SW `showNotification`, native
+  shade) = the raw `conversationId` from the decrypted/data payload — device-local, never
+  a push-service header, so G1-safe; this is what Task 09 uses to clear delivered
+  notifications. The I1 payload carries `conversationId` (encrypted for web; already
+  FCM-visible for native), NOT an alias — there is no alias field in the payload.
+- I5 Read cursor (Task 05): `PATCH /conversations/:id/read { lastReadSeq }` route
+  (idempotency-exempt natural class like mute), write =
+  `GREATEST(lastReadSeq, $new)`; exposed in the conversations list/member payloads the
+  client already fetches.
+- I6 Client facade (Task 08): `notificationChannel` module —
+  `getPermissionState()`, `requestPermissionAndRegister()`, `unregister()`; web adapter
+  (Notification API + PushManager + SW) and native adapter (Capacitor plugin) selected by
+  `isNative()`.
+- I7 SW ↔ page protocol (Tasks 07/09): SW posts `{type:'push-event', payload:
+  PushEventPayload}` to focused clients; page listens via a single registration point in
+  the unread store setup.
+
+## Task graph
+
+```
+00 doctrine doc ──(gates all implementation tasks)
+01 shared contracts ──→ 03, 04, 07, 08
+02 db migrations ──→ 04, 05
+03 webpush sender + env registry ──→ 04, 07(public key), 06
+04 pipeline core (decision fn + composite sender + prefs API + web registration) ──→ 05, 06, 10
+05 event sources + read cursor
+06 dev inbox + retention job
+07 SW + manifest + build wiring ──→ 08
+   (NOTE: 08 also depends on 04 — its subscription-registration POST consumes I3's
+    web-subscription route; 08 dispatches only when BOTH 04 and 07 are clean.)
+08 client facade + prompt + subscription lifecycle ──→ 09
+09 foreground layer + dismissal clearing   (needs 05's read exposure for clear-on-foreground)
+10 settings card
+11 iOS Firebase integration   (independent; owns apps/web/package.json + ios/)
+12 Maestro notification flows  (after 08; owns mobile-tests/**)
+13 Playwright notifications spec (after 08, 09, 10; owns e2e/notifications/**)
+```
+
+No two concurrent tasks share files. 11 must not run concurrently with 07/08 only if
+`apps/web/package.json` needs edits in those tasks — it does not (no new web deps); 11
+owns it exclusively.
+
+---
+
+## Task 00 — Notification doctrine doc
+
+STATUS: executed by the orchestrator at explicit founder instruction (2026-07-24,
+"Write the doc and add it to development now"), ahead of plan approval. Gets an auditor
+pass in Phase 4 like any other task output.
+
+**Objective:** Write `docs/NOTIFICATIONS.md` (new, founder-approved) and add its
+DEVELOPMENT.md doc-index line, capturing the design of record before implementation.
+
+**Design context:** The content-free payload decision currently lives only in a code
+comment; the founder ruled it becomes doctrine. This doc is the "loaded/on-demand" home
+for: the generic payload law (G1) incl. the Topic-alias rule and the FCM-sees-
+conversationId asymmetry; best-effort delivery stance (G2, no jobs, drop-on-quiet-hours);
+the controls model (server-evaluated, G3); the subscription lifecycle (G4); transports
+per platform (FCM mobile / in-house Web Push; iOS browser = installed PWA only); the
+dismissal model (collapse + read cursor + lazy clear; cross-device dismissal is eventual);
+and the permission UX rule (one-time prompt, never on mount).
+
+**Acceptance criteria:**
+- `docs/NOTIFICATIONS.md` exists, covers every bullet above, cites no run-dir paths,
+  follows doc rules (no version numbers, no task IDs, durable facts only).
+- `docs/DEVELOPMENT.md` doc index gains one line with a read trigger ("any notification,
+  push, or service-worker work").
+- Prose passes the anti-slop bar of existing docs (terse, declarative).
+- No other file touched.
+
+**Files:** `docs/NOTIFICATIONS.md` (new), `docs/DEVELOPMENT.md` (index line only).
+**Scoped checks:** `pnpm lint` (prettier via ESLint covers md formatting if configured);
+otherwise none — doc-only.
+**Sensitive:** no.
+
+## Task 01 — Shared contracts
+
+**Objective:** Add notification category + push payload schemas and hoist the
+conversation-id validator into `@hushbox/shared`; consume the hoisted validator at its
+current call site.
+
+**Design context:** G6/I1. The UUID validator currently lives inline at
+`apps/web/src/capacitor/provider.tsx:21`; the SW (Task 07) must use the same
+implementation — hoist BEFORE a second copy can exist. Categories are a closed set
+(founder-ruled three).
+
+**Acceptance criteria:**
+- I1 exports exist with tests (valid/invalid payloads, unknown-key rejection via strict
+  schema, category exhaustiveness).
+- `provider.tsx` imports the shared validator; behavior unchanged (existing tests pass).
+- No other consumer added yet.
+
+**Files:** `packages/shared/src/notifications/**` (new), `packages/shared/src/index.ts`
+(export line), `apps/web/src/capacitor/provider.tsx` (import swap only).
+**Scoped checks:** `pnpm test:shared`, `pnpm test:web`,
+`turbo typecheck lint --filter=@hushbox/shared --filter=@hushbox/web`,
+`jscpd --threshold 2` on owned files.
+**Sensitive:** no.
+
+## Task 02 — DB migrations
+
+**Objective:** Ship the three approved schema changes (I2) with a generated migration.
+
+**Design context:** Founder approved exactly these; mute schema is untouchable. Missing
+prefs row = defaults (lazy, no backfill). `lastReadSeq` defaults 0 (= nothing read;
+`messages.sequence` is ≥1 per data-model). CHECKs enforce web-row key presence and
+quiet-hours field coherence at the database (fail-fast).
+
+**Acceptance criteria:**
+- Drizzle schema edits + `pnpm db:generate` migration committed together (CI drift gate).
+- `relations()` wired; every new FK indexed (userId PK covers prefs).
+- Schema tests cover: CHECK violations rejected (web row without keys; one-sided quiet
+  hours; tz-less quiet hours), enum extension, monotonic-friendly default.
+- `pnpm db:migrate` clean on a reset local db AND — mandatory — the new migration
+  applies clean **incrementally** (prior migration committed, then the new one applied
+  ALONE in its own transaction). A fresh reset runs every migration co-transactionally
+  and MASKS Postgres enum-add-then-use hazards (`ALTER TYPE ADD VALUE` cannot be used in
+  the same transaction that added it); the incremental apply is the production deploy
+  path and is the one that must be proven. Verify with the real migrate binary, not only
+  the test harness's fresh-DB `beforeAll`.
+
+**Files:** `packages/db/src/schema/notification-preferences.ts` (new),
+`packages/db/src/schema/device-tokens.ts`,
+`packages/db/src/schema/conversation-members.ts`, `packages/db/src/schema/index.ts`,
+`packages/db/drizzle/**` (generated).
+**Scoped checks:** `pnpm test:db`, `turbo typecheck lint --filter=@hushbox/db`.
+**Sensitive:** no.
+
+## Task 03 — In-house Web Push sender + env registry
+
+**Objective:** A Workers-native Web Push sender module (RFC 8291 aes128gcm payload
+encryption, RFC 8188 encoding, RFC 8292 VAPID via `jose`) in the notifications slice
+adapters, plus the VAPID env.config registry entries with a committed dev keypair.
+
+**Design context:** research/webpush-library.md — every third-party option is broken or
+disqualified; clean-room in-house (~250 LOC) with RFC 8291 Appendix-A deterministic test
+vectors (injectable ephemeral key + salt). MPL-licensed `web-push-neo` may be read for
+cross-checking, never copied. `jose` is already a dependency. G5 for keys. Send fn
+returns typed outcomes incl. permanent-failure classification (404/410 → dead;
+429/5xx → transient failure, no retry machinery — best-effort).
+
+**Acceptance criteria:**
+- `sendWebPush({endpoint, p256dh, auth}, payloadBytes, {ttl, topic, urgency})` module:
+  aes128gcm encryption pinned by the RFC 8291 Appendix-A test vector (exact ciphertext
+  match), VAPID ES256 JWT pinned by structural verification (aud/exp/sub claims, ES256
+  P-256 signature verifies against the public key).
+- Topic header: caller-supplied, ≤32 chars, [A-Za-z0-9_-] validated (fail-fast).
+- Env registry: `VAPID_PRIVATE_KEY`, `VAPID_PUBLIC_KEY`, `VITE_VAPID_PUBLIC_KEY`,
+  `VAPID_SUBJECT` for all four modes; dev/CI values are a committed throwaway keypair
+  (never used against real push services); `pnpm verify:env` green; gitleaks must not
+  fire (dev private key needs an allowlist entry pinned to its exact path — follow the
+  seed-crypto precedent).
+- No new npm dependency. 95% coverage on owned files.
+
+**Files:** `apps/api/src/slices/notifications/adapters/webpush/**` (new),
+`packages/shared/src/env.config.ts` (entries), `.env.development` /
+env-generation source if applicable, `.gitleaks.toml` (allowlist entry).
+**Scoped checks:** `pnpm test:api`, `pnpm test:shared`,
+`turbo typecheck lint --filter=@hushbox/api --filter=@hushbox/shared`,
+`pnpm verify:env`.
+**Sensitive:** YES (crypto) → 2 independent auditors.
+
+## Task 04 — Pipeline core
+
+**Objective:** Generalize the push path into `notifyEvent` (I3): pure decision function
+(prefs + quiet hours + boolean mute + presence + global switch), composite `PushSender`
+(I4) over FCM + webpush adapters with collapse identity stamping (G1 alias), prefs
+read/write routes, and typed web-subscription registration.
+
+**Design context:** research/server-pipeline-design.md §1/§2/§4 as amended by rulings
+(mute stays boolean — read it exactly as `sendPushForNewMessage` does today; no
+mutedUntil anywhere). Existing `sendPushForNewMessage` becomes the `message` category of
+`notifyEvent`; existing behavior (presence suppression, mute, dead-token pruning) is
+preserved and extended, not duplicated. Quiet hours: IANA tz via `Intl.DateTimeFormat`
+in workerd — VERIFY FIRST (spike test in this task; if workerd lacks arbitrary-zone
+support, STOP and report BLOCKED — the fallback choice is the human's). The derived
+alias = base64url(HMAC-SHA-256(secret, conversationId)) truncated to 32 chars; secret =
+a new env.config entry (`NOTIFICATION_TAG_SECRET`, all modes). Prefs routes require
+`Idempotency-Key`-exempt classification identical to existing prefs-like routes
+(`byUpsert`).
+
+**Acceptance criteria:**
+- Pure decision fn with exhaustive unit tests: category toggles, global switch, quiet
+  hours (incl. cross-midnight windows, tz boundaries, missing-row defaults), mute,
+  presence, actor exclusion; injected `now`.
+- `notifyEvent` barrel export; `sendPushForNewMessage` callers migrated; message-path
+  integration tests still green (behavior identical for the message category with
+  default prefs).
+- Composite sender partitions recipients; FCM rows get `collapse_key`+`tag`, web rows
+  get `Topic` — all the derived alias, never raw id (test asserts no raw conversationId
+  in any web header).
+- Web Push 404/410 land in `deadTokens` and prune (integration test through the mock
+  seam); `lastSeenAt` touched on successful registration and send.
+- `GET/PUT /notifications/preferences` with Zod validation + integration tests; web
+  subscription registration upserts by endpoint with typed keys (I3).
+- workerd Intl spike test pinning arbitrary IANA zone evaluation.
+
+**Files:** `apps/api/src/slices/notifications/**` (domain, routes, adapters/composite,
+index barrel), `apps/api/src/adapters/push-notify.ts`,
+`packages/shared/src/env.config.ts` (`NOTIFICATION_TAG_SECRET` only — coordinate: Task 03
+finishes its env edits first; 04 depends on 03).
+**Scoped checks:** `pnpm test:api`, `turbo typecheck lint --filter=@hushbox/api`,
+`jscpd --threshold 2` on owned files.
+**Sensitive:** YES (authz-adjacent recipient selection, user data) → 3-lens panel.
+
+## Task 05 — Event sources + read cursor
+
+**Objective:** Fire `notifyEvent` for run-completion (presence-aware, from the DO
+terminal sink) and membership events (added-to-conversation, fork/share activity, from
+conversations routes, `waitUntil`); add the read-cursor write route (I5) and expose
+read state to the client.
+
+**Design context:** research/server-pipeline-design.md §1/§3. Presence rides the
+caller's fire-time snapshot (the DO sink already passes `presentUserIds`). Run-completion
+must not fire for the runless-send path (already covered as `message`). The read cursor
+is conversations-slice-owned; write is monotonic GREATEST (naturally idempotent, no
+check-then-act); route classification mirrors the mute route. Membership reader
+duplication (`push-notify.ts:59-66`): attempt the hoist to a `@hushbox/realtime`-free
+module; if the workerd import constraint still binds, keep the documented duplication
+and say so in the report (do NOT add a third copy).
+
+**Acceptance criteria:**
+- Run-completion push: integration test — run terminal settle notifies non-present,
+  non-muted, prefs-on members exactly once; present users excluded; failed runs do not
+  notify (only successful completion — the client's own deadline UX covers failures).
+- Membership events: integration tests for added-to-conversation and share/fork
+  activity, category `membership`.
+- `PATCH /conversations/:id/read` monotonic (GREATEST) with idempotency test (replay +
+  out-of-order writes); member read state exposed where the conversations list/member
+  payload is already served.
+- All best-effort call sites use `waitUntil`; no notification failure can fail a domain
+  transaction (test: sender throwing does not surface).
+
+**Files:** `packages/realtime/src/**` (DO terminal sink call site),
+`apps/api/src/slices/conversations/**` (routes + read-cursor domain),
+`apps/api/src/adapters/push-notify.ts` IF the hoist lands (coordinate: 04 owns this file
+earlier; 05 runs after 04 — no concurrency conflict).
+**Scoped checks:** `pnpm test:api`, `pnpm test:realtime`,
+`turbo typecheck lint --filter=@hushbox/api --filter=@hushbox/realtime`.
+**Sensitive:** YES (membership/authz) → 3-lens panel.
+
+## Task 06 — Dev inbox + retention job
+
+**Objective:** `/dev/push` capture viewer mirroring the email mailbox pattern, and the
+stale-token retention delete on the cron schedule.
+
+**Design context:** G4/G9. Capture wraps the mock composite sender exactly as
+`withMailboxCapture` wraps email. Retention: delete `device_tokens` rows with
+`lastSeenAt` older than a threshold (constant with rationale; retention deletes are
+cron-legal). Not a delivery mechanism, no jobs rows.
+
+**Acceptance criteria:**
+- `/dev/push` lists captured sends (recipient platform, category, alias tag, payload)
+  dev-only-classed; integration tests incl. the existing dev-routes conventions.
+- Retention entry wired into `scheduled.ts` with tests (stale deleted, fresh kept,
+  `lastSeenAt` refresh on send proven in 04 keeps active rows alive).
+- Mock webpush sender records the same shape real one returns.
+
+**Files:** `apps/api/src/platform/dev/**`, `apps/api/src/scheduled.ts`,
+`apps/api/src/slices/notifications/adapters/**` (mock + capture only).
+**Scoped checks:** `pnpm test:api`, `turbo typecheck lint --filter=@hushbox/api`.
+**Sensitive:** no.
+
+## Task 07 — Service worker + manifest + build wiring
+
+**Objective:** Push-only TypeScript SW at a stable `/sw.js`, hand-written
+`manifest.webmanifest`, headers entry, and the second build entry.
+
+**Design context:** research/client-design.md §1 (option A). NO fetch handler, NO
+precache, ever. Payload validated with the shared schema (G6); `notificationclick` uses
+the hoisted validator; focused-client check posts I7 message instead of showing. Build:
+stable unhashed output shipped in the same `dist/` Pages+`cap sync` consume;
+`Cache-Control: no-cache` for `/sw.js` via the headers SOURCE (headersPlugin), never
+dist edits. Registration helper gated `!isNative()`.
+
+**Acceptance criteria:**
+- SW handlers unit-tested as pure functions over injected deps: push→showNotification
+  (generic per-category strings), push→postMessage when a focused client exists,
+  notificationclick→focus-or-open `/chat/:id` (invalid ids dropped), tag/collapse set
+  from payload alias, `pushsubscriptionchange` re-subscribe + re-register (cookie-auth
+  assumption verified or the postMessage fallback implemented).
+- Manifest: name/icons/display standalone/start_url; linked from index.html; icons from
+  existing assets.
+- Build produces `dist/sw.js` (stable name) + manifest; headers rule present; `pnpm
+  build` (web) green.
+- No fetch handler present (test asserts the SW registers no fetch listener).
+
+**Files:** `apps/web/src/sw/**` (new), `apps/web/vite.config.ts`,
+`apps/web/public/manifest.webmanifest` (new), `apps/web/index.html`, headers source,
+`apps/web/src/lib/register-sw.ts` (new).
+**Scoped checks:** `pnpm test:web`, `turbo typecheck lint --filter=@hushbox/web`,
+`pnpm build --filter=@hushbox/web` (or the repo's build task for web).
+**Sensitive:** no (payloads are generic; no auth logic) → 1 auditor.
+
+## Task 08 — Client facade, one-time prompt, subscription lifecycle
+
+**Objective:** The `notificationChannel` facade (I6) over web/native adapters; remove
+ask-on-mount; the one-time inline enable prompt; web subscription lifecycle
+(subscribe-on-grant, re-register on app start, unsubscribe on logout/global-off).
+
+**Design context:** research/client-design.md §2/§3. Prompt: inline dismissible callout
+(announcements-banner visual language), localStorage persistence
+(`hb:notif-prompt-dismissed`), suppressors: permission not `default`, no push path
+(`'PushManager' in window`, non-installed iOS Safari), global setting off, native
+permission already handled. Native adapter moves `requestPermissions()` behind the same
+gate (removing `use-push-notifications.ts` mount-time ask). VAPID public key via
+`VITE_VAPID_PUBLIC_KEY` env module. All API calls through the typed client.
+
+**Acceptance criteria:**
+- Ask-on-mount is gone (test: mount triggers no permission request on either platform).
+- Facade unit tests per adapter: permission states, register/unregister flows,
+  re-registration on authenticated start (fire-and-forget), logout unsubscribes
+  best-effort.
+- Prompt component: renders once, Enable → grant flow → subscribe → registration POST;
+  Later → never again (localStorage); all suppressors tested; `role="status"`,
+  keyboard-reachable, focus not stolen (G8).
+- Copy mentions Settings as the ongoing control point (DESIGN.md voice).
+
+**Files:** `apps/web/src/lib/notification-channel/**` (new),
+`apps/web/src/capacitor/hooks/use-push-notifications.ts`,
+`apps/web/src/capacitor/provider.tsx` (gate change only),
+`apps/web/src/components/notifications/enable-prompt.tsx` (new), hook files for
+registration mutations.
+**Scoped checks:** `pnpm test:web`, `turbo typecheck lint --filter=@hushbox/web`.
+**Sensitive:** no → 1 auditor (but auditor checks the permission-flow correctness).
+
+## Task 09 — Foreground layer + dismissal clearing
+
+**Objective:** Client-only activity badge (zustand store → tab title + `setAppBadge` +
+opt-in sound), SW postMessage intake, and delivered-notification clearing (on
+conversation view, on app foreground vs read-elsewhere state).
+
+**Design context:** research/client-design.md §4 as ruled: CLIENT-ONLY activity
+semantics — count = events observed by this tab while unfocused (open-socket frames +
+SW `push-event` messages); reset on focus/`markAllSeen`; reopens at zero by design.
+Store interface stays source-agnostic (`unreadCount`, `markAllSeen()`). Clearing: on
+rendering a conversation, clear its tag (`removeDeliveredNotifications({tag})` native /
+`getNotifications({tag})→close()` web); on foreground, fetch read state (exposed by
+Task 05) and clear by `conversationId` for conversations read elsewhere. **The
+device-local notification tag IS the `conversationId` (resolved in Task 07 / I4) — NOT a
+server alias.** The client already has conversationId (payload + read-state), so no
+server alias is needed or exposed client-side; the derived alias exists ONLY in the
+server's push-service-visible headers (Topic/collapse_key) and is never re-implemented
+client-side (G3/G6). Tab title effect is the ONLY title writer.
+
+**Acceptance criteria:**
+- Store unit tests: increment rules (only while hidden/unfocused; own-actions excluded),
+  reset on focus, `markAllSeen`.
+- Title effect: `(n) ` prefix appears/clears; no other writer introduced.
+- `setAppBadge` feature-detected, cleared on markAllSeen (mock navigator tests).
+- Sound: plays only when enabled + event arrives; toggle is the unlock gesture; never
+  sole signal (aria-live region announces count changes politely).
+- Clearing: viewing a conversation clears its delivered notifications (both adapters,
+  mocked); foreground sync clears read-elsewhere tags (test with mocked read-state).
+**Files:** `apps/web/src/stores/notifications.ts` (new), title/badge/sound effect
+modules (new), `apps/web/src/lib/notification-channel/**` (clear fns — add them TO the
+facade per §Standing-amendments), conversation-view + focus wiring points, PLUS (scope
+extended after Task 05, which produced the server side but could not type it):
+`packages/shared/src/schemas/api/conversations.ts` — add `lastReadSeq` to
+`membershipViewSchema` and `conversationListItemSchema` (the server already returns it;
+the client has no type for it, which blocks this task) — and
+`apps/web/src/demo/mock-backend/**`, which must emit the field or default it
+(`store.test.ts` parses `listConversationsResponseSchema`, so a bare required field
+fails it).
+**Extra scoped checks for the extended scope:** `pnpm test:shared`,
+`turbo typecheck lint --filter=@hushbox/shared`.
+**Scoped checks:** `pnpm test:web`, `turbo typecheck lint --filter=@hushbox/web`.
+**Sensitive:** no → 1 auditor.
+
+## Task 10 — Settings card
+
+**Objective:** "Notifications" Card on `/settings`: global switch, three category
+toggles, quiet-hours controls (two `Select`s + timezone auto-fill), wired to the prefs
+API via typed-client TanStack hooks.
+
+**Design context:** research/client-design.md §5. Follow `MailingListCard` structure.
+Timezone: auto-populate from `Intl.DateTimeFormat().resolvedOptions().timeZone` on save;
+display it; no free-text tz entry. Copy states plainly that quiet-hours pushes are
+dropped, not deferred. Mute stays where it is (sidebar Bell) — THIS TASK DOES NOT TOUCH
+MUTE. Global-off must also drive `notificationChannel.unregister()` (Task 08's facade).
+
+**Acceptance criteria:**
+- Card renders current prefs (query), mutations optimistic-or-invalidate per repo
+  convention; loading/error states per existing cards.
+- Quiet hours: enable toggle reveals `fieldset` with start/end Selects (hour granularity)
+  + detected timezone; both-or-neither enforced client-side for UX AND server-side
+  (server wins — complementary, not duplicated).
+- All controls labelled; keyboard operable; WCAG contrast via tokens (no inline styles).
+- Global switch off → unregister call fired; on → prompt/permission flow via facade.
+**Files:** `apps/web/src/components/settings/notifications-card.tsx` (new),
+`apps/web/src/routes/settings.tsx` (mount line), notification prefs hook file (new).
+**Scoped checks:** `pnpm test:web`, `turbo typecheck lint --filter=@hushbox/web`.
+**Sensitive:** no → 1 auditor.
+
+## Task 11 — iOS Firebase integration
+
+**Objective:** Fix iOS push end-to-end: add `@capacitor-community/fcm` ALONGSIDE the
+existing `@capacitor/push-notifications` (they coexist), wire the Firebase iOS SDK so the
+iOS APNs token is exchanged for an FCM token, and add a small iOS-only branch in the
+client hook that sends the FCM token. Android stays UNTOUCHED.
+
+**Design context (founder-ruled 2026-07-24, see research/ios-fcm-plugin-decision.md):**
+Verified broken today (raw APNs token → FCM rejects). The founder chose `@capacitor-
+community/fcm` (v8.1.0, coexists with the push plugin, no `firebase` JS peer) over the
+originally-mentioned `@capacitor-firebase/messaging` (which forbids coexistence and would
+force an Android rewrite + full `firebase` JS SDK) — do NOT use the latter. Integration
+per that plugin's docs: `PushNotifications.register()` remains the required first step
+(it performs APNs registration); on iOS only, after registration, call `FCM.getToken()`
+and send THAT token; on Android keep sending the `registration` event token exactly as
+today (Android is FCM-native and VERIFIED working — google-services.json + gradle plugin
+present; do not touch it). iOS-native prerequisites (`GoogleService-Info.plist`, Firebase
+iOS SDK via SPM, APNs .p8 auth key uploaded to the Firebase project) are founder-owned
+secrets/console work — use a committed placeholder plist that the build accepts for
+dev/CI and DOCUMENT the exact founder production steps in the report. The permission-
+timing change (removing ask-on-mount) is Task 08's job, NOT this task's — touch only the
+token-acquisition path here.
+
+**Acceptance criteria:**
+- `pnpm` dep added (exact version pinned per repo convention); iOS project builds
+  (`cap sync` + Xcode build if runnable in this environment; otherwise typecheck +
+  sync green and the gap stated in the report — real-device verification is
+  founder-owned and listed as such).
+- Token registration path on iOS yields an FCM token (unit-test the JS branch; native
+  bridge covered by plugin).
+- Android path regression-tested (registration listener unchanged).
+- A short founder-facing note in the impl report: exact production steps (Firebase
+  console, plist secret, APNs key upload).
+**Files:** `apps/web/package.json`, `apps/web/ios/**`, `apps/web/capacitor.config.ts`
+(if plugin config needed), `apps/web/src/capacitor/**` (token acquisition branch).
+**Scoped checks:** `pnpm test:web`, `turbo typecheck lint --filter=@hushbox/web`.
+**Sensitive:** no → 1 auditor (plus the founder-owned device verification noted).
+
+## Task 14 — Arch registry: table ownership
+
+**Objective:** register `notificationPreferences` as owned by the `notifications` slice in
+the arch-rule table-owner registry so `pnpm arch:check` is green.
+
+**Design context (plan gap, found by Task 04's conventions audit):** the
+`single-writer-per-table` arch rule
+(`packages/config/arch/rules/single-writer-per-table.rule.ts`) requires EVERY table in
+`packages/db/src/schema/index.ts` to declare an owning slice in its `TABLE_OWNER` map. The
+new table went red the moment Task 02 landed it, and NO task in this plan owned
+`packages/config/arch/**` — a decomposition gap, not an implementer error. `arch:check`
+gates CI (lint stage), so this must ship with the run. Ownership is unambiguous: the
+notifications slice is the sole writer (already verified — the slice writes only
+`notification_preferences` and `device_tokens`).
+
+**Acceptance criteria:**
+- `notificationPreferences` mapped to the notifications slice in the registry, following
+  the file's existing entry style exactly.
+- `pnpm arch:check` exits 0 (this is the whole point — run it).
+- No other rule, table entry, or unrelated line touched; no weakening of the rule itself
+  (do NOT add an exemption/skip — register the owner).
+- If any OTHER table is also unregistered, report it rather than fixing it (it would
+  belong to another workstream).
+
+**Files:** `packages/config/arch/rules/single-writer-per-table.rule.ts` (registry entry)
+and its colocated `single-writer-per-table.rule.test.ts` (the test hardcodes a
+`TABLE_NAMES` mirror of the registry keys — a new registry key without the matching
+`TABLE_NAMES` entry makes every default-barrel test fail with a stale-key violation).
+**Scoped checks:** `pnpm arch:check`; **`pnpm test:config`** (mandatory — the scoped-check
+table requires it for `packages/config/**`; omitting it is what let the test regression
+through); `turbo typecheck lint --filter=@hushbox/config`.
+**Sensitive:** no → 1 auditor.
+
+## Task 15 — Env-schema test fixtures (run regression)
+
+**Objective:** update `packages/shared/src/env.config.test.ts`'s `backendEnvSchema`
+fixtures so they satisfy the schema this run changed; `pnpm test:shared` green.
+
+**Design context (regression caused by THIS run, confirmed by the orchestrator):** Task 04
+added `NOTIFICATION_TAG_SECRET` as a REQUIRED backend var (`z.string().min(1)`,
+non-optional — deliberately, since the collapse alias is stamped even on the dev mock).
+The four `backendEnvSchema` fixture tests build env objects that omit it, so
+`.safeParse().success` is now false: "validates correct development environment",
+"validates correct production environment", "accepts R2 media storage vars when
+provided", "allows CI/prod secrets to be optional". The required-ness is CORRECT — fix
+the fixtures, never relax the schema.
+
+**Acceptance criteria:**
+- All four tests pass by adding the missing var(s) to the fixtures; `pnpm test:shared`
+  fully green.
+- The schema is NOT weakened (no `.optional()`, no default added to
+  `NOTIFICATION_TAG_SECRET`); verify the VAPID trio's optionality is unchanged too.
+- If any OTHER var this run added is also missing from a fixture, fix that too and say so.
+- No other test or file touched.
+
+**Files:** `packages/shared/src/env.config.test.ts`.
+**Scoped checks:** `pnpm test:shared`, `turbo typecheck lint --filter=@hushbox/shared`.
+**Sensitive:** no → 1 auditor.
+
+## Task 16 — Read-cursor client write + sound toggle
+
+**Objective:** (a) advance the read cursor from the client so dismiss-on-read-elsewhere
+actually works; (b) expose the sound setting in the Notifications settings card.
+
+**Design context (plan gaps found by Task 09):** (a) Task 05 shipped
+`PATCH /conversations/:id/read` (monotonic `GREATEST`) and Task 09 shipped foreground
+clearing that reads `lastReadSeq` — but NO task owned the client write, so the cursor
+never advances and the founder-kept dismiss-on-read-elsewhere behavior is inert
+end-to-end. Call the route when the user views/reads a conversation (the natural seam is
+where the conversation view marks messages seen); the write is naturally idempotent, so
+retry/duplicate calls are safe, but do not spam it per-frame — send on view and on
+meaningful advance. (b) Task 09's store persists `soundEnabled` and unlocks audio inside
+`setSoundEnabled(true)` (that interaction is the autoplay-unlocking gesture), but nothing
+toggles it, so sound is permanently off. Add the toggle to Task 10's
+`notifications-card.tsx` (Task 10 must be CLEAN before this task starts) — opt-in,
+default off, labelled, keyboard operable, never the sole signal.
+
+**Acceptance criteria:**
+- Viewing a conversation advances `lastReadSeq` via the typed client; tested (including
+  that it does not fire redundantly on every frame/render).
+- Foreground read-elsewhere clearing now has live data — demonstrate the cursor advances
+  in a test rather than asserting the route in isolation.
+- Sound toggle renders in the Notifications card, round-trips, and enabling it unlocks
+  audio via the store's existing path (do not duplicate that logic — G3).
+- Accessibility per G8; G11 no plan/task-ID labels; owned-file coverage ≥95%.
+
+**Files:** the conversation-view/read seam in `apps/web/src/**`,
+`apps/web/src/components/settings/notifications-card.tsx` (after Task 10 is clean), and
+the relevant hook files.
+**Scoped checks:** `pnpm test:web`, `turbo typecheck lint --filter=@hushbox/web`.
+**Sensitive:** no → 1 auditor.
+
+## Task 12 — Maestro notification flows
+
+**Objective:** Rewrite `mobile-tests/flows/07-push-notification-prompt.yaml` for the new
+one-time prompt (it currently pins the ask-on-mount behavior Task 08 removes — it WILL
+fail otherwise), and add an Enable→OS-permission-dialog→grant flow.
+
+**Design context:** The Android Maestro harness (`scripts/mobile-test.ts`, dockerized
+emulators, CI-integrated) is the only automated native surface. Flow 07 launches with
+`notifications: unset` and asserts the system dialog appears at launch — after Task 08
+the correct assertion is the inverse: NO system dialog at launch, the in-app callout
+visible, and tapping Enable raises the system dialog. Optional stretch (spike, not a
+commitment): simulate an incoming FCM message on the debug build via
+`adb shell am broadcast` (c2dm RECEIVE action) and assert the notification renders in
+the shade — if the spike fails or proves flaky, report the finding and stop; real FCM
+delivery is out of CI by design (non-hermetic). iOS delivery has no automated path
+(Android-only harness) — founder-owned manual checklist via Task 11's report.
+
+**Acceptance criteria:**
+- Flow 07 rewritten: launch with `notifications: unset` → no OS dialog at launch → in-app
+  callout visible → Later dismisses and it stays gone across an app relaunch.
+- New flow: Enable tap → OS permission dialog appears → grant → callout resolves;
+  registered in the shard config if flows are sharded.
+- Flows pass locally via the harness smoke path if the environment permits
+  (`scripts/mobile-test.ts --smoke`); if the local environment cannot run emulators,
+  the report states exactly what was verified (YAML validity, selector existence
+  against the built app) and what remains CI-verified.
+- Spike outcome (broadcast-simulated delivery) reported either way; only landed if
+  reliable at retries=0.
+
+**Files:** `mobile-tests/flows/**`, `mobile-tests/config.ts` (shards, if needed).
+**Scoped checks:** `pnpm typecheck` on any TS touched; flow YAML validated by the
+harness; no package-scoped test suite applies.
+**Sensitive:** no → 1 auditor.
+
+## Task 13 — Playwright notifications spec
+
+**Objective:** New `e2e/notifications/` spec covering the prompt, the settings card, and
+real SW push delivery via CDP injection.
+
+**Design context:** Chromium CDP `ServiceWorker.deliverPushMessage` injects a push into
+a registered SW as if the push service delivered it — this exercises our real SW
+(showNotification, tag, click→deep-link) hermetically. SPIKE FIRST: prove the CDP call
+works in this harness (Playwright CDP session against the app's SW registration); if it
+does not, the delivery portion is descoped to the SW integration tests (Task 07) and the
+report says so — do not fake it with page-side shims. The server→push-service→browser
+hop stays out of CI by design (non-hermetic; covered by RFC vectors + sender integration
+tests). Permission via `context.grantPermissions(['notifications'])`. Read
+`e2e/CLAUDE.md` before writing anything; extend existing suites where they already cover
+settings; retries=0 discipline per repo doctrine.
+
+**Acceptance criteria:**
+- Prompt: appears once for an eligible fresh session; Enable → permission granted →
+  subscription registered (assert via API/dev surface); Later → never re-shows across
+  reload; suppressed when permission already granted.
+- Settings: card round-trips prefs (toggles, quiet hours incl. validation); global-off
+  suppresses the prompt.
+- Delivery (if spike passes): CDP-injected push → notification exists with generic
+  per-category text and `tag` = the raw `conversationId` (CORRECTED: the DEVICE-LOCAL tag
+  is the conversationId per the amended I4 — Task 09's clearing depends on it and it is
+  never a push-service-visible header; the derived alias exists only in the server's
+  Topic/collapse_key). Also assert no VISIBLE text contains the conversation id.
+- Suite green at retries=0; runtime within the shared suite budget.
+
+**Files:** `e2e/notifications/**` (new), `e2e/fixtures.ts` only if a fixture is
+genuinely needed.
+**Scoped checks:** `pnpm e2e:<suite>` for the new suite; `turbo typecheck lint` for e2e
+config scope.
+**Sensitive:** no → 1 auditor.
+
+---
+
+## Related E2E (declared)
+
+- Task 13 (above) is the new web spec: prompt + settings + CDP-injected SW delivery.
+- Task 12 (above) is the native counterpart: Maestro flow 07 rewrite + enable/grant flow
+  (+ delivery spike).
+- Existing chat/streaming E2E suites must stay green (pipeline refactor touches the
+  message push path).
+- Real push-service delivery (server → Google/Mozilla/Apple → device) is deliberately
+  untested in CI (non-hermetic); iOS device delivery is a founder-owned manual step
+  documented in Task 11's report.
+
+## Phase-4 additions
+
+- Full unscoped pass per skill (typecheck, lint, test:api/web/shared/db/realtime,
+  duplication, knip).
+- Completeness critic close-out.
+- Doc-proposal review: besides Task 00's doc, expect ARCHITECTURE.md §slices line for
+  notifications ("email, push, device tokens" → mention web push + preferences) and
+  TECH-STACK if the plugin belongs in the Mobile table — PROPOSALS ONLY, founder
+  approves each.
+
+## Task 17 — Move the enable prompt into the sidebar (founder-reported)
+
+**Objective:** the one-time notification offer currently renders inside `<main>` above the
+route content; it belongs in the LEFT SIDEBAR, directly below the conversation list and
+above the account footer, restyled for a narrow column.
+
+**Design context:** Task 08 shipped the prompt mounted at `app-shell.tsx:44` (a row above
+`{children}`), laid out horizontally (text left, buttons right) because it sat in a wide
+container. The founder expected it in the sidebar. The horizontal layout cannot survive a
+~260px column, so the presentation is rewritten; the STATE MACHINE IS CORRECT and stays.
+
+**Acceptance criteria:**
+- The prompt renders in the sidebar body AFTER the conversation list and BEFORE
+  `footer={<SidebarFooter />}` (`sidebar.tsx:145`); it no longer renders in `<main>` and
+  the `app-shell.tsx` mount + its comment are removed.
+- Vertical card layout suited to the sidebar width. Copy exactly:
+  heading "Turn on notifications"; body "Know when a reply lands or a run finishes, even
+  when HushBox is closed. Never includes message content. Change this any time in
+  Settings."; buttons "Enable" (primary) and "Later" (ghost).
+- Button names stay **Enable** / **Later** and the string "Turn on notifications" is
+  retained — the Playwright spec selects the region by its two button names and the
+  Maestro flow matches the visible text; renaming either breaks both suites.
+- Collapsed (rail) sidebar: render a COMPACT AFFORDANCE, not nothing (founder ruling
+  2026-07-25, superseding the original "hide in rail" criterion — the desktop sidebar
+  defaults to collapsed at `stores/ui.ts:15`, so hiding meant a first-time desktop user
+  never saw the offer). In rail mode: an aria-labelled bell button with a subtle dot;
+  clicking it EXPANDS the sidebar and reveals the full card. Never cram the card text
+  into 48px. Mobile drawer: renders normally inside the drawer.
+- E2E fallout of the move is IN SCOPE for this task: the Playwright notification tests
+  that assert the offer on a fresh context must expand the sidebar first, and both
+  Maestro flows must open the drawer before asserting the offer text.
+- `role="status"`, never steals focus, both answers are real buttons, keyboard reachable
+  (G8) — all preserved.
+- `useEnablePrompt` and `prompt-dismissal.ts` are UNTOUCHED (audited correct).
+- Placement tests updated; the a11y and suppressor tests carry over green.
+
+**Files:** `apps/web/src/components/notifications/enable-prompt.{tsx,test.tsx}`,
+`apps/web/src/components/shared/app-shell.tsx` (remove mount),
+`apps/web/src/components/sidebar/sidebar.tsx` (add mount), and the app-shell test.
+**Scoped checks:** `pnpm test:web`; `npx turbo lint typecheck --filter=@hushbox/web --force`.
+**Sensitive:** no → 1 auditor.
+
+## Standing amendments
+
+- **FOUNDER RULING 2026-07-24 — I7's `push-event` postMessage is REMOVED (supersedes I7,
+  Task 07's "push→postMessage when a focused client exists" criterion, and Task 09's
+  "SW postMessage intake" criterion).** The SW's focused-client check now only SUPPRESSES
+  `showNotification`; it posts nothing, and there is no page-side intake. Rationale at the
+  time: the SW posted only to focused clients while the badge counted only while away, so
+  the path could never execute. `handlers.test.ts`'s "hands a focused client nothing" is
+  therefore CORRECT, not an inverted criterion. (Orchestrator bookkeeping failure: this was
+  recorded in the ledger and docs/NOTIFICATIONS.md but not here, so the Phase-4 pass
+  correctly flagged it against the plan as written.) NOTE: a Phase-4 finding shows the
+  ruling's stated premise — "they'll see it in the conversation list" — is FALSE (the list
+  is not refreshed while the tab is visible), and the suppression's blast radius includes
+  ANY focused same-origin tab (e.g. /blog). Re-raised to the founder.
+
+- **Known-external reds (other workstreams, NOT this run — attribute around, never
+  "fix"):** (1) `@hushbox/web` lint fails on
+  `apps/web/src/hooks/billing/use-prompt-budget.ts` (complexity 11>10) — a billing
+  workstream file, outside every notifications task's ownership; our web files must lint
+  clean on their own. (2) `packages/shared/src/index.ts` is concurrently edited by the
+  estimate re-home workstream; notification barrel exports coexist there — sequence any
+  shared-barrel edit to append, never rewrite the file, and expect churn around it.
+- **Migration verification (from Task 02 audit):** every DB migration in this run must be
+  proven on an INCREMENTAL apply with the real migrate binary, not only a fresh reset
+  (Task 02 criteria updated). The fresh-reset path runs all migrations co-transactionally
+  and masks Postgres enum-add-then-use hazards.
+- **gitleaks scans ALL owned files (from Task 03 audit):** any task committing test
+  fixtures or dev values with secret-shaped strings must run gitleaks over EVERY new/
+  changed owned file (test files included, not just config), and add a narrow, path-AND-
+  value-pinned `.gitleaks.toml` `[[rules.allowlists]]` entry (stream-handler/media-assets/
+  seed-crypto precedent) — never a broad path exemption. gitleaks gates the whole CI DAG
+  (`needs: [gitleaks]`), so a fire blocks everything.
+- **Two `role="status"` regions now exist in the app shell** (Task 08's enable prompt and
+  Task 09's activity announcer): Task 13 must select by ACCESSIBLE NAME, never by role
+  alone.
+- **Task 07's `pushsubscriptionchange` postMessage has no client listener** (Task 09's
+  message handler validates and correctly ignores it). Accepted: the designed backstops
+  — re-registration on next authenticated start and server-side 404/410 pruning — cover
+  it. Do not add a second consumer path.
+- **Client surface shipped by Task 08 — Tasks 09/10/13 MUST build on it, not beside it:**
+  the `notificationChannel` facade has a FOURTH method beyond I6,
+  `ensureRegistered()` (the three named methods cannot re-register without prompting,
+  which the re-registration-on-authenticated-start criterion requires); it is
+  deliberately skipped when `globalEnabled` is false so a global-off unregister is not
+  undone by the next app start — preserve that. The prefs query lives in
+  `apps/web/src/hooks/notifications/use-notification-preferences.ts`: **Task 10 extends
+  that file, never adds a second prefs hook** (G3/One-Implementation). **Task 09 adds its
+  notification-clearing functions to the facade**, not to a parallel module. No
+  `TEST_IDS` entries exist for the prompt (literal `data-testid` is lint-banned and
+  `packages/shared` was out of bounds): **Task 13** selects by `role="status"` and the
+  button names "Enable"/"Later", or adds registry entries itself.
+- **Store/port surface added by Task 04's fix — later tasks MUST match it:**
+  `PushDelivery` gains an optional `deliveredTokens`; `DeviceTokenStore` gains a REQUIRED
+  `touchLastSeen`. Any store stub, fake, or test double in a later task must implement
+  `touchLastSeen` or it will not typecheck. Task 06's retention delete now sees refreshed
+  `lastSeenAt` on actively-notified devices — that is what makes its "stale deleted, fresh
+  kept" criterion true. `touchLastSeen` failure degrades the notify Result exactly like
+  the dead-token prune does (orchestrator ruling: correct as-is — the Result is swallowed
+  at the composition root, so G2 still holds; do not "fix" it to be silent).
+- **Known stale comment to sweep in Phase 4:** `apps/api/src/slices/identity/ports/email.ts`
+  references `PresenceReader`, which Task 04's fix deleted. One-word correction, outside
+  every notifications task's ownership — batch it into the Phase-4 close fixer.
+- **Lint must be verified with the PACKAGE-WIDE command (from Task 09 audit):** running
+  `eslint <files>` from the wrong cwd silently no-ops under ESLint v9, so a scoped run can
+  report exit 0 while the real gate is red. Every task MUST finish by running the same
+  command CI runs — `turbo lint --filter=<package> --force` — and report ITS output.
+  Prettier is an ESLint rule here, so unformatted code fails this gate too.
+- **Never restate an acceptance criterion (from Task 04 correctness audit):** an
+  implementer may not mark a criterion "met" by substituting a weaker one (Task 04
+  reported `lastSeenAt` satisfied because `updatedAt` was bumped and the column had an
+  insert default). If a criterion cannot be met, return DONE_WITH_CONCERNS or BLOCKED
+  naming the exact unmet criterion — never a paraphrase that reads as satisfied.
+  Auditors verify criteria literally.
+- **Presence rides the caller's fire-time snapshot; there is no `PresenceReader` port**
+  (Task 04 removed its last consumer and the orphan is deleted in its fix). Task 05 and
+  any later event source pass `presentUserIds` on the `notifyEvent` input — do not
+  reintroduce a presence port or query the DO from the slice.
+- **Alias-stamping is composite-only (from Task 04 security audit):** the notifications
+  barrel exports the raw `createWebPushSender`/`createFcmPushSender` factories (Task 06
+  needs the sibling mock export). Only the COMPOSITE sender derives and stamps the G1
+  collapse alias. Therefore: no production code may construct or call a raw transport
+  sender directly — the factory/composite is the only construction site. Task 06 and any
+  later task must route through the composite; auditors check this.
+- **Ops note for founder (Phase 4 / secret-provisioning):** `VAPID_PUBLIC_KEY` and
+  `VITE_VAPID_PUBLIC_KEY` are two distinct GitHub secret names that MUST hold the
+  identical public key or web subscriptions break (inherent to the VITE_ split).

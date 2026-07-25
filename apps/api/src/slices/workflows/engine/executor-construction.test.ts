@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PolicyHooks, nanoUSD, textTag } from '@hushbox/shared';
 import { createEstimateRun } from '../../models/index.js';
 import { createServerTransformCompute } from '../../media/index.js';
-import { usdToNanoUsd } from '../../billing/index.js';
+import { providerUsdToBillableNanoUsd } from '../../billing/index.js';
 import { InferenceError } from '../../models/index.js';
 import {
   buildWorkflow,
@@ -191,7 +191,7 @@ describe('workflow executor constructed from production factories', () => {
         providerName: 'p',
         modality: 'text',
         generationId: 'gen-hello',
-        baseCostNanoUsd: usdToNanoUsd(GENERATION_COST_USD),
+        billableCostNanoUsd: providerUsdToBillableNanoUsd(GENERATION_COST_USD),
         isEstimated: false,
         tokens: { inputTokens: 1, outputTokens: 1, reasoningTokens: 0, cachedInputTokens: 0 },
       },

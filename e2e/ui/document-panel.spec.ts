@@ -3,27 +3,35 @@ import { isMobileWidth, TEST_IDS } from '@hushbox/shared';
 import { test, expect } from '../fixtures.js';
 import { ChatPage, DocumentPanelPage } from '../pages/index.js';
 import { TIMEOUTS } from '../config/timeouts.js';
+import { documentFixture, belowThresholdFixture } from '../helpers/documents.js';
 
-/** 15-line Python function — exactly meets MIN_LINES_FOR_DOCUMENT threshold */
-const PYTHON_CODE_BLOCK = [
-  '```python',
-  'def fibonacci(n):',
-  '    """Calculate fibonacci number."""',
-  '    if n <= 0:',
-  '        return 0',
-  '    if n == 1:',
-  '        return 1',
-  '    a = 0',
-  '    b = 1',
-  '    for i in range(2, n + 1):',
-  '        c = a + b',
-  '        a = b',
-  '        b = c',
-  '    return b',
-  '',
-  'print(fibonacci(10))',
-  '```',
-].join('\n');
+/**
+ * A Python function that only needs to *be* a document — this test is about
+ * the panel, not about where the extraction threshold falls — so it is sized
+ * clear of the threshold rather than on it.
+ */
+const PYTHON_DOCUMENT = documentFixture(
+  'python',
+  [
+    'def fibonacci(n):',
+    '    """Calculate fibonacci number."""',
+    '    if n <= 0:',
+    '        return 0',
+    '    if n == 1:',
+    '        return 1',
+    '    a = 0',
+    '    b = 1',
+    '    for i in range(2, n + 1):',
+    '        c = a + b',
+    '        a = b',
+    '        b = c',
+    '    return b',
+    '',
+    'print(fibonacci(10))',
+  ],
+  '# keeps this block clear of the extraction threshold'
+);
+const PYTHON_CODE_BLOCK = PYTHON_DOCUMENT.markdown;
 
 /** Small mermaid diagram — mermaid has no minimum line count */
 const MERMAID_BLOCK = [
@@ -35,15 +43,16 @@ const MERMAID_BLOCK = [
   '```',
 ].join('\n');
 
-/** 5-line code block — below MIN_LINES_FOR_DOCUMENT, should NOT be extracted */
-const SMALL_CODE_BLOCK = [
-  '```python',
-  'def add(a, b):',
-  '    return a + b',
-  '',
-  'print(add(1, 2))',
-  '```',
-].join('\n');
+/**
+ * One line short of the extraction threshold. The step using it is *about* the
+ * boundary, so its size is derived from the threshold — a hand-counted body
+ * would keep passing while no longer sitting on the negative side.
+ */
+const SMALL_CODE_BLOCK = belowThresholdFixture(
+  'python',
+  ['def add(a, b):', '    return a + b', '', 'print(add(1, 2))'],
+  '# keeps this block under the extraction threshold'
+);
 
 test.describe('Document Panel', () => {
   // eslint-disable-next-line no-restricted-syntax -- serial: both tests send messages as the shared per-project test-alice account; the auto rate-limit reset and message sends mutate that account's usage state, so concurrent runs race the same daily allowance.
@@ -79,7 +88,7 @@ test.describe('Document Panel', () => {
       );
       await expect(card).toContainText('fibonacci');
       await expect(card).toContainText('python');
-      await expect(card).toContainText('15 lines');
+      await expect(card).toContainText(`${String(PYTHON_DOCUMENT.lineCount)} lines`);
     });
 
     await test.step('click card opens panel', async () => {
@@ -239,8 +248,8 @@ test.describe('Document Panel', () => {
       await chatPage.sendFollowUpMessage(SMALL_CODE_BLOCK);
       await chatPage.waitForAIResponse();
 
-      // The echo of the small code block (5 lines, below MIN_LINES_FOR_DOCUMENT)
-      // should NOT contain a document card. Resolve the target row by index
+      // The echo of the below-threshold code block should NOT contain a
+      // document card. Resolve the target row by index
       // and park it in Virtuoso's mounted window — `.last()` would match the
       // last currently-mounted assistant, which on a virtualized list may be a
       // prior (mermaid) row that does have a card.

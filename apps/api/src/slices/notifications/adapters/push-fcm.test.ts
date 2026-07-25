@@ -36,7 +36,7 @@ beforeAll(async () => {
 });
 
 const message: PushMessage = {
-  recipients: [{ userId: 'user-1', token: 'device-token-abc' }],
+  recipients: [{ platform: 'ios', userId: 'user-1', token: 'device-token-abc' }],
   title: 'New Message',
   body: 'Hello from HushBox',
 };
@@ -92,7 +92,12 @@ describe('createFcmPushSender', () => {
   it('resolves zero counts without fetching when there are no tokens', async () => {
     const result = await sender().send({ ...message, recipients: [] });
 
-    expect(result._unsafeUnwrap()).toEqual({ successCount: 0, failureCount: 0, deadTokens: [] });
+    expect(result._unsafeUnwrap()).toEqual({
+      successCount: 0,
+      failureCount: 0,
+      deliveredTokens: [],
+      deadTokens: [],
+    });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -114,7 +119,12 @@ describe('createFcmPushSender', () => {
 
     const result = await sender().send(message);
 
-    expect(result._unsafeUnwrap()).toEqual({ successCount: 1, failureCount: 0, deadTokens: [] });
+    expect(result._unsafeUnwrap()).toEqual({
+      successCount: 1,
+      failureCount: 0,
+      deliveredTokens: [{ userId: 'user-1', token: 'device-token-abc' }],
+      deadTokens: [],
+    });
     const [sendUrl, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
     expect(sendUrl).toBe(`https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`);
     expect((sendInit.headers as Record<string, string>)['Authorization']).toBe(
@@ -141,6 +151,82 @@ describe('createFcmPushSender', () => {
     expect(body.message.data).toEqual({ conversationId: 'conv-1' });
   });
 
+  it('collapses on the derived alias, never the raw conversation id', async () => {
+    mockOAuthSuccess();
+    mockFcmSendSuccess();
+
+    const result = await sender().send({
+      ...message,
+      data: { conversationId: 'conv-1' },
+      collapseKey: 'alias32chars',
+    });
+    expect(result.isOk()).toBe(true);
+
+    const [, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
+    const body = JSON.parse(sendInit.body as string) as {
+      message: {
+        android?: { collapse_key?: string };
+        apns?: { headers?: Record<string, string> };
+      };
+    };
+    expect(body.message.android?.collapse_key).toBe('alias32chars');
+    expect(body.message.apns?.headers?.['apns-collapse-id']).toBe('alias32chars');
+  });
+
+  it('tags the shade entry with the same conversation id the data payload carries', async () => {
+    mockOAuthSuccess();
+    mockFcmSendSuccess();
+
+    const result = await sender().send({
+      ...message,
+      data: { conversationId: 'conv-1' },
+      collapseKey: 'alias32chars',
+    });
+    expect(result.isOk()).toBe(true);
+
+    const [, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
+    const body = JSON.parse(sendInit.body as string) as {
+      message: {
+        data?: Record<string, string>;
+        android?: { collapse_key?: string; notification?: { tag?: string } };
+      };
+    };
+    // The client reads a delivered Android notification's tag and clears the
+    // conversation by it, so the tag must be the raw id and not the alias —
+    // the alias exists to keep the id out of push-service-visible headers, and
+    // this same message's data payload already puts the id in front of FCM.
+    expect(body.message.android?.notification?.tag).toBe(body.message.data?.['conversationId']);
+    expect(body.message.android?.notification?.tag).toBe('conv-1');
+    expect(body.message.android?.notification?.tag).not.toBe('alias32chars');
+  });
+
+  it('omits the notification tag when the message carries no conversation id', async () => {
+    mockOAuthSuccess();
+    mockFcmSendSuccess();
+
+    const result = await sender().send({ ...message, collapseKey: 'alias32chars' });
+    expect(result.isOk()).toBe(true);
+
+    const [, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
+    const body = JSON.parse(sendInit.body as string) as {
+      message: { android?: { collapse_key?: string; notification?: unknown } };
+    };
+    expect(body.message.android?.collapse_key).toBe('alias32chars');
+    expect(body.message.android?.notification).toBeUndefined();
+  });
+
+  it('omits the collapse fields when no alias is set', async () => {
+    mockOAuthSuccess();
+    mockFcmSendSuccess();
+
+    const result = await sender().send(message);
+    expect(result.isOk()).toBe(true);
+
+    const [, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
+    const body = JSON.parse(sendInit.body as string) as { message: { android?: unknown } };
+    expect(body.message.android).toBeUndefined();
+  });
+
   it('reports an UNREGISTERED token as dead and leaves a delivered one alone', async () => {
     mockOAuthSuccess();
     mockFcmSendSuccess();
@@ -154,14 +240,15 @@ describe('createFcmPushSender', () => {
     const result = await sender().send({
       ...message,
       recipients: [
-        { userId: 'u-ok', token: 'token-ok' },
-        { userId: 'u-gone', token: 'token-gone' },
+        { platform: 'ios', userId: 'u-ok', token: 'token-ok' },
+        { platform: 'ios', userId: 'u-gone', token: 'token-gone' },
       ],
     });
 
     expect(result._unsafeUnwrap()).toEqual({
       successCount: 1,
       failureCount: 1,
+      deliveredTokens: [{ userId: 'u-ok', token: 'token-ok' }],
       deadTokens: [{ userId: 'u-gone', token: 'token-gone' }],
     });
   });
@@ -174,7 +261,12 @@ describe('createFcmPushSender', () => {
 
     const result = await sender().send(message);
 
-    expect(result._unsafeUnwrap()).toEqual({ successCount: 0, failureCount: 1, deadTokens: [] });
+    expect(result._unsafeUnwrap()).toEqual({
+      successCount: 0,
+      failureCount: 1,
+      deliveredTokens: [],
+      deadTokens: [],
+    });
   });
 
   it('does not prune when a failed response body is not JSON', async () => {
@@ -183,7 +275,12 @@ describe('createFcmPushSender', () => {
 
     const result = await sender().send(message);
 
-    expect(result._unsafeUnwrap()).toEqual({ successCount: 0, failureCount: 1, deadTokens: [] });
+    expect(result._unsafeUnwrap()).toEqual({
+      successCount: 0,
+      failureCount: 1,
+      deliveredTokens: [],
+      deadTokens: [],
+    });
   });
 
   it('counts a send that rejects at the transport layer as a failure', async () => {
@@ -192,7 +289,12 @@ describe('createFcmPushSender', () => {
 
     const result = await sender().send(message);
 
-    expect(result._unsafeUnwrap()).toEqual({ successCount: 0, failureCount: 1, deadTokens: [] });
+    expect(result._unsafeUnwrap()).toEqual({
+      successCount: 0,
+      failureCount: 1,
+      deliveredTokens: [],
+      deadTokens: [],
+    });
   });
 
   it('reuses the cached access token across sends', async () => {
@@ -286,6 +388,7 @@ describe('createFcmPushSender', () => {
     expect(result._unsafeUnwrap()).toEqual({
       successCount: 0,
       failureCount: 1,
+      deliveredTokens: [],
       deadTokens: [{ userId: 'user-1', token: 'device-token-abc' }],
     });
     expect(insert).not.toHaveBeenCalled();

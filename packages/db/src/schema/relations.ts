@@ -26,6 +26,7 @@ import { modelCatalog } from './model-catalog';
 import { newsletterDeliveries } from './newsletter-deliveries';
 import { newsletterIssues } from './newsletter-issues';
 import { newsletterSubscribers } from './newsletter-subscribers';
+import { notificationPreferences } from './notification-preferences';
 import { payments } from './payments';
 import { preferences } from './preferences';
 import { publicStatsSnapshots } from './public-stats-snapshots';
@@ -42,7 +43,8 @@ import { wallets } from './wallets';
 export const usersRelations = relations(users, ({ one, many }) => ({
   wallets: many(wallets),
   payments: many(payments),
-  usageRecords: many(usageRecords),
+  usageRecords: many(usageRecords, { relationName: 'payer' }),
+  sentUsageRecords: many(usageRecords, { relationName: 'sender' }),
   conversations: many(conversations),
   memberships: many(conversationMembers, { relationName: 'member' }),
   sentInvites: many(conversationMembers, { relationName: 'inviter' }),
@@ -54,6 +56,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   verificationTokens: many(verificationTokens),
   customInstructions: one(customInstructions),
   preferences: one(preferences),
+  notificationPreferences: one(notificationPreferences),
   bannerDismissal: one(bannerDismissals),
 }));
 
@@ -72,7 +75,20 @@ export const ledgerEntriesRelations = relations(ledgerEntries, ({ one }) => ({
 }));
 
 export const usageRecordsRelations = relations(usageRecords, ({ one, many }) => ({
-  user: one(users, { fields: [usageRecords.userId], references: [users.id] }),
+  user: one(users, {
+    fields: [usageRecords.userId],
+    references: [users.id],
+    relationName: 'payer',
+  }),
+  senderUser: one(users, {
+    fields: [usageRecords.senderUserId],
+    references: [users.id],
+    relationName: 'sender',
+  }),
+  senderLink: one(sharedLinks, {
+    fields: [usageRecords.senderLinkId],
+    references: [sharedLinks.id],
+  }),
   contentItem: one(contentItems, {
     fields: [usageRecords.contentItemId],
     references: [contentItems.id],
@@ -215,6 +231,7 @@ export const sharedLinksRelations = relations(sharedLinks, ({ one, many }) => ({
     references: [conversations.id],
   }),
   members: many(conversationMembers),
+  usageRecords: many(usageRecords),
 }));
 
 export const sharedMessagesRelations = relations(sharedMessages, ({ one }) => ({
@@ -258,6 +275,10 @@ export const customInstructionsRelations = relations(customInstructions, ({ one 
 
 export const preferencesRelations = relations(preferences, ({ one }) => ({
   user: one(users, { fields: [preferences.userId], references: [users.id] }),
+}));
+
+export const notificationPreferencesRelations = relations(notificationPreferences, ({ one }) => ({
+  user: one(users, { fields: [notificationPreferences.userId], references: [users.id] }),
 }));
 
 export const newsletterSubscribersRelations = relations(newsletterSubscribers, ({ one, many }) => ({

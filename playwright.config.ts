@@ -14,9 +14,11 @@ const DEVICE_SCALE_FACTOR = 1;
 const previewPort = process.env['HB_PREVIEW_PORT']!;
 const apiPort = process.env['HB_API_PORT']!;
 const adminPort = process.env['HB_ADMIN_PORT']!;
+const sandboxPort = process.env['HB_SANDBOX_PORT']!;
 const previewUrl = `http://localhost:${previewPort}`;
 const apiUrl = `http://localhost:${apiPort}`;
 const adminUrl = `http://localhost:${adminPort}`;
+const sandboxUrl = `http://localhost:${sandboxPort}`;
 
 // Chromium-only launch flag, scoped to chromium-based projects (WebKit rejects
 // unknown flags and fails to launch). --disable-dev-shm-usage keeps Chromium
@@ -124,6 +126,22 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 300_000,
       name: 'Admin',
+      stdout: 'ignore',
+    },
+    {
+      // The document sandbox origin: an assets-only server (the local-parity
+      // equivalent of the production Cloudflare assets Worker) serving the
+      // renderer pages and pinned Pyodide assets under their real Content-
+      // Security-Policy. The app embeds these pages in a sandboxed iframe, so
+      // both the security-containment corpus and the document-flow suite need
+      // the origin live and serving the deployed policy (not a permissive dev
+      // server). `dev` serves the committed `public/` bundle; the Pyodide
+      // assets are fetched into it by the CI `fetch-pyodide` step.
+      command: `pnpm --filter @hushbox/sandbox dev`,
+      url: `${sandboxUrl}/render.html`,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      name: 'Sandbox',
       stdout: 'ignore',
     },
   ],

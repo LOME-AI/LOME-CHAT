@@ -96,6 +96,7 @@ import {
 } from './slices/newsletter/index.js';
 import {
   createDeviceTokenStore,
+  createNotificationPreferencesStore,
   createNotificationsManifest,
 } from './slices/notifications/index.js';
 import { createAppJobRegistry, enqueueWithinTx, wakeJobDispatcher } from './lib/jobs/index.js';
@@ -110,7 +111,7 @@ import { createAppPasswordResetEmailPort } from './adapters/password-reset-email
 import { createAppVerificationEmailPort } from './adapters/verification-email.js';
 import { createAppNewsletterConfirmEmailPort } from './adapters/newsletter-confirmation-email.js';
 import { createConversationRoomRealtime } from './adapters/realtime-broadcast.js';
-import { createChatMessagePushNotify } from './adapters/push-notify.js';
+import { createChatMessagePushNotify, createMembershipPushNotify } from './adapters/push-notify.js';
 import { createAppChargebackLockEmailPort } from './adapters/chargeback-lock-email.js';
 import { createAdminCrossSliceReads } from './adapters/admin-read-bindings.js';
 import { createAdminOpDeps } from './adapters/admin-op-bindings.js';
@@ -301,6 +302,7 @@ const newsletterManifest = createNewsletterManifest({
 const modelsManifest = createModelsManifest();
 const notificationsManifest = createNotificationsManifest({
   deviceTokenStore: createDeviceTokenStore,
+  preferencesStore: createNotificationPreferencesStore,
 });
 // The email ports are the static (non-factory) slice deps: their adapters
 // resolve env/db/logger per send through the context storage installed in
@@ -367,6 +369,10 @@ const conversationsManifest = createConversationsManifest({
   // Shared-link credential resolution (identity's port over conversations'
   // shared-link store); liveness enforced lazily at read, same as media below.
   linkResolution: (db) => createLinkResolutionAdapter(db),
+  // Membership events (a member added, a fork branched, a link shared) fire the
+  // same notifications wiring the room's terminal sink uses, bound per request
+  // and fired post-commit through `waitUntil`.
+  notifyConversationEvent: createMembershipPushNotify,
 });
 const mediaManifest = createMediaManifest({
   // Presign readers span chat-owned content_items/messages AND conversations-owned

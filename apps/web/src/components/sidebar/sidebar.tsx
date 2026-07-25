@@ -7,6 +7,8 @@ import { ROUTES, TEST_IDS } from '@hushbox/shared';
 import { useUIStore } from '@/stores/ui';
 import { useDecryptedConversations, chatKeys } from '@/hooks/chat/chat';
 import { useSession } from '@/lib/auth';
+import { NotificationEnablePrompt } from '@/components/notifications/enable-prompt';
+import { NotificationEnablePromptRail } from '@/components/notifications/enable-prompt-rail';
 import { SidebarContent } from './sidebar-content';
 import { SidebarFooter } from './sidebar-footer';
 
@@ -146,6 +148,11 @@ export function Sidebar(): React.JSX.Element {
       testId={TEST_IDS.sidebar}
     >
       {renderSidebarBody()}
+      {/* Last in the body, so the offer sits between the conversation list and
+          the account footer. The 48px rail cannot carry the card's copy, so it
+          carries a bell that expands the sidebar instead; the mobile drawer is
+          full width and always gets the card. */}
+      {collapsed ? <NotificationEnablePromptRail /> : <NotificationEnablePrompt />}
     </SidebarPanel>
   );
 }

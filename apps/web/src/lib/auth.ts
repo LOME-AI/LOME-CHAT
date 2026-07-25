@@ -25,6 +25,7 @@ import {
 
 import { queryClient, registerSessionRevocationClearer } from '@/providers/query-provider';
 import { client as apiClient } from '@/lib/api-client';
+import { notificationChannel } from '@/lib/notification-channel';
 import { clearEpochKeyCache } from '@/lib/epoch-key-cache';
 import { clearDecryptedMessageCache } from '@/lib/decrypted-message-cache';
 import { useModelStore } from '@/stores/model';
@@ -578,6 +579,12 @@ export function clearLocalAuthState({ reload = true }: { reload?: boolean } = {}
 export async function signOutAndClearCache({
   reload = true,
 }: { reload?: boolean } = {}): Promise<void> {
+  // Before the session goes: dropping the server row needs the cookie that is
+  // about to be revoked. Best-effort — a device that stays registered is pruned
+  // reactively on the next send, and sign-out must not depend on push.
+  await notificationChannel.unregister().catch(() => {
+    // Nothing to recover; the server prunes on the next delivery failure.
+  });
   await apiClient.auth.logout.$post();
   clearLocalAuthState({ reload });
 }
