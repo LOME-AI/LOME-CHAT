@@ -52,6 +52,9 @@ async function writeDistributionFile(relativePath: string, content: string): Pro
  */
 const ORT_VERSION_CHUNK = 'assets/ort-env-baseline.js';
 
+/** Same reason: a dist emitting no TTS worker chunk is itself a violation. */
+const WORKER_CHUNK = 'assets/tts.worker-baseline.js';
+
 beforeEach(async () => {
   distributionDir = await fs.mkdtemp(path.join(os.tmpdir(), 'verify-bundle-dist-'));
   runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'verify-bundle-runtime-'));
@@ -59,6 +62,7 @@ beforeEach(async () => {
     ORT_VERSION_CHUNK,
     `const env={versions:{common:\`${await declaredOrtCommonVersion()}\`}};`
   );
+  await writeDistributionFile(WORKER_CHUNK, 'self.onmessage=()=>{};');
 });
 
 afterEach(async () => {
@@ -231,6 +235,63 @@ describe('collectWebBundleViolations', () => {
     expect(violations).toHaveLength(1);
     expect(violations[0]).toContain('unset');
     expect(violations[0]).toContain('assets/tts.worker-abc.js');
+  });
+
+  it('accepts a worker chunk that reads the bundler import.meta stand-in normally', async () => {
+    const assets = await fakeRuntime();
+    await selfHost(assets);
+    await writeDistributionFile(
+      'assets/tts.worker-abc.js',
+      'var _vite_importMeta = { url: self.location.href };\n' +
+        'const _import_meta_url = Object(_vite_importMeta).url;'
+    );
+
+    expect(await collectWebBundleViolations({ distributionDir, ortAssets: assets })).toEqual([]);
+  });
+
+  it('reports a worker chunk whose new.target was rewritten to the import.meta stand-in', async () => {
+    const assets = await fakeRuntime();
+    await selfHost(assets);
+    await writeDistributionFile(
+      'assets/tts.worker-abc.js',
+      'var _vite_importMeta = { url: self.location.href };\n' +
+        'return Object.setPrototypeOf(closure, _vite_importMeta.prototype);'
+    );
+
+    const violations = await collectWebBundleViolations({ distributionDir, ortAssets: assets });
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toContain('assets/tts.worker-abc.js');
+    expect(violations[0]).toContain('_vite_importMeta');
+    expect(violations[0]).toContain('new.target');
+  });
+
+  it('reports a minified worker chunk whose import.meta stand-in was renamed', async () => {
+    const assets = await fakeRuntime();
+    await selfHost(assets);
+    await writeDistributionFile(
+      'assets/tts.worker-abc.js',
+      'var df={url:self.location.href},ff={};' +
+        'class y{constructor(){return Object.setPrototypeOf(e,df.prototype)}}'
+    );
+
+    const violations = await collectWebBundleViolations({ distributionDir, ortAssets: assets });
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toContain('assets/tts.worker-abc.js');
+    expect(violations[0]).toContain('df');
+  });
+
+  it('reports a bundle that emitted no TTS worker chunk at all', async () => {
+    const assets = await fakeRuntime();
+    await selfHost(assets);
+    await fs.rm(path.join(distributionDir, WORKER_CHUNK));
+
+    const violations = await collectWebBundleViolations({ distributionDir, ortAssets: assets });
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toMatch(/tts\.worker/);
+    expect(violations[0]).toMatch(/vacuously/i);
   });
 
   it('resolves the runtime from the installed package when no assets are supplied', async () => {

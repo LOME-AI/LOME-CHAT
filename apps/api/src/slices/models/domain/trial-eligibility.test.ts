@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { STORAGE_COST_PER_CHARACTER_NANO, nanoUSD } from '@hushbox/shared';
 import {
-  STORAGE_COST_PER_CHARACTER_NANO,
   estimateTokensForTier,
-  nanoUSD,
   outputCharsPerTokenForTier,
-} from '@hushbox/shared';
+} from '@hushbox/shared/affordability/estimate/pre-adapters';
 import {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   isTextModel,

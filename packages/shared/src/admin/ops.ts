@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { FEEDBACK_STATUSES } from '../feedback.js';
-import { NanoUSD } from '../nano-usd.js';
+import { NanoUSD } from '../affordability/nano-usd.js';
 import {
   BANNER_VARIANTS,
   MAX_BANNER_LINK_TEXT_LENGTH,

@@ -4,6 +4,11 @@ import {
   callShapeFamilyFor,
   isRunnableModelShape,
 } from '@hushbox/shared';
+import {
+  exceedsModelAgeLimit,
+  priceFloorVerdict,
+  topContextExemptionTokens,
+} from '@hushbox/shared/affordability';
 import { isNonConversational } from './non-chat-exclusions.js';
 import { usdRateToNanoUsd } from './usd-rate.js';
 import type { Modality, ModelDescriptor, ParamSpec as ParameterSpec } from '@hushbox/shared';
@@ -44,9 +49,11 @@ export const DESCRIPTOR_VERSION = '2';
  * `missing-release-date` are fail-closed defects that alert; `deprecated`,
  * `token-priced-image`, `token-priced-video`, `non-zdr` (only ZDR-reachable
  * models are persisted), `non-conversational` (specialty code-tooling and
- * moderation models — see `non-chat-exclusions.ts`), and `non-runnable-shape`
+ * moderation models — see `non-chat-exclusions.ts`), `non-runnable-shape`
  * (a merged descriptor no turn can run — multi-output, or no text input — see
- * `isRunnableModelShape`) are expected shapes — counted, never paged.
+ * `isRunnableModelShape`), and the three commercial reasons `zero-priced`,
+ * `below-price-floor` and `too-old` (BILLING.md §Catalog Admission — a model
+ * that cannot be sold profitably) are expected shapes — counted, never paged.
  * Single-sources both the {@link ExcludeReason} union and the per-reason
  * summary breakdown. */
 export const EXCLUDE_REASONS = [
@@ -54,6 +61,9 @@ export const EXCLUDE_REASONS = [
   'token-priced-video',
   'megapixel-priced-image',
   'missing-pricing',
+  'zero-priced',
+  'below-price-floor',
+  'too-old',
   'deprecated',
   'non-zdr',
   'non-conversational',
@@ -64,6 +74,22 @@ export const EXCLUDE_REASONS = [
 ] as const;
 
 export type ExcludeReason = (typeof EXCLUDE_REASONS)[number];
+
+/**
+ * The per-refresh inputs a single model's commercial admission depends on but
+ * cannot derive from itself (BILLING.md §Catalog Admission).
+ */
+export interface CatalogAdmission {
+  /**
+   * Context length at or above which a language model bypasses the price floor
+   * and the age cutoff. It is the top-context percentile over the ZDR-filtered
+   * language pool, so it is a property of the whole catalog — which is why it
+   * arrives here rather than being computed per model.
+   */
+  readonly contextExemptionTokens: number;
+  /** The refresh clock, epoch ms. The age cutoff is measured back from it. */
+  readonly nowMs: number;
+}
 
 export type NormalizeOutcome =
   | { kind: 'normalized'; content: DescriptorContent; pricingFallbacks?: readonly string[] }
@@ -175,7 +201,46 @@ function languageLimits(model: LanguageMetadata): DescriptorContent['limits'] {
   };
 }
 
-function normalizeLanguage(model: LanguageMetadata, zdrReachable: boolean): NormalizeOutcome {
+/** A pre-fee nano-USD rate as a bigint. A leg that is absent — or not a scalar
+ * rate, which the token-pricing path never emits — counts as zero, because a
+ * model that names no rate charges nothing for it. */
+function preFeeRateNano(rate: DescriptorContent['pricing'][string] | undefined): bigint {
+  return typeof rate === 'string' ? BigInt(rate) : 0n;
+}
+
+/**
+ * The commercial admission rules (BILLING.md §Catalog Admission), over the
+ * PRE-FEE rates — the markup IS the margin, so the raw rate is what decides
+ * whether a percentage of it is worth having. Called before fee baking, on the
+ * language path only: image and video price per unit, so a per-token floor has
+ * no meaning for them and none is applied.
+ *
+ * Reason order is fixed and load-bearing: a zero rate earns nothing so it is
+ * unconditional and first, then the floor, then age. A model failing both the
+ * floor and the age cutoff therefore reports one stable reason, which is what
+ * keeps the refresh summary's counts comparable across runs.
+ */
+function commercialExclusionReason(
+  pricing: DescriptorContent['pricing'],
+  contextLength: number,
+  releasedAtSeconds: number,
+  admission: CatalogAdmission
+): ExcludeReason | undefined {
+  const verdict = priceFloorVerdict(
+    preFeeRateNano(pricing['inputPerToken']),
+    preFeeRateNano(pricing['outputPerToken'])
+  );
+  if (verdict === 'zero') return 'zero-priced';
+  if (contextLength >= admission.contextExemptionTokens) return undefined;
+  if (verdict === 'below-floor') return 'below-price-floor';
+  return exceedsModelAgeLimit(releasedAtSeconds, admission.nowMs) ? 'too-old' : undefined;
+}
+
+function normalizeLanguage(
+  model: LanguageMetadata,
+  zdrReachable: boolean,
+  admission: CatalogAdmission
+): NormalizeOutcome {
   if (model.deprecated) {
     return { kind: 'excluded', modelId: model.id, reason: 'deprecated' };
   }
@@ -185,6 +250,16 @@ function normalizeLanguage(model: LanguageMetadata, zdrReachable: boolean): Norm
   }
   if (model.releasedAt === undefined || model.releasedAt <= 0) {
     return { kind: 'excluded', modelId: model.id, reason: 'missing-release-date' };
+  }
+  const pricing = tokenPricing(model.pricing);
+  const commercial = commercialExclusionReason(
+    pricing,
+    model.contextLength ?? 0,
+    model.releasedAt,
+    admission
+  );
+  if (commercial !== undefined) {
+    return { kind: 'excluded', modelId: model.id, reason: commercial };
   }
   const content: DescriptorContent = {
     id: model.id,
@@ -203,7 +278,7 @@ function normalizeLanguage(model: LanguageMetadata, zdrReachable: boolean): Norm
         ? languageBehaviors(model.supportedParameters)
         : [],
     limits: languageLimits(model),
-    pricing: tokenPricing(model.pricing),
+    pricing,
     zdrReachable,
     ...nameOf(model),
     ...descriptionOf(model),
@@ -631,10 +706,14 @@ function bakeFees(outcome: NormalizeOutcome): NormalizeOutcome {
  * unlisted is treated as unreachable and hidden (fail-closed). Modalities
  * come from `architecture.*_modalities` (language) or the endpoint the model
  * was discovered on (image/video).
+ *
+ * `admission` carries the pool-relative commercial inputs; only the language
+ * path consumes them, and only {@link normalizeCatalog} can derive them.
  */
 export function normalizeModel(
   model: GatewayModelMetadata,
-  zdrModelIds: ReadonlySet<string>
+  zdrModelIds: ReadonlySet<string>,
+  admission: CatalogAdmission
 ): NormalizeOutcome {
   const zdrReachable = zdrModelIds.has(model.id);
   const excludedReason = nonChatExclusionReason(model, zdrReachable);
@@ -643,7 +722,7 @@ export function normalizeModel(
   }
   switch (model.source) {
     case 'language': {
-      return bakeFees(normalizeLanguage(model, zdrReachable));
+      return bakeFees(normalizeLanguage(model, zdrReachable, admission));
     }
     case 'image': {
       return bakeFees(normalizeImage(model, zdrReachable));
@@ -752,7 +831,8 @@ function normalizedEntry(
 function resolveGroup(
   modelId: string,
   siblings: readonly GatewayModelMetadata[],
-  zdrModelIds: ReadonlySet<string>
+  zdrModelIds: ReadonlySet<string>,
+  admission: CatalogAdmission
 ): CatalogEntry {
   const ordered = siblings.toSorted(
     (a, b) => SOURCE_MERGE_PRIORITY[a.source] - SOURCE_MERGE_PRIORITY[b.source]
@@ -761,7 +841,7 @@ function resolveGroup(
   let excludedReason: ExcludeReason | undefined;
   const fallbacks: string[] = [];
   for (const model of ordered) {
-    const outcome = normalizeModel(model, zdrModelIds);
+    const outcome = normalizeModel(model, zdrModelIds, admission);
     if (outcome.kind === 'excluded') {
       excludedReason ??= outcome.reason;
       continue;
@@ -789,10 +869,16 @@ function resolveGroup(
  * table is one-row-per-model, so a slug advertised by more than one endpoint
  * must resolve to ONE descriptor — not rows racing to overwrite each other and
  * oscillating between refreshes.
+ *
+ * This is also where catalog admission's top-context exemption is measured, and
+ * the only place it can be: the threshold is a percentile over the pool, so no
+ * per-model function can derive it. `nowMs` is the refresh clock the age cutoff
+ * is measured back from, injected so normalization stays a pure function.
  */
 export function normalizeCatalog(
   models: readonly GatewayModelMetadata[],
-  zdrModelIds: ReadonlySet<string>
+  zdrModelIds: ReadonlySet<string>,
+  nowMs: number
 ): CatalogEntry[] {
   const groups = new Map<string, GatewayModelMetadata[]>();
   const order: string[] = [];
@@ -805,5 +891,25 @@ export function normalizeCatalog(
       existing.push(model);
     }
   }
-  return order.map((modelId) => resolveGroup(modelId, groups.get(modelId) ?? [], zdrModelIds));
+  const admission: CatalogAdmission = {
+    contextExemptionTokens: topContextExemptionTokens(zdrLanguageContexts(models, zdrModelIds)),
+    nowMs,
+  };
+  return order.map((modelId) =>
+    resolveGroup(modelId, groups.get(modelId) ?? [], zdrModelIds, admission)
+  );
+}
+
+/** The pool the context exemption is measured over: ZDR-reachable language
+ * models. Media entries are excluded because a per-unit-priced model carries no
+ * token context, and unreachable models because they are never sold — either
+ * would move a text model's exemption for a reason unrelated to text
+ * capability. */
+function zdrLanguageContexts(
+  models: readonly GatewayModelMetadata[],
+  zdrModelIds: ReadonlySet<string>
+): number[] {
+  return models.flatMap((model) =>
+    model.source === 'language' && zdrModelIds.has(model.id) ? [model.contextLength ?? 0] : []
+  );
 }

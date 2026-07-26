@@ -1,21 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import {
-  MINIMUM_OUTPUT_TOKENS,
-  REASONING_BUDGET_TOKENS_BY_EFFORT,
   SMART_MODEL_ID,
   buildTurnSystemPrompt,
-  evaluateManifest,
   nanoUSD,
-  outputCharsPerTokenForTier,
-  priceRequest,
   promptCharacterCount,
   resolveClientBilling,
-  smartModelMinimumRequiredNanoUsd,
   type Model,
   type ResolveBillingResult,
-  type SmartModelPoolCandidate,
 } from '@hushbox/shared';
+import { MINIMUM_OUTPUT_TOKENS } from '@hushbox/shared/affordability/constants';
+import { outputCharsPerTokenForTier } from '@hushbox/shared/affordability/estimate/pre-adapters';
+import { priceRequest } from '@hushbox/shared/affordability/estimate/price-request';
+import { REASONING_BUDGET_TOKENS_BY_EFFORT } from '@hushbox/shared/affordability/estimate/reasoning-plan';
+import { evaluateManifest } from '@hushbox/shared/affordability/estimate/reducers';
+import { smartModelMinimumRequiredNanoUsd } from '@hushbox/shared/affordability/estimate/smart-model-affordability';
+import type { SmartModelPoolCandidate } from '@hushbox/shared/affordability/estimate/smart-model-affordability';
 import { type BudgetCalculationResult } from '@/hooks/billing/use-budget-calculation';
 import { useModelFloor, usePromptBudget } from '@/hooks/billing/use-prompt-budget';
 
@@ -120,29 +120,52 @@ vi.mock('@/hooks/billing/use-resolve-billing', () => ({
   useResolveBilling: (...args: unknown[]) => mockUseResolveBilling(...args),
 }));
 
-const { mockTierInfo, mockSpendable } = vi.hoisted(() => ({
-  mockTierInfo: {
-    current: {
-      tier: 'free' as 'free' | 'paid' | 'trial' | 'guest',
-      canAccessPremium: false,
-      purchasedBalanceNanoUsd: 0n,
-      freeAllowanceNanoUsd: 0n,
+type FixtureTier = 'free' | 'paid' | 'trial' | 'guest';
+
+/** The served funding snapshot the spendable hook hands back. */
+interface SpendableFixture {
+  spendableNanoUsd: string;
+  heldNanoUsd: string;
+  tier?: FixtureTier;
+  payer?: 'self' | 'owner';
+}
+
+interface SpendableQueryFixture {
+  data: SpendableFixture | undefined;
+  isPending: boolean;
+}
+
+const { mockTierInfo, mockSpendable, mockUnscopedSpendable, mockUseSpendableFn } = vi.hoisted(
+  () => ({
+    mockTierInfo: {
+      current: {
+        tier: 'free' as FixtureTier,
+        canAccessPremium: false,
+        purchasedBalanceNanoUsd: 0n,
+        freeAllowanceNanoUsd: 0n,
+      },
     },
-  },
-  mockSpendable: {
-    current: {
-      data: undefined as { spendableNanoUsd: string; heldNanoUsd: string } | undefined,
-      isPending: false,
-    },
-  },
-}));
+    mockSpendable: { current: { data: undefined, isPending: false } as SpendableQueryFixture },
+    mockUnscopedSpendable: { current: undefined as SpendableQueryFixture | undefined },
+    mockUseSpendableFn: vi.fn(),
+  })
+);
 
 vi.mock('@/hooks/billing/use-user-tier-info', () => ({
   useUserTierInfo: () => mockTierInfo.current,
 }));
 
 vi.mock('@/hooks/billing/use-spendable', () => ({
-  useSpendable: () => mockSpendable.current,
+  useSpendable: (conversationId?: string | null) => {
+    mockUseSpendableFn(conversationId);
+    // The conversation-scoped read and the argument-free one are distinct
+    // queries serving different wallets, so a test that needs them to disagree
+    // sets `mockUnscopedSpendable`; unset, both arms share one fixture.
+    if ((conversationId ?? null) === null && mockUnscopedSpendable.current !== undefined) {
+      return mockUnscopedSpendable.current;
+    }
+    return mockSpendable.current;
+  },
 }));
 
 vi.mock('@/stores/model', async (importOriginal) => {
@@ -236,6 +259,7 @@ describe('usePromptBudget', () => {
       freeAllowanceNanoUsd: 0n,
     };
     mockSpendable.current = { data: undefined, isPending: false };
+    mockUnscopedSpendable.current = undefined;
     mockUseBudgetCalculation.mockReturnValue(baseBudgetResult);
     mockUseConversationBudgets.mockReturnValue({
       data: undefined,
@@ -1101,8 +1125,8 @@ describe('usePromptBudget', () => {
       );
     });
 
-    it("omits the reasoning budget for 'none' (hard off prices reasoning-free)", () => {
-      renderHook(() => usePromptBudget({ ...defaultInput, reasoningEffort: 'none' }));
+    it("omits the reasoning budget for 'off' (hard off prices reasoning-free)", () => {
+      renderHook(() => usePromptBudget({ ...defaultInput, reasoningEffort: 'off' }));
 
       expect(budgetCallInput()).not.toHaveProperty('reasoningBudgetTokens');
     });
@@ -1231,12 +1255,19 @@ describe('usePromptBudget', () => {
 
     it("sizes a free-tier member's owner-funded preview at the PAYER's tier (paid ratios)", () => {
       withSmartModelSelected();
-      // Owner-funded group context: positive effective remaining + positive
-      // owner balance ⇒ the owner pays, and an owner-funded turn is priced
-      // exactly as if the owner sent it (BILLING §Group Funding 1). The server
-      // sizes it from the admitted wallet's kind — purchased ⇒ paid ⇒ output
-      // storage at the paid 2 chars/token — so the client preview must use the
-      // SAME tier input, not the caller's own free-tier 4 chars/token.
+      // Owner-funded group turn: the SERVED snapshot for this conversation
+      // names the owner as payer at the paid tier (BILLING §Group Funding 1),
+      // so the preview sizes output storage at the paid 2 chars/token, not the
+      // caller's own free-tier 4.
+      mockSpendable.current = {
+        data: {
+          spendableNanoUsd: '10000000000',
+          heldNanoUsd: '0',
+          tier: 'paid',
+          payer: 'owner',
+        },
+        isPending: false,
+      };
       mockUseConversationBudgets.mockReturnValue({
         data: {
           conversationCapNanoUsd: '10000000000',
@@ -1283,7 +1314,40 @@ describe('usePromptBudget', () => {
       expect(paidSized).not.toBe(callerSized);
     });
 
+    it('asks the served read for the payer of the conversation it composes in', () => {
+      withSmartModelSelected();
+      renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conv-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      expect(mockUseSpendableFn).toHaveBeenCalledWith('conv-1');
+    });
+
+    it('sizes the turn through the budget core scoped to that same conversation', () => {
+      withSmartModelSelected();
+      renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conv-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      expect(mockUseBudgetCalculation).toHaveBeenCalledWith(
+        expect.objectContaining({ conversationId: 'conv-1' })
+      );
+    });
+
     it("keeps the CALLER's tier sizing once the group headroom is exhausted", () => {
+      // Fall-through: the server names the sender as payer at their own tier.
+      mockSpendable.current = {
+        data: { spendableNanoUsd: '0', heldNanoUsd: '0', tier: 'free', payer: 'self' },
+        isPending: false,
+      };
       withSmartModelSelected();
       mockUseConversationBudgets.mockReturnValue({
         data: {
@@ -1392,6 +1456,7 @@ describe('useModelFloor', () => {
       freeAllowanceNanoUsd: 0n,
     };
     mockSpendable.current = { data: undefined, isPending: false };
+    mockUnscopedSpendable.current = undefined;
     mockUseConversationBudgets.mockReturnValue({ data: undefined, isPending: false });
     mockModelsData.current = {
       models: [
@@ -1479,6 +1544,77 @@ describe('useModelFloor', () => {
     );
     expect(result.current.isBelowFloor(makeModel({ id: 'floor-model' }))).toBe(false);
     expect(mockUseConversationBudgets).toHaveBeenCalledWith('conv-1');
+  });
+
+  it("funds a member's fall-through from their OWN wallet when group holds zero the headroom out", () => {
+    // Durable group headroom is positive, so the server names the owner payer
+    // and serves the owner's HOLD-AWARE group remaining — zero here, because
+    // in-flight holds ate it. The member's own wallet can still fund the turn,
+    // and the picker must not grey a model the member can self-fund.
+    mockTierInfo.current = {
+      tier: 'paid',
+      canAccessPremium: true,
+      purchasedBalanceNanoUsd: 10_000_000_000n,
+      freeAllowanceNanoUsd: 0n,
+    };
+    mockUseConversationBudgets.mockReturnValue({
+      data: {
+        members: [{ capNanoUsd: '1000000000000', effectiveRemainingNanoUsd: '0' }],
+        ownerBalanceNanoUsd: '1000000000000',
+      },
+      isPending: false,
+    });
+    mockSpendable.current = {
+      data: { spendableNanoUsd: '0', heldNanoUsd: '1000000000000', tier: 'paid', payer: 'owner' },
+      isPending: false,
+    };
+    mockUnscopedSpendable.current = {
+      data: { spendableNanoUsd: '1000000000000', heldNanoUsd: '0', tier: 'paid', payer: 'self' },
+      isPending: false,
+    };
+
+    const { result } = renderHook(() =>
+      useModelFloor({
+        isAuthenticated: true,
+        group: { conversationId: 'conv-1', currentUserPrivilege: 'write' },
+      })
+    );
+
+    expect(result.current.isBelowFloor(makeModel({ id: 'floor-model' }))).toBe(false);
+  });
+
+  it("suppresses greying while the caller's OWN wallet read is still in flight", () => {
+    // The payer-scoped read has landed and the group headroom is spent, so the
+    // verdict now rests on the caller's own wallet — a figure that is not known
+    // yet. Reporting it as zero would grey every row for one render.
+    mockTierInfo.current = {
+      tier: 'paid',
+      canAccessPremium: true,
+      purchasedBalanceNanoUsd: 10_000_000_000n,
+      freeAllowanceNanoUsd: 0n,
+    };
+    mockUseConversationBudgets.mockReturnValue({
+      data: {
+        members: [{ capNanoUsd: '1000000000000', effectiveRemainingNanoUsd: '0' }],
+        ownerBalanceNanoUsd: '1000000000000',
+      },
+      isPending: false,
+    });
+    mockSpendable.current = {
+      data: { spendableNanoUsd: '0', heldNanoUsd: '1000000000000', tier: 'paid', payer: 'owner' },
+      isPending: false,
+    };
+    mockUnscopedSpendable.current = { data: undefined, isPending: true };
+
+    const { result } = renderHook(() =>
+      useModelFloor({
+        isAuthenticated: true,
+        group: { conversationId: 'conv-1', currentUserPrivilege: 'write' },
+      })
+    );
+
+    expect(result.current.isPending).toBe(true);
+    expect(result.current.isBelowFloor(makeModel({ id: 'floor-model' }))).toBe(false);
   });
 
   it('greys for a group member when both group headroom and own funds are exhausted', () => {

@@ -1,10 +1,9 @@
 import { LOCAL_NEON_DEV_CONFIG, createDb } from '@hushbox/db';
+import { createEnvUtilities, reasoningPlanModelFrom } from '@hushbox/shared';
 import {
-  createEnvUtilities,
   planReasoning,
   planReasoningOff,
-  reasoningPlanModelFrom,
-} from '@hushbox/shared';
+} from '@hushbox/shared/affordability/estimate/reasoning-plan';
 import { resolveModelProvider } from './resolve-model-provider.js';
 import type { Database } from '@hushbox/db';
 import type {

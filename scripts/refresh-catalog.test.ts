@@ -12,6 +12,9 @@ function summaryOf(
     'token-priced-video': 0,
     'megapixel-priced-image': 0,
     'missing-pricing': 0,
+    'zero-priced': 0,
+    'below-price-floor': 0,
+    'too-old': 0,
     deprecated: 0,
     'non-zdr': 0,
     'non-conversational': 0,
@@ -47,6 +50,22 @@ describe('formatRefreshSummary', () => {
   it('omits the breakdown entirely when nothing was excluded', () => {
     const line = formatRefreshSummary(summaryOf({ discovered: 5, written: 5, unchanged: 0 }, {}));
     expect(line).toBe('catalog:refresh: 5 discovered, 5 written, 0 unchanged, 0 excluded.');
+  });
+
+  it('reports each commercial exclusion separately, never collapsed', () => {
+    // An operator has to be able to tell "priced too low to sell" from "aged
+    // out" from "free", because those call for different responses.
+    const line = formatRefreshSummary(
+      summaryOf(
+        { discovered: 400, written: 300, unchanged: 0 },
+        { 'zero-priced': 12, 'below-price-floor': 40, 'too-old': 48 }
+      )
+    );
+
+    expect(line).toBe(
+      'catalog:refresh: 400 discovered, 300 written, 0 unchanged, ' +
+        '100 excluded (12 zero-priced, 40 below-price-floor, 48 too-old).'
+    );
   });
 
   it('surfaces a lone unknown-pricing-unit (the real drift signal)', () => {

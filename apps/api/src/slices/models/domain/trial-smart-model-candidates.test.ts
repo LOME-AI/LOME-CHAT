@@ -5,8 +5,8 @@ import {
   STORAGE_COST_PER_CHARACTER_NANO,
   computeClassifierPromptOverhead,
   nanoUSD,
-  outputCharsPerTokenForTier,
 } from '@hushbox/shared';
+import { outputCharsPerTokenForTier } from '@hushbox/shared/affordability/estimate/pre-adapters';
 import { applyMarkup } from '@hushbox/shared';
 import { callBillableNanoUsd } from './estimate.js';
 import { CLASSIFIER_CHARS_PER_TOKEN } from './smart-model-candidates.js';

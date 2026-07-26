@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { REASONING_BUDGET_TOKENS_BY_EFFORT, nanoUSD } from '@hushbox/shared';
+import { nanoUSD } from '@hushbox/shared';
+import { REASONING_BUDGET_TOKENS_BY_EFFORT } from '@hushbox/shared/affordability/estimate/reasoning-plan';
 import { reasoningEntryFor, resolveTurnReasoning } from './turn-reasoning.js';
 import type { ModelPricingResolver } from '../../models/index.js';
 import type { ModelDescriptor, ModelReasoning } from '@hushbox/shared';
@@ -67,26 +68,26 @@ describe('resolveTurnReasoning', () => {
     expect(resolveTurnReasoning(['m'], resolve)._unsafeUnwrap().size).toBe(0);
   });
 
-  it("resolves 'none' to the explicit hard-off wire on a non-mandatory reasoning model", () => {
+  it("resolves 'off' to the explicit hard-off wire on a non-mandatory reasoning model", () => {
     const resolve = resolverFor({ m: descriptorFor('m', OPEN_EFFORT) });
-    const entries = resolveTurnReasoning(['m'], resolve, 'none')._unsafeUnwrap();
+    const entries = resolveTurnReasoning(['m'], resolve, 'off')._unsafeUnwrap();
     expect(entries.get('m')).toEqual({
-      effort: 'none',
+      effort: 'off',
       wire: { enabled: false },
       reasoningBudgetTokens: 0,
     });
   });
 
-  it("resolves 'none' on a non-reasoning model to no entry (nothing to turn off)", () => {
+  it("resolves 'off' on a non-reasoning model to no entry (nothing to turn off)", () => {
     const resolve = resolverFor({ m: descriptorFor('m') });
-    expect(resolveTurnReasoning(['m'], resolve, 'none')._unsafeUnwrap().size).toBe(0);
+    expect(resolveTurnReasoning(['m'], resolve, 'off')._unsafeUnwrap().size).toBe(0);
   });
 
-  it("refuses 'none' on a mandatory-reasoning model (never silently ignored)", () => {
+  it("refuses 'off' on a mandatory-reasoning model (never silently ignored)", () => {
     const resolve = resolverFor({
       m: descriptorFor('m', { mandatory: true, supportedEfforts: null }),
     });
-    const result = resolveTurnReasoning(['m'], resolve, 'none');
+    const result = resolveTurnReasoning(['m'], resolve, 'off');
     expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 
@@ -136,7 +137,7 @@ describe('resolveTurnReasoning — multi-model union resolution', () => {
     const entries = resolveTurnReasoning(['a', 'b'], resolve, 'low')._unsafeUnwrap();
     expect(entries.get('a')?.wire).toEqual({ effort: 'low' });
     expect(entries.get('b')).toEqual({
-      effort: 'none',
+      effort: 'off',
       wire: { enabled: false },
       reasoningBudgetTokens: 0,
     });
@@ -177,12 +178,12 @@ describe('resolveTurnReasoning — multi-model union resolution', () => {
     expect(entries.has('b')).toBe(false);
   });
 
-  it("resolves multi-model 'none' per model: a mandatory sibling runs its lowest rung", () => {
+  it("resolves multi-model 'off' per model: a mandatory sibling runs its lowest rung", () => {
     const resolve = resolverFor({
       a: descriptorFor('a', OPEN_EFFORT),
       b: descriptorFor('b', { mandatory: true, supportedEfforts: ['hi', 'lo'] }),
     });
-    const entries = resolveTurnReasoning(['a', 'b'], resolve, 'none')._unsafeUnwrap();
+    const entries = resolveTurnReasoning(['a', 'b'], resolve, 'off')._unsafeUnwrap();
     expect(entries.get('a')?.wire).toEqual({ enabled: false });
     expect(entries.get('b')?.wire).toEqual({ effort: 'lo' });
   });
@@ -204,9 +205,9 @@ describe('resolveTurnReasoning — multi-model union resolution', () => {
     expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 
-  it("keeps multi-model 'none' a no-op when no selected model reasons", () => {
+  it("keeps multi-model 'off' a no-op when no selected model reasons", () => {
     const resolve = resolverFor({ a: descriptorFor('a'), b: descriptorFor('b') });
-    expect(resolveTurnReasoning(['a', 'b'], resolve, 'none')._unsafeUnwrap().size).toBe(0);
+    expect(resolveTurnReasoning(['a', 'b'], resolve, 'off')._unsafeUnwrap().size).toBe(0);
   });
 });
 
@@ -229,7 +230,7 @@ describe("resolveTurnReasoning — deterministic 'auto' (no static preference or
     const resolve = resolverFor({ m: descriptorFor('m', { supportedEfforts: ['none'] }) });
     const entries = resolveTurnReasoning(['m'], resolve, 'auto')._unsafeUnwrap();
     expect(entries.get('m')).toEqual({
-      effort: 'none',
+      effort: 'off',
       wire: { enabled: false },
       reasoningBudgetTokens: 0,
     });

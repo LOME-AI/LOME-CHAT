@@ -1,11 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import {
-  ERROR_CODES,
-  MINIMUM_OUTPUT_TOKENS,
-  nanoUSD,
-  PAID_CUSHION_NANO_USD,
-  REASONING_BUDGET_TOKENS_BY_EFFORT,
-} from '@hushbox/shared';
+import { ERROR_CODES, nanoUSD, PAID_CUSHION_NANO_USD } from '@hushbox/shared';
+import { MINIMUM_OUTPUT_TOKENS } from '@hushbox/shared/affordability/constants';
+import { REASONING_BUDGET_TOKENS_BY_EFFORT } from '@hushbox/shared/affordability/estimate/reasoning-plan';
 import {
   createTurnCompileRegistries,
   promptInputTokensFor,

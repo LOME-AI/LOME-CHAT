@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { ModelDescriptor } from '@hushbox/shared';
+import { MAX_MODEL_AGE_MS } from '@hushbox/shared/affordability';
 import { normalizeCatalog, normalizeModel } from './normalize.js';
 import { isNonConversational } from './non-chat-exclusions.js';
 import type { ImageMetadata, LanguageMetadata, VideoMetadata } from './gateway-metadata.js';
-import type { CatalogEntry, DescriptorContent } from './normalize.js';
+import type { CatalogAdmission, CatalogEntry, DescriptorContent } from './normalize.js';
 
 function languageModel(overrides: Partial<LanguageMetadata> = {}): LanguageMetadata {
   return {
@@ -57,6 +58,25 @@ const ZDR: ReadonlySet<string> = new Set([
   'google/test-video',
 ]);
 
+/** The refresh clock the fixtures are dated against — a few weeks after every
+ * fixture's `releasedAt`, so the age cutoff passes unless a test dates a model
+ * deliberately old. */
+const NOW_MS = Date.UTC(2024, 0, 1);
+
+/** A release date one second past the age cutoff, derived from the constant so
+ * the boundary cannot drift away from the rule. */
+const OLDER_THAN_LIMIT_SECONDS = Math.trunc((NOW_MS - MAX_MODEL_AGE_MS) / 1000) - 1;
+
+/** Pool-relative admission inputs. `ADMISSION` holds the context exemption
+ * above every fixture's context length, so the price floor and the age cutoff
+ * are the live rules. */
+const ADMISSION: CatalogAdmission = { contextExemptionTokens: 1_000_000_000, nowMs: NOW_MS };
+
+/** The exemption a small pool produces: every context length is in the top
+ * percentile, so the floor and the cutoff are both bypassed. Used by fixtures
+ * that state a sub-floor rate in order to exercise something else. */
+const EXEMPT: CatalogAdmission = { contextExemptionTokens: 0, nowMs: NOW_MS };
+
 function normalized(outcome: ReturnType<typeof normalizeModel>): DescriptorContent {
   if (outcome.kind !== 'normalized') throw new Error(`expected normalized, got ${outcome.kind}`);
   return outcome.content;
@@ -64,7 +84,7 @@ function normalized(outcome: ReturnType<typeof normalizeModel>): DescriptorConte
 
 describe('normalizeModel (language)', () => {
   it('normalizes a language model into descriptor content', () => {
-    expect(normalized(normalizeModel(languageModel(), ZDR))).toMatchObject({
+    expect(normalized(normalizeModel(languageModel(), ZDR, ADMISSION))).toMatchObject({
       id: 'openai/gpt-test',
       provider: 'openai',
       inputs: ['text', 'image'],
@@ -77,12 +97,14 @@ describe('normalizeModel (language)', () => {
   });
 
   it('never carries the gateway popularityRank into descriptor content', () => {
-    const content = normalized(normalizeModel(languageModel({ popularityRank: 7 }), ZDR));
+    const content = normalized(
+      normalizeModel(languageModel({ popularityRank: 7 }), ZDR, ADMISSION)
+    );
     expect('popularityRank' in content).toBe(false);
   });
 
   it('seeds parameter specs from supported parameter names', () => {
-    const content = normalized(normalizeModel(languageModel(), ZDR));
+    const content = normalized(normalizeModel(languageModel(), ZDR, ADMISSION));
     expect(content.parameters['temperature']).toMatchObject({ type: 'number', wire: 'firstClass' });
     expect(content.parameters['topP']).toMatchObject({ type: 'number' });
     expect(content.parameters['maxOutputTokens']).toMatchObject({ type: 'integer' });
@@ -90,7 +112,11 @@ describe('normalizeModel (language)', () => {
 
   it('skips supported parameter names without a known spec', () => {
     const content = normalized(
-      normalizeModel(languageModel({ supportedParameters: ['temperature', 'mystery_knob'] }), ZDR)
+      normalizeModel(
+        languageModel({ supportedParameters: ['temperature', 'mystery_knob'] }),
+        ZDR,
+        ADMISSION
+      )
     );
     expect(Object.keys(content.parameters)).toEqual(['temperature']);
   });
@@ -106,7 +132,8 @@ describe('normalizeModel (language)', () => {
             defaultEnabled: true,
           },
         }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     );
     expect(content.reasoning).toEqual({
@@ -118,7 +145,7 @@ describe('normalizeModel (language)', () => {
   });
 
   it('leaves the reasoning field absent when the gateway carries no reasoning object', () => {
-    const content = normalized(normalizeModel(languageModel(), ZDR));
+    const content = normalized(normalizeModel(languageModel(), ZDR, ADMISSION));
     expect('reasoning' in content).toBe(false);
   });
 
@@ -126,7 +153,8 @@ describe('normalizeModel (language)', () => {
     const content = normalized(
       normalizeModel(
         languageModel({ reasoning: { mandatory: false, supportedEfforts: null } }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     );
     const parsed = ModelDescriptor.parse({ ...content, fetchedAt: 0 });
@@ -134,7 +162,7 @@ describe('normalizeModel (language)', () => {
   });
 
   it('excludes a model whose output modalities classify to no family', () => {
-    expect(normalizeModel(languageModel({ outputModalities: ['smell'] }), ZDR)).toEqual({
+    expect(normalizeModel(languageModel({ outputModalities: ['smell'] }), ZDR, ADMISSION)).toEqual({
       kind: 'excluded',
       modelId: 'openai/gpt-test',
       reason: 'unclassifiable-modality',
@@ -142,14 +170,14 @@ describe('normalizeModel (language)', () => {
   });
 
   it('excludes a model with empty output modalities', () => {
-    expect(normalizeModel(languageModel({ outputModalities: [] }), ZDR)).toMatchObject({
+    expect(normalizeModel(languageModel({ outputModalities: [] }), ZDR, ADMISSION)).toMatchObject({
       kind: 'excluded',
       reason: 'unclassifiable-modality',
     });
   });
 
   it('excludes a deprecated model', () => {
-    expect(normalizeModel(languageModel({ deprecated: true }), ZDR)).toEqual({
+    expect(normalizeModel(languageModel({ deprecated: true }), ZDR, ADMISSION)).toEqual({
       kind: 'excluded',
       modelId: 'openai/gpt-test',
       reason: 'deprecated',
@@ -158,35 +186,40 @@ describe('normalizeModel (language)', () => {
 
   it('carries the source description into descriptor content for every family', () => {
     expect(
-      normalized(normalizeModel(languageModel({ description: 'Fast frontier model.' }), ZDR))
-        .description
+      normalized(
+        normalizeModel(languageModel({ description: 'Fast frontier model.' }), ZDR, ADMISSION)
+      ).description
     ).toBe('Fast frontier model.');
     expect(
-      normalized(normalizeModel(imageModel({ description: 'Draws pictures.' }), ZDR)).description
+      normalized(normalizeModel(imageModel({ description: 'Draws pictures.' }), ZDR, ADMISSION))
+        .description
     ).toBe('Draws pictures.');
     expect(
-      normalized(normalizeModel(videoModel({ description: 'Makes movies.' }), ZDR)).description
+      normalized(normalizeModel(videoModel({ description: 'Makes movies.' }), ZDR, ADMISSION))
+        .description
     ).toBe('Makes movies.');
   });
 
   it('omits description when the source carries none — absence never excludes', () => {
-    expect(normalized(normalizeModel(languageModel(), ZDR))).not.toHaveProperty('description');
+    expect(normalized(normalizeModel(languageModel(), ZDR, ADMISSION))).not.toHaveProperty(
+      'description'
+    );
   });
 
   it('carries the source display name into descriptor content for every family', () => {
-    expect(normalized(normalizeModel(languageModel({ name: 'GPT Test' }), ZDR)).name).toBe(
-      'GPT Test'
-    );
-    expect(normalized(normalizeModel(imageModel({ name: 'Draw Test' }), ZDR)).name).toBe(
+    expect(
+      normalized(normalizeModel(languageModel({ name: 'GPT Test' }), ZDR, ADMISSION)).name
+    ).toBe('GPT Test');
+    expect(normalized(normalizeModel(imageModel({ name: 'Draw Test' }), ZDR, ADMISSION)).name).toBe(
       'Draw Test'
     );
-    expect(normalized(normalizeModel(videoModel({ name: 'Film Test' }), ZDR)).name).toBe(
+    expect(normalized(normalizeModel(videoModel({ name: 'Film Test' }), ZDR, ADMISSION)).name).toBe(
       'Film Test'
     );
   });
 
   it('omits name when the source carries none — absence never excludes', () => {
-    expect(normalized(normalizeModel(languageModel(), ZDR))).not.toHaveProperty('name');
+    expect(normalized(normalizeModel(languageModel(), ZDR, ADMISSION))).not.toHaveProperty('name');
   });
 
   it('parses a stored descriptor row written before name/description existed (additive-optional)', () => {
@@ -210,11 +243,13 @@ describe('normalizeModel (language)', () => {
   });
 
   it('captures the release timestamp as releasedAt', () => {
-    expect(normalized(normalizeModel(languageModel(), ZDR)).releasedAt).toBe(1_700_000_000);
+    expect(normalized(normalizeModel(languageModel(), ZDR, ADMISSION)).releasedAt).toBe(
+      1_700_000_000
+    );
   });
 
   it('excludes a language model with no release date (fail-closed)', () => {
-    expect(normalizeModel(languageModel({ releasedAt: undefined }), ZDR)).toEqual({
+    expect(normalizeModel(languageModel({ releasedAt: undefined }), ZDR, ADMISSION)).toEqual({
       kind: 'excluded',
       modelId: 'openai/gpt-test',
       reason: 'missing-release-date',
@@ -223,7 +258,7 @@ describe('normalizeModel (language)', () => {
 
   it('excludes a language model with a non-positive release date (fail-closed)', () => {
     for (const releasedAt of [0, -1]) {
-      expect(normalizeModel(languageModel({ releasedAt }), ZDR)).toEqual({
+      expect(normalizeModel(languageModel({ releasedAt }), ZDR, ADMISSION)).toEqual({
         kind: 'excluded',
         modelId: 'openai/gpt-test',
         reason: 'missing-release-date',
@@ -232,7 +267,7 @@ describe('normalizeModel (language)', () => {
   });
 
   it('excludes a language model not in the ZDR set (only ZDR models are persisted)', () => {
-    expect(normalizeModel(languageModel(), new Set<string>())).toEqual({
+    expect(normalizeModel(languageModel(), new Set<string>(), ADMISSION)).toEqual({
       kind: 'excluded',
       modelId: 'openai/gpt-test',
       reason: 'non-zdr',
@@ -241,33 +276,39 @@ describe('normalizeModel (language)', () => {
 
   it('filters input modalities outside the closed enum', () => {
     expect(
-      normalized(normalizeModel(languageModel({ inputModalities: ['text', 'smell'] }), ZDR)).inputs
+      normalized(
+        normalizeModel(languageModel({ inputModalities: ['text', 'smell'] }), ZDR, ADMISSION)
+      ).inputs
     ).toEqual(['text']);
   });
 
   it('defaults empty input modalities to text', () => {
-    expect(normalized(normalizeModel(languageModel({ inputModalities: [] }), ZDR)).inputs).toEqual([
-      'text',
-    ]);
+    expect(
+      normalized(normalizeModel(languageModel({ inputModalities: [] }), ZDR, ADMISSION)).inputs
+    ).toEqual(['text']);
   });
 
   it('assigns no language behaviors to a media-only-output model', () => {
     const content = normalized(
-      normalizeModel(languageModel({ outputModalities: ['image', 'video'] }), ZDR)
+      normalizeModel(languageModel({ outputModalities: ['image', 'video'] }), ZDR, ADMISSION)
     );
     expect(content.behaviors).toEqual([]);
     expect(content.outputs).toEqual(['image', 'video']);
   });
 
-  it('leaves pricing empty when the model reports none', () => {
-    expect(normalized(normalizeModel(languageModel({ pricing: undefined }), ZDR)).pricing).toEqual(
-      {}
-    );
+  it('leaves pricing empty when a media model reports none', () => {
+    // The language path has no such outcome: a text model that states no rate
+    // has a combined rate of zero and is excluded by catalog admission.
+    expect(
+      normalized(normalizeModel(videoModel({ resolutions: [] }), ZDR, ADMISSION)).pricing
+    ).toEqual({});
   });
 
   it('omits rates left out of a partial pricing object', () => {
     expect(
-      normalized(normalizeModel(languageModel({ pricing: { completion: '0.00001' } }), ZDR)).pricing
+      normalized(
+        normalizeModel(languageModel({ pricing: { completion: '0.00001' } }), ZDR, ADMISSION)
+      ).pricing
     ).toEqual({ outputPerToken: '11500' });
   });
 
@@ -276,7 +317,8 @@ describe('normalizeModel (language)', () => {
       normalized(
         normalizeModel(
           languageModel({ pricing: { prompt: 'mystery', completion: '0.00001' } }),
-          ZDR
+          ZDR,
+          ADMISSION
         )
       ).pricing
     ).toEqual({ outputPerToken: '11500' });
@@ -289,7 +331,8 @@ describe('normalizeModel (language)', () => {
           languageModel({
             pricing: { prompt: '0.000002', completion: '0.00001', cacheRead: '0.000001' },
           }),
-          ZDR
+          ZDR,
+          ADMISSION
         )
       ).pricing['cachedInputPerToken']
     ).toBe('1150');
@@ -297,26 +340,30 @@ describe('normalizeModel (language)', () => {
 
   it('omits limits when there is no context length', () => {
     expect(
-      normalized(normalizeModel(languageModel({ contextLength: undefined }), ZDR)).limits
+      normalized(normalizeModel(languageModel({ contextLength: undefined }), ZDR, ADMISSION)).limits
     ).toEqual({});
   });
 
   it('writes limits.maxOutputTokens from a positive-integer gateway ceiling', () => {
     expect(
-      normalized(normalizeModel(languageModel({ maxCompletionTokens: 16_384 }), ZDR)).limits
+      normalized(normalizeModel(languageModel({ maxCompletionTokens: 16_384 }), ZDR, ADMISSION))
+        .limits
     ).toEqual({ contextLength: 128_000, maxOutputTokens: 16_384 });
   });
 
   it('omits maxOutputTokens when the gateway reports no ceiling', () => {
     expect(
-      normalized(normalizeModel(languageModel({ maxCompletionTokens: undefined }), ZDR)).limits
+      normalized(normalizeModel(languageModel({ maxCompletionTokens: undefined }), ZDR, ADMISSION))
+        .limits
     ).toEqual({ contextLength: 128_000 });
   });
 
   it('omits maxOutputTokens when the gateway ceiling is not a positive integer', () => {
     for (const nonsensical of [0, -1, 0.5]) {
       expect(
-        normalized(normalizeModel(languageModel({ maxCompletionTokens: nonsensical }), ZDR)).limits
+        normalized(
+          normalizeModel(languageModel({ maxCompletionTokens: nonsensical }), ZDR, ADMISSION)
+        ).limits
       ).toEqual({ contextLength: 128_000 });
     }
   });
@@ -326,17 +373,17 @@ describe('normalizeModel (specialty exclusions)', () => {
   const NO_ZDR: ReadonlySet<string> = new Set<string>();
 
   it('excludes a non-ZDR model for each family with reason non-zdr', () => {
-    expect(normalizeModel(languageModel(), NO_ZDR)).toEqual({
+    expect(normalizeModel(languageModel(), NO_ZDR, ADMISSION)).toEqual({
       kind: 'excluded',
       modelId: 'openai/gpt-test',
       reason: 'non-zdr',
     });
-    expect(normalizeModel(imageModel(), NO_ZDR)).toEqual({
+    expect(normalizeModel(imageModel(), NO_ZDR, ADMISSION)).toEqual({
       kind: 'excluded',
       modelId: 'google/test-image',
       reason: 'non-zdr',
     });
-    expect(normalizeModel(videoModel(), NO_ZDR)).toEqual({
+    expect(normalizeModel(videoModel(), NO_ZDR, ADMISSION)).toEqual({
       kind: 'excluded',
       modelId: 'google/test-video',
       reason: 'non-zdr',
@@ -344,7 +391,7 @@ describe('normalizeModel (specialty exclusions)', () => {
   });
 
   it('non-zdr wins over an otherwise-quiet exclusion reason', () => {
-    expect(normalizeModel(languageModel({ deprecated: true }), NO_ZDR)).toEqual({
+    expect(normalizeModel(languageModel({ deprecated: true }), NO_ZDR, ADMISSION)).toEqual({
       kind: 'excluded',
       modelId: 'openai/gpt-test',
       reason: 'non-zdr',
@@ -355,7 +402,8 @@ describe('normalizeModel (specialty exclusions)', () => {
     expect(
       normalizeModel(
         languageModel({ id: 'relace/relace-apply-3', provider: 'relace' }),
-        new Set(['relace/relace-apply-3'])
+        new Set(['relace/relace-apply-3']),
+        ADMISSION
       )
     ).toEqual({
       kind: 'excluded',
@@ -368,7 +416,8 @@ describe('normalizeModel (specialty exclusions)', () => {
     expect(
       normalizeModel(
         languageModel({ id: 'morph/morph-v3-large', provider: 'morph' }),
-        new Set(['morph/morph-v3-large'])
+        new Set(['morph/morph-v3-large']),
+        ADMISSION
       )
     ).toEqual({
       kind: 'excluded',
@@ -383,7 +432,8 @@ describe('normalizeModel (specialty exclusions)', () => {
     expect(
       normalizeModel(
         languageModel({ id: 'acme/acme-guard-9b', provider: 'acme' }),
-        new Set(['acme/acme-guard-9b'])
+        new Set(['acme/acme-guard-9b']),
+        ADMISSION
       )
     ).toEqual({
       kind: 'excluded',
@@ -394,7 +444,8 @@ describe('normalizeModel (specialty exclusions)', () => {
     expect(
       normalizeModel(
         languageModel({ id: 'acme/chat-42', provider: 'acme', name: 'Acme Safeguard' }),
-        new Set(['acme/chat-42'])
+        new Set(['acme/chat-42']),
+        ADMISSION
       )
     ).toEqual({
       kind: 'excluded',
@@ -409,13 +460,14 @@ describe('normalizeModel (specialty exclusions)', () => {
     expect(
       normalizeModel(
         languageModel({ id: 'morph/morph-v3-fast', provider: 'not-banned', name: 'Fast Coder' }),
-        new Set(['morph/morph-v3-fast'])
+        new Set(['morph/morph-v3-fast']),
+        ADMISSION
       )
     ).toMatchObject({ kind: 'excluded', reason: 'non-conversational' });
   });
 
   it('still normalizes a ZDR-reachable general chat model (no over-exclusion)', () => {
-    expect(normalized(normalizeModel(languageModel(), ZDR)).zdrReachable).toBe(true);
+    expect(normalized(normalizeModel(languageModel(), ZDR, ADMISSION)).zdrReachable).toBe(true);
   });
 
   // Perplexity `sonar` models are conversational search models and must stay
@@ -434,7 +486,7 @@ describe('normalizeModel (specialty exclusions)', () => {
     for (const id of sonarIds) {
       expect(isNonConversational(id, 'perplexity', noName)).toBe(false);
       expect(
-        normalizeModel(languageModel({ id, provider: 'perplexity' }), new Set([id]))
+        normalizeModel(languageModel({ id, provider: 'perplexity' }), new Set([id]), ADMISSION)
       ).toMatchObject({ kind: 'normalized' });
     }
   });
@@ -442,7 +494,7 @@ describe('normalizeModel (specialty exclusions)', () => {
 
 describe('normalizeModel (image)', () => {
   it('normalizes an image model with per-image pricing and derived params', () => {
-    const content = normalized(normalizeModel(imageModel(), ZDR));
+    const content = normalized(normalizeModel(imageModel(), ZDR, ADMISSION));
     expect(content).toMatchObject({
       outputs: ['image'],
       inputs: ['text'],
@@ -457,11 +509,11 @@ describe('normalizeModel (image)', () => {
   });
 
   it('carries no limits — image models have no token-cap concept', () => {
-    expect(normalized(normalizeModel(imageModel(), ZDR)).limits).toEqual({});
+    expect(normalized(normalizeModel(imageModel(), ZDR, ADMISSION)).limits).toEqual({});
   });
 
   it('excludes an image model with no release date (fail-closed)', () => {
-    expect(normalizeModel(imageModel({ releasedAt: undefined }), ZDR)).toMatchObject({
+    expect(normalizeModel(imageModel({ releasedAt: undefined }), ZDR, ADMISSION)).toMatchObject({
       kind: 'excluded',
       reason: 'missing-release-date',
     });
@@ -469,7 +521,7 @@ describe('normalizeModel (image)', () => {
 
   it('excludes an image model with a non-positive release date (fail-closed)', () => {
     for (const releasedAt of [0, -1]) {
-      expect(normalizeModel(imageModel({ releasedAt }), ZDR)).toMatchObject({
+      expect(normalizeModel(imageModel({ releasedAt }), ZDR, ADMISSION)).toMatchObject({
         kind: 'excluded',
         reason: 'missing-release-date',
       });
@@ -487,7 +539,8 @@ describe('normalizeModel (image)', () => {
             { billable: 'output_image', unit: 'megapixel', costUsd: '0.01' },
           ],
         }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     ).toEqual({
       kind: 'excluded',
@@ -502,7 +555,8 @@ describe('normalizeModel (image)', () => {
         imageModel({
           endpointPricing: [{ billable: 'output_image', unit: 'megapixel', costUsd: '0.01' }],
         }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     ).toEqual({
       kind: 'excluded',
@@ -512,7 +566,7 @@ describe('normalizeModel (image)', () => {
   });
 
   it('excludes an image model with no output pricing rows quietly (missing-pricing)', () => {
-    expect(normalizeModel(imageModel({ endpointPricing: [] }), ZDR)).toEqual({
+    expect(normalizeModel(imageModel({ endpointPricing: [] }), ZDR, ADMISSION)).toEqual({
       kind: 'excluded',
       modelId: 'google/test-image',
       reason: 'missing-pricing',
@@ -526,7 +580,8 @@ describe('normalizeModel (image)', () => {
         imageModel({
           endpointPricing: [{ billable: 'input_image', unit: 'megapixel', costUsd: '0.06' }],
         }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     ).toMatchObject({ kind: 'excluded', reason: 'missing-pricing' });
   });
@@ -537,7 +592,8 @@ describe('normalizeModel (image)', () => {
         imageModel({
           endpointPricing: [{ billable: 'output_image', unit: 'furlong', costUsd: '0.01' }],
         }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     ).toEqual({
       kind: 'excluded',
@@ -552,7 +608,8 @@ describe('normalizeModel (image)', () => {
         imageModel({
           endpointPricing: [{ billable: 'output_image', unit: 'token', costUsd: '0.00003' }],
         }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     ).toEqual({
       kind: 'excluded',
@@ -567,7 +624,8 @@ describe('normalizeModel (image)', () => {
         imageModel({
           endpointPricing: [{ billable: 'output_image', unit: 'output_token', costUsd: '0.00003' }],
         }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     ).toMatchObject({ kind: 'excluded', reason: 'token-priced-image' });
   });
@@ -581,7 +639,8 @@ describe('normalizeModel (image)', () => {
             { billable: 'output_image', unit: 'image', costUsd: '0.04' },
           ],
         }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     );
     expect(content.pricing).toEqual({ perImage: '46000000' });
@@ -591,7 +650,8 @@ describe('normalizeModel (image)', () => {
     const content = normalized(
       normalizeModel(
         imageModel({ supportedParameters: { resolution: [], aspectRatio: [], maxN: undefined } }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     );
     expect(content.parameters).toEqual({});
@@ -603,7 +663,8 @@ describe('normalizeModel (image)', () => {
         imageModel({
           endpointPricing: [{ billable: 'output_image', unit: 'image', costUsd: 'mystery' }],
         }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     ).toEqual({
       kind: 'excluded',
@@ -615,20 +676,20 @@ describe('normalizeModel (image)', () => {
 
 describe('normalizeModel (video SKU interpreter)', () => {
   it('captures the release timestamp and excludes a video model with no release date', () => {
-    expect(normalized(normalizeModel(videoModel(), ZDR)).releasedAt).toBe(1_700_000_000);
-    expect(normalizeModel(videoModel({ releasedAt: undefined }), ZDR)).toMatchObject({
+    expect(normalized(normalizeModel(videoModel(), ZDR, ADMISSION)).releasedAt).toBe(1_700_000_000);
+    expect(normalizeModel(videoModel({ releasedAt: undefined }), ZDR, ADMISSION)).toMatchObject({
       kind: 'excluded',
       reason: 'missing-release-date',
     });
   });
 
   it('carries no limits — video models have no token-cap concept', () => {
-    expect(normalized(normalizeModel(videoModel(), ZDR)).limits).toEqual({});
+    expect(normalized(normalizeModel(videoModel(), ZDR, ADMISSION)).limits).toEqual({});
   });
 
   it('excludes a video model with a non-positive release date (fail-closed)', () => {
     for (const releasedAt of [0, -1]) {
-      expect(normalizeModel(videoModel({ releasedAt }), ZDR)).toMatchObject({
+      expect(normalizeModel(videoModel({ releasedAt }), ZDR, ADMISSION)).toMatchObject({
         kind: 'excluded',
         reason: 'missing-release-date',
       });
@@ -640,7 +701,7 @@ describe('normalizeModel (video SKU interpreter)', () => {
   function videoOutcome(
     overrides: Partial<VideoMetadata>
   ): Extract<ReturnType<typeof normalizeModel>, { kind: 'normalized' }> {
-    const outcome = normalizeModel(videoModel(overrides), ZDR);
+    const outcome = normalizeModel(videoModel(overrides), ZDR, ADMISSION);
     if (outcome.kind !== 'normalized') throw new Error(`expected normalized, got ${outcome.kind}`);
     return outcome;
   }
@@ -801,7 +862,8 @@ describe('normalizeModel (video SKU interpreter)', () => {
     expect(
       normalizeModel(
         videoModel({ pricingSkus: { video_tokens: '0.001', video_tokens_without_audio: '0.001' } }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     ).toEqual({
       kind: 'excluded',
@@ -811,7 +873,9 @@ describe('normalizeModel (video SKU interpreter)', () => {
   });
 
   it('excludes a video model with an unknown pricing unit (loud, fail-closed)', () => {
-    expect(normalizeModel(videoModel({ pricingSkus: { per_video_token: '0.001' } }), ZDR)).toEqual({
+    expect(
+      normalizeModel(videoModel({ pricingSkus: { per_video_token: '0.001' } }), ZDR, ADMISSION)
+    ).toEqual({
       kind: 'excluded',
       modelId: 'google/test-video',
       reason: 'unknown-pricing-unit',
@@ -824,7 +888,8 @@ describe('normalizeModel (video SKU interpreter)', () => {
     expect(
       normalizeModel(
         videoModel({ resolutions: ['720p'], pricingSkus: { duration_seconds: 'mystery' } }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     ).toEqual({
       kind: 'excluded',
@@ -835,13 +900,19 @@ describe('normalizeModel (video SKU interpreter)', () => {
 
   it('exposes an empty pricing matrix when the model declares no resolutions', () => {
     const content = normalized(
-      normalizeModel(videoModel({ resolutions: [], pricingSkus: { duration_seconds: '0.1' } }), ZDR)
+      normalizeModel(
+        videoModel({ resolutions: [], pricingSkus: { duration_seconds: '0.1' } }),
+        ZDR,
+        ADMISSION
+      )
     );
     expect(content.pricing).toEqual({});
   });
 
   it('derives video params and frame-image input support', () => {
-    const content = normalized(normalizeModel(videoModel({ supportsFrameImages: true }), ZDR));
+    const content = normalized(
+      normalizeModel(videoModel({ supportsFrameImages: true }), ZDR, ADMISSION)
+    );
     expect(content.inputs).toEqual(['text', 'image']);
     expect(content.parameters['resolution']).toMatchObject({
       type: 'enum',
@@ -863,7 +934,8 @@ describe('normalizeModel (video SKU interpreter)', () => {
           generateAudio: false,
           seed: false,
         }),
-        ZDR
+        ZDR,
+        ADMISSION
       )
     );
     expect(content.parameters).toEqual({});
@@ -881,7 +953,8 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
   it('leaves disjoint ids as separate entries (cheap no-op)', () => {
     const entries = normalizeCatalog(
       [languageModel({ id: 'a/lang' }), imageModel({ id: 'b/img' })],
-      new Set(['a/lang', 'b/img'])
+      new Set(['a/lang', 'b/img']),
+      NOW_MS
     );
     expect(entries.map((entry) => entry.modelId).toSorted((x, y) => x.localeCompare(y))).toEqual([
       'a/lang',
@@ -895,7 +968,8 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
     // denies it quietly rather than persisting an unrunnable catalog row.
     const entries = normalizeCatalog(
       [languageModel({ id: 'dup/model' }), imageModel({ id: 'dup/model' })],
-      new Set(['dup/model'])
+      new Set(['dup/model']),
+      NOW_MS
     );
     expect(entries).toEqual([
       { kind: 'excluded', modelId: 'dup/model', reason: 'non-runnable-shape' },
@@ -905,7 +979,8 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
   it('excludes a merged non-text multi-output model (image+video) as non-runnable', () => {
     const entries = normalizeCatalog(
       [imageModel({ id: 'dup/av' }), videoModel({ id: 'dup/av' })],
-      new Set(['dup/av'])
+      new Set(['dup/av']),
+      NOW_MS
     );
     expect(entries).toEqual([
       { kind: 'excluded', modelId: 'dup/av', reason: 'non-runnable-shape' },
@@ -915,7 +990,8 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
   it('excludes a single-source dual-output model as non-runnable at admission', () => {
     const entries = normalizeCatalog(
       [languageModel({ id: 'solo/multi', outputModalities: ['text', 'video'] })],
-      new Set(['solo/multi'])
+      new Set(['solo/multi']),
+      NOW_MS
     );
     expect(entries).toEqual([
       { kind: 'excluded', modelId: 'solo/multi', reason: 'non-runnable-shape' },
@@ -930,7 +1006,8 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
         languageModel({ id: 'dup/model', supportedParameters: ['temperature'] }),
         languageModel({ id: 'dup/model', supportedParameters: ['tools'] }),
       ],
-      new Set(['dup/model'])
+      new Set(['dup/model']),
+      NOW_MS
     );
     const content = onlyNormalized(entries[0]);
     expect(content.outputs).toEqual(['text']);
@@ -948,7 +1025,8 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
         }),
         imageModel({ id: 'run/image' }),
       ],
-      new Set(['run/text', 'run/vision', 'run/image'])
+      new Set(['run/text', 'run/vision', 'run/image']),
+      NOW_MS
     );
     expect(entries.every((entry) => entry.kind === 'normalized')).toBe(true);
   });
@@ -956,11 +1034,13 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
   it('produces identical merged content regardless of the source order (no oscillation)', () => {
     const forward = normalizeCatalog(
       [languageModel({ id: 'ord/model' }), imageModel({ id: 'ord/model' })],
-      new Set(['ord/model'])
+      new Set(['ord/model']),
+      NOW_MS
     );
     const reversed = normalizeCatalog(
       [imageModel({ id: 'ord/model' }), languageModel({ id: 'ord/model' })],
-      new Set(['ord/model'])
+      new Set(['ord/model']),
+      NOW_MS
     );
     expect(forward).toEqual(reversed);
   });
@@ -974,7 +1054,8 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
           endpointPricing: [{ billable: 'output_image', unit: 'megapixel', costUsd: '0.01' }],
         }),
       ],
-      new Set(['mix/model'])
+      new Set(['mix/model']),
+      NOW_MS
     );
     expect(entries).toHaveLength(1);
     expect(entries[0]?.kind).toBe('normalized');
@@ -991,7 +1072,7 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
       [withReasoning, withoutReasoning],
       [withoutReasoning, withReasoning],
     ]) {
-      const entries = normalizeCatalog(siblings, zdr);
+      const entries = normalizeCatalog(siblings, zdr, NOW_MS);
       expect(onlyNormalized(entries[0]).reasoning).toEqual({
         mandatory: true,
         supportedEfforts: ['high', 'low'],
@@ -1002,7 +1083,8 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
   it('excludes an id only when every sibling for it is excluded', () => {
     const entries = normalizeCatalog(
       [languageModel({ id: 'dep/model', deprecated: true })],
-      new Set(['dep/model'])
+      new Set(['dep/model']),
+      NOW_MS
     );
     expect(entries).toEqual([{ kind: 'excluded', modelId: 'dep/model', reason: 'deprecated' }]);
   });
@@ -1016,7 +1098,8 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
           pricingSkus: { text_to_video_duration_seconds_480p: '0.05' },
         }),
       ],
-      new Set(['vid/fallback'])
+      new Set(['vid/fallback']),
+      NOW_MS
     );
     expect(entries).toEqual([
       expect.objectContaining({ kind: 'normalized', pricingFallbacks: ['1080p'] }),
@@ -1026,15 +1109,18 @@ describe('normalizeCatalog (dedupe + merge by id)', () => {
 
 describe('normalizeModel (fee baking — billable rates, descriptor v2)', () => {
   it("stamps descriptor version '2' on every family", () => {
-    expect(normalized(normalizeModel(languageModel(), ZDR)).version).toBe('2');
-    expect(normalized(normalizeModel(imageModel(), ZDR)).version).toBe('2');
-    expect(normalized(normalizeModel(videoModel(), ZDR)).version).toBe('2');
+    expect(normalized(normalizeModel(languageModel(), ZDR, ADMISSION)).version).toBe('2');
+    expect(normalized(normalizeModel(imageModel(), ZDR, ADMISSION)).version).toBe('2');
+    expect(normalized(normalizeModel(videoModel(), ZDR, ADMISSION)).version).toBe('2');
   });
 
   it('bakes the ceil-rounded markup into a flat language rate (against the user)', () => {
-    // 1 nano provider rate × 1.15 = 1.15 → ceil 2, never the half-even 1.
+    // 1 nano provider rate × 1.15 = 1.15 → ceil 2, never the half-even 1. A
+    // rate that low is under the catalog price floor, so the fixture rides the
+    // top-context exemption to reach the baking step at all.
     expect(
-      normalized(normalizeModel(languageModel({ pricing: { prompt: '0.000000001' } }), ZDR)).pricing
+      normalized(normalizeModel(languageModel({ pricing: { prompt: '0.000000001' } }), ZDR, EXEMPT))
+        .pricing
     ).toEqual({ inputPerToken: '2' });
   });
 
@@ -1044,7 +1130,8 @@ describe('normalizeModel (fee baking — billable rates, descriptor v2)', () => 
         languageModel({ id: 'dup/baked', supportedParameters: ['temperature'] }),
         languageModel({ id: 'dup/baked', supportedParameters: ['tools'] }),
       ],
-      new Set(['dup/baked'])
+      new Set(['dup/baked']),
+      NOW_MS
     );
     const entry = forward[0];
     if (entry?.kind !== 'normalized') throw new Error('expected normalized');
@@ -1059,7 +1146,8 @@ describe('normalizeModel (fee baking — billable rates, descriptor v2)', () => 
         resolutions: ['720p', '1080p'],
         pricingSkus: { text_to_video_duration_seconds_720p: '0.05' },
       }),
-      ZDR
+      ZDR,
+      ADMISSION
     );
     if (outcome.kind !== 'normalized') throw new Error('expected normalized');
     // 0.05 USD/sec = 50_000_000 provider nano → 57_500_000 billable for the
@@ -1069,5 +1157,255 @@ describe('normalizeModel (fee baking — billable rates, descriptor v2)', () => 
       perSecondByResolution: { '720p': '57500000', '1080p': '57500000' },
     });
     expect(outcome.pricingFallbacks).toEqual(['1080p']);
+  });
+});
+
+describe('normalizeModel (catalog admission)', () => {
+  /** 100 nano-USD per token on each leg — the $0.0002/1K floor exactly. */
+  const AT_FLOOR = { prompt: '0.0000001', completion: '0.0000001' };
+  /** One nano under the combined floor. */
+  const BELOW_FLOOR = { prompt: '0.000000099', completion: '0.0000001' };
+  /** One nano over the combined floor. */
+  const ABOVE_FLOOR = { prompt: '0.000000101', completion: '0.0000001' };
+
+  it('excludes a language model whose combined rate is zero', () => {
+    expect(
+      normalizeModel(languageModel({ pricing: { prompt: '0', completion: '0' } }), ZDR, ADMISSION)
+    ).toEqual({ kind: 'excluded', modelId: 'openai/gpt-test', reason: 'zero-priced' });
+  });
+
+  it('excludes a language model that states no rate at all', () => {
+    expect(normalizeModel(languageModel({ pricing: undefined }), ZDR, ADMISSION)).toEqual({
+      kind: 'excluded',
+      modelId: 'openai/gpt-test',
+      reason: 'zero-priced',
+    });
+  });
+
+  it('excludes a language model one nano under the price floor', () => {
+    expect(normalizeModel(languageModel({ pricing: BELOW_FLOOR }), ZDR, ADMISSION)).toEqual({
+      kind: 'excluded',
+      modelId: 'openai/gpt-test',
+      reason: 'below-price-floor',
+    });
+  });
+
+  it('admits a language model exactly at the price floor', () => {
+    expect(normalizeModel(languageModel({ pricing: AT_FLOOR }), ZDR, ADMISSION).kind).toBe(
+      'normalized'
+    );
+  });
+
+  it('admits a language model one nano over the price floor', () => {
+    expect(normalizeModel(languageModel({ pricing: ABOVE_FLOOR }), ZDR, ADMISSION).kind).toBe(
+      'normalized'
+    );
+  });
+
+  it('tests the floor against the pre-fee rate, not the baked billable rate', () => {
+    // A rate one nano under the floor clears it once the 15% markup is applied
+    // (199 → 229). The floor is a MARGIN floor, so the raw rate decides.
+    expect(normalizeModel(languageModel({ pricing: BELOW_FLOOR }), ZDR, ADMISSION)).toEqual({
+      kind: 'excluded',
+      modelId: 'openai/gpt-test',
+      reason: 'below-price-floor',
+    });
+  });
+
+  it('excludes a language model older than the age limit', () => {
+    expect(
+      normalizeModel(languageModel({ releasedAt: OLDER_THAN_LIMIT_SECONDS }), ZDR, ADMISSION)
+    ).toEqual({ kind: 'excluded', modelId: 'openai/gpt-test', reason: 'too-old' });
+  });
+
+  it('admits a language model exactly at the age limit', () => {
+    expect(
+      normalizeModel(languageModel({ releasedAt: OLDER_THAN_LIMIT_SECONDS + 1 }), ZDR, ADMISSION)
+        .kind
+    ).toBe('normalized');
+  });
+
+  it('reports the price floor first when a model fails the floor and the age limit', () => {
+    expect(
+      normalizeModel(
+        languageModel({ pricing: BELOW_FLOOR, releasedAt: OLDER_THAN_LIMIT_SECONDS }),
+        ZDR,
+        ADMISSION
+      )
+    ).toEqual({ kind: 'excluded', modelId: 'openai/gpt-test', reason: 'below-price-floor' });
+  });
+
+  it('exempts a top-context model from the price floor', () => {
+    const admission: CatalogAdmission = { contextExemptionTokens: 128_000, nowMs: NOW_MS };
+
+    expect(
+      normalizeModel(
+        languageModel({ pricing: BELOW_FLOOR, contextLength: 128_000 }),
+        ZDR,
+        admission
+      ).kind
+    ).toBe('normalized');
+  });
+
+  it('exempts a top-context model from the age limit', () => {
+    const admission: CatalogAdmission = { contextExemptionTokens: 128_000, nowMs: NOW_MS };
+
+    expect(
+      normalizeModel(
+        languageModel({ releasedAt: OLDER_THAN_LIMIT_SECONDS, contextLength: 128_000 }),
+        ZDR,
+        admission
+      ).kind
+    ).toBe('normalized');
+  });
+
+  it('does not exempt a model one token below the context threshold', () => {
+    const admission: CatalogAdmission = { contextExemptionTokens: 128_000, nowMs: NOW_MS };
+
+    expect(
+      normalizeModel(
+        languageModel({ pricing: BELOW_FLOOR, contextLength: 127_999 }),
+        ZDR,
+        admission
+      )
+    ).toEqual({ kind: 'excluded', modelId: 'openai/gpt-test', reason: 'below-price-floor' });
+  });
+
+  it('never exempts a zero-priced model, however large its context', () => {
+    expect(
+      normalizeModel(
+        languageModel({ pricing: { prompt: '0', completion: '0' }, contextLength: 100_000_000 }),
+        ZDR,
+        EXEMPT
+      )
+    ).toEqual({ kind: 'excluded', modelId: 'openai/gpt-test', reason: 'zero-priced' });
+  });
+
+  it('applies no per-token floor or age limit to an image model', () => {
+    // Per-unit pricing: a per-token floor has no meaning for it, so a cheap,
+    // years-old image model is admitted on its own pricing shape alone.
+    expect(
+      normalizeModel(
+        imageModel({
+          releasedAt: OLDER_THAN_LIMIT_SECONDS,
+          endpointPricing: [{ billable: 'output_image', unit: 'image', costUsd: '0.0000001' }],
+        }),
+        ZDR,
+        ADMISSION
+      ).kind
+    ).toBe('normalized');
+  });
+
+  it('applies no per-token floor or age limit to a video model', () => {
+    expect(
+      normalizeModel(
+        videoModel({
+          releasedAt: OLDER_THAN_LIMIT_SECONDS,
+          pricingSkus: { duration_seconds_720p: '0.0000001' },
+        }),
+        ZDR,
+        ADMISSION
+      ).kind
+    ).toBe('normalized');
+  });
+
+  it('reports non-zdr ahead of a commercial exclusion', () => {
+    expect(
+      normalizeModel(languageModel({ pricing: BELOW_FLOOR }), new Set<string>(), ADMISSION)
+    ).toEqual({ kind: 'excluded', modelId: 'openai/gpt-test', reason: 'non-zdr' });
+  });
+
+  it('reports a missing release date ahead of a commercial exclusion', () => {
+    expect(
+      normalizeModel(languageModel({ pricing: BELOW_FLOOR, releasedAt: undefined }), ZDR, ADMISSION)
+    ).toEqual({ kind: 'excluded', modelId: 'openai/gpt-test', reason: 'missing-release-date' });
+  });
+});
+
+describe('normalizeCatalog (catalog admission over the pool)', () => {
+  const BELOW_FLOOR = { prompt: '0.000000099', completion: '0.0000001' };
+
+  function dispositions(entries: readonly CatalogEntry[]): readonly (readonly [string, string])[] {
+    return entries.map((entry) =>
+      entry.kind === 'excluded'
+        ? ([entry.modelId, entry.reason] as const)
+        : ([entry.modelId, 'normalized'] as const)
+    );
+  }
+
+  it('measures the context exemption over the pool, not over one model', () => {
+    const entries = normalizeCatalog(
+      [
+        languageModel({ id: 'small/ctx', contextLength: 8000, pricing: BELOW_FLOOR }),
+        languageModel({ id: 'large/ctx', contextLength: 128_000, pricing: BELOW_FLOOR }),
+      ],
+      new Set(['small/ctx', 'large/ctx']),
+      NOW_MS
+    );
+
+    expect(dispositions(entries)).toEqual([
+      ['small/ctx', 'below-price-floor'],
+      ['large/ctx', 'normalized'],
+    ]);
+  });
+
+  it('leaves a ZDR-unreachable model out of the pool the exemption is measured over', () => {
+    // Were the unreachable million-token model counted, the threshold would rise
+    // to its context length and `large/ctx` would lose its exemption.
+    const entries = normalizeCatalog(
+      [
+        languageModel({ id: 'small/ctx', contextLength: 8000, pricing: BELOW_FLOOR }),
+        languageModel({ id: 'large/ctx', contextLength: 128_000, pricing: BELOW_FLOOR }),
+        languageModel({ id: 'hidden/huge', contextLength: 1_000_000, pricing: BELOW_FLOOR }),
+      ],
+      new Set(['small/ctx', 'large/ctx']),
+      NOW_MS
+    );
+
+    expect(dispositions(entries)).toEqual([
+      ['small/ctx', 'below-price-floor'],
+      ['large/ctx', 'normalized'],
+      ['hidden/huge', 'non-zdr'],
+    ]);
+  });
+
+  it('leaves a media model out of the pool the exemption is measured over', () => {
+    // Media context lengths are not token contexts; counting them would move a
+    // text model's exemption for a reason unrelated to text capability.
+    const entries = normalizeCatalog(
+      [
+        languageModel({ id: 'small/ctx', contextLength: 8000, pricing: BELOW_FLOOR }),
+        languageModel({ id: 'large/ctx', contextLength: 128_000, pricing: BELOW_FLOOR }),
+        imageModel({ id: 'pic/gen' }),
+      ],
+      new Set(['small/ctx', 'large/ctx', 'pic/gen']),
+      NOW_MS
+    );
+
+    expect(dispositions(entries)).toEqual([
+      ['small/ctx', 'below-price-floor'],
+      ['large/ctx', 'normalized'],
+      ['pic/gen', 'normalized'],
+    ]);
+  });
+
+  it('measures the age cutoff from the clock the caller passes', () => {
+    const entries = normalizeCatalog(
+      [
+        languageModel({
+          id: 'old/model',
+          contextLength: 8000,
+          releasedAt: OLDER_THAN_LIMIT_SECONDS,
+        }),
+        languageModel({ id: 'new/model', contextLength: 128_000 }),
+      ],
+      new Set(['old/model', 'new/model']),
+      NOW_MS
+    );
+
+    expect(dispositions(entries)).toEqual([
+      ['old/model', 'too-old'],
+      ['new/model', 'normalized'],
+    ]);
   });
 });

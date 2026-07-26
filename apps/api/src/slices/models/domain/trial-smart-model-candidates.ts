@@ -1,4 +1,4 @@
-import { outputCharsPerTokenForTier } from '@hushbox/shared';
+import { outputCharsPerTokenForTier } from '@hushbox/shared/affordability/estimate/pre-adapters';
 import {
   ascendingByPrice,
   candidateEntry,

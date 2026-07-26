@@ -2,8 +2,8 @@ import type { ContentValue } from './content-value.js';
 import type { ErrorCode } from './error-codes.js';
 import type { ChatHistoryMessage, FilePartMapper, InferenceEvent } from './inference.js';
 import type { MockDirectives } from './mock-directives.js';
-import type { Modality } from './modality.js';
-import type { NanoUSD } from './nano-usd.js';
+import type { Modality } from './affordability/modality.js';
+import type { NanoUSD } from './affordability/nano-usd.js';
 import type { WorkflowDefinition } from './workflow.js';
 
 /**

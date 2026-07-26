@@ -1,20 +1,17 @@
 import * as React from 'react';
+import { getEffectiveBalanceNano, type UserTier } from '@hushbox/shared';
 import {
-  affordability,
   computePromptCapacity,
   estimateTokensForTier,
-  evaluateManifest,
-  getEffectiveBalanceNano,
   outputCharsPerTokenForTier,
-  priceRequest,
-  type BillableRequest,
-  type Manifest,
-  type UserTier,
-} from '@hushbox/shared';
+} from '@hushbox/shared/affordability/estimate/pre-adapters';
+import { priceRequest } from '@hushbox/shared/affordability/estimate/price-request';
+import { affordability, evaluateManifest } from '@hushbox/shared/affordability/estimate/reducers';
 
 import { useStability } from '@/providers/stability-provider';
 import { useUserTierInfo } from '@/hooks/billing/use-user-tier-info.js';
 import { useSpendable } from '@/hooks/billing/use-spendable.js';
+import type { BillableRequest, Manifest } from '@hushbox/shared/affordability/estimate/types';
 
 const DEBOUNCE_MS = 150;
 
@@ -34,6 +31,12 @@ export interface UseBudgetCalculationInput {
   models: BudgetModelPricing[];
   /** Whether the user is authenticated */
   isAuthenticated: boolean;
+  /**
+   * The conversation being composed in, which is what names the PAYER: an
+   * owner-funded group turn is sized from the owner's funds at the owner's tier
+   * (BILLING §Group Funding 1). Omit or null for a solo composer.
+   */
+  conversationId?: string | null;
   /** Whether the web-search tool is enabled (adds the core's worst-case reservation). */
   webSearch?: boolean;
   /**
@@ -67,10 +70,15 @@ const ZERO_RESULT: BudgetCalculationResult = {
 };
 
 interface TierFunds {
+  /**
+   * The PAYER's tier — served with the funding snapshot, never re-derived from
+   * the sender's own balance. It drives the char↔token ratios and the cushion,
+   * so a group member's owner-funded turn sizes exactly as the owner's would.
+   */
   tier: UserTier;
-  /** Served spendable (`GET /billing/spendable`) — cushion- and hold-aware. */
+  /** The payer's served spendable (`GET /billing/spendable`) — hold-aware. */
   spendableNanoUsd: bigint;
-  /** Served daily free-allowance remaining. */
+  /** Served daily free-allowance remaining (only a self-funding free payer's). */
   freeAllowanceNanoUsd: bigint;
 }
 
@@ -181,24 +189,29 @@ export function useBudgetCalculation(
   const { isBalanceStable } = useStability();
 
   const tierInfo = useUserTierInfo(input.isAuthenticated);
-  // The served affordability balance — cushion- and hold-aware, exactly what
-  // admission gates on (BILLING §Affordability 1). The client never re-derives
-  // it from the raw balance. Pending served numbers count as loading so the
+  // The payer's served funding snapshot — hold-aware spendable at the payer's
+  // tier, exactly what admission gates on (BILLING §Affordability 1). The
+  // client never re-derives either figure: not the balance (the cushion is
+  // baked in once server-side) and not the payer's tier (the server resolves
+  // who pays from fresh rows). Pending served numbers count as loading so the
   // composer blocks instead of flashing a spurious denial.
-  const { data: spendableData, isPending: isSpendablePending } = useSpendable();
+  const { data: spendableData, isPending: isSpendablePending } = useSpendable(input.conversationId);
   const isBalanceLoading = input.isAuthenticated && (!isBalanceStable || isSpendablePending);
 
   const spendableNanoUsd = spendableData ? BigInt(spendableData.spendableNanoUsd) : 0n;
   const freeAllowanceNanoUsd = tierInfo.freeAllowanceNanoUsd;
+  // Trial and guest hold no wallet and have no endpoint, so their tier comes
+  // from the client-side arm; every served snapshot names the payer's tier.
+  const payerTier = spendableData?.tier ?? tierInfo.tier;
 
   const computeResult = React.useCallback(
     () =>
       computeBudget(input, {
-        tier: tierInfo.tier,
+        tier: payerTier,
         spendableNanoUsd,
         freeAllowanceNanoUsd,
       }),
-    [input, tierInfo.tier, spendableNanoUsd, freeAllowanceNanoUsd]
+    [input, payerTier, spendableNanoUsd, freeAllowanceNanoUsd]
   );
 
   const [debouncedResult, setDebouncedResult] =
@@ -209,7 +222,7 @@ export function useBudgetCalculation(
   // object with identical values on every render (access-revoked flows
   // repeatedly invalidate it), and a reference compare would setState every
   // render → "Maximum update depth exceeded".
-  const tierKey = `${tierInfo.tier}:${spendableNanoUsd.toString()}:${freeAllowanceNanoUsd.toString()}`;
+  const tierKey = `${payerTier}:${spendableNanoUsd.toString()}:${freeAllowanceNanoUsd.toString()}`;
   const [previousTierKey, setPreviousTierKey] = React.useState(tierKey);
   if (previousTierKey !== tierKey) {
     setPreviousTierKey(tierKey);

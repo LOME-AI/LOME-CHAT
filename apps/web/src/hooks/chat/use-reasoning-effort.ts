@@ -1,4 +1,5 @@
-import { offeredEffortLabels, SMART_MODEL_ID } from '@hushbox/shared';
+import { SMART_MODEL_ID } from '@hushbox/shared';
+import { offeredEffortLabels } from '@hushbox/shared/affordability/estimate/effort-options';
 import { useModels } from '@/hooks/models/models';
 import { useModelStore } from '@/stores/model';
 import { useReasoningEffortStore } from '@/stores/reasoning-effort';
@@ -20,30 +21,30 @@ export interface EffortModel {
   readonly maxOutputTokens?: number | undefined;
 }
 
-// The intersection gate is the shared authority (`offeredEffortLabels` in
-// @hushbox/shared) — re-exported so the menu and tests keep one import site.
-export { offeredEffortLabels } from '@hushbox/shared';
+// The intersection gate is the shared authority (`offeredEffortLabels`, inside
+// the money layer) — re-exported so the menu and tests keep one import site.
+export { offeredEffortLabels } from '@hushbox/shared/affordability/estimate/effort-options';
 
 /**
- * `None` (the explicit hard off) is offered only when no selected model has
+ * Min (the explicit hard off) is offered only when no selected model has
  * mandatory reasoning — the server refuses disabling a mandatory model, so
  * the option is hidden there (founder ruling), never greyed.
  */
-export function offersEffortNone(models: readonly EffortModel[]): boolean {
+export function offersEffortOff(models: readonly EffortModel[]): boolean {
   return models.every((model) => model.reasoning?.mandatory !== true);
 }
 
 /**
  * Whether the server's CURRENT effort validation accepts this choice for the
  * whole selection: it refuses any explicit level not offered by every
- * selected model, and refuses `none` when any selected model has mandatory
+ * selected model, and refuses the off rung when any selected model has mandatory
  * reasoning. The menu renders the union choice set but greys the choices
  * this predicate rejects — selecting one would produce a send the server
  * 400s. Dies (with the greying) when server-side per-model downgrade
  * resolution lands; the union authority is `turnEffortOptions`.
  */
 export function serverAcceptsChoice(models: readonly EffortModel[], choice: EffortChoice): boolean {
-  if (choice === 'none') return offersEffortNone(models);
+  if (choice === 'off') return offersEffortOff(models);
   return offeredEffortLabels(models).includes(choice);
 }
 
@@ -60,7 +61,7 @@ export interface EffectiveSelectionInput {
  * nothing" (today's reasoning-free turn): non-text modalities and the Smart
  * Model sentinel refuse engaged reasoning server-side (T7 relaxes
  * smart+auto later), and a selection with no offered levels has nothing to
- * engage. A level no model ladder offers — and `none` against a
+ * engage. A level no model ladder offers — and the off rung against a
  * mandatory-reasoning model — clamps to `auto` (the server's own choice),
  * never to a substituted level.
  */
@@ -74,7 +75,7 @@ export function effectiveReasoningSelection(
   const offered = offeredEffortLabels(models);
   if (offered.length === 0) return undefined;
   if (preferred === 'auto') return 'auto';
-  if (preferred === 'none') return offersEffortNone(models) ? 'none' : 'auto';
+  if (preferred === 'off') return offersEffortOff(models) ? 'off' : 'auto';
   return offered.includes(preferred) ? preferred : 'auto';
 }
 

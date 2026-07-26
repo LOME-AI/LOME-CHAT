@@ -98,9 +98,11 @@ function shouldSkipWrite(
  * Expected-lifecycle / known-shape exclusions — `deprecated`,
  * `token-priced-image`, `token-priced-video`, `megapixel-priced-image`,
  * `missing-pricing` (empty-endpoint preview models), `non-zdr` (only
- * ZDR-reachable models are persisted), and `non-conversational` (specialty
- * code-tooling and moderation models) — do not even alert; they are only
- * counted. The log messages are compile-time literals (SafeLogFields rule):
+ * ZDR-reachable models are persisted), `non-conversational` (specialty
+ * code-tooling and moderation models), and the commercial reasons
+ * `zero-priced` / `below-price-floor` / `too-old` (a model that cannot be sold
+ * profitably is an expected outcome, not a defect) — do not even alert; they
+ * are only counted. The log messages are compile-time literals (SafeLogFields rule):
  * the model id is a field. */
 function alertExcluded(telemetry: Telemetry, modelId: string, reason: ExcludeReason): void {
   if (reason === 'unknown-pricing-unit') {
@@ -205,7 +207,7 @@ export function refreshCatalog(deps: RefreshCatalogDeps): ResultAsync<RefreshSum
       })
     )
     .andThen((catalog) => {
-      const entries = normalizeCatalog(catalog.models, catalog.zdrModelIds);
+      const entries = normalizeCatalog(catalog.models, catalog.zdrModelIds, deps.now().getTime());
       // Rank is carried only on language models (the sorted `/models` set) and
       // rides the column, not the descriptor — collect it here for persistence.
       const rankByModelId = new Map<string, number>();

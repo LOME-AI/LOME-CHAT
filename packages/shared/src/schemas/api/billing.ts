@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { LEDGER_ENTRY_KINDS, PAYMENT_STATUSES } from '../../billing-enums.js';
+import type { UserTier } from '../../affordability/index.js';
 
 /**
  * Payment lifecycle statuses on the wire. Derives from the single shared
@@ -86,17 +87,56 @@ export const getBalanceResponseSchema = z.object({
 export type GetBalanceResponse = z.infer<typeof getBalanceResponseSchema>;
 
 /**
- * Schema for the `GET /billing/spendable` response — the served affordability
- * balance (BILLING §Affordability 1). `spendableNanoUsd` is the cushion- and
- * hold-aware number admission would gate with (it may be negative for an
- * overdrawn wallet); `heldNanoUsd` is the sum of active admission holds.
- * Money crosses the wire as canonical NanoUSD strings, never floats. The
- * per-wallet concurrent-run cap is deliberately NOT served — it is enforced
- * solely at admission with its typed refusal.
+ * The tier vocabulary on the wire, keyed by the shared `UserTier` union: the
+ * `satisfies Record<UserTier, UserTier>` makes the object exhaustive at
+ * compile time, so a new tier in the union fails typecheck here instead of
+ * silently narrowing the wire.
+ */
+const USER_TIER_VALUES = {
+  trial: 'trial',
+  guest: 'guest',
+  free: 'free',
+  paid: 'paid',
+} as const satisfies Record<UserTier, UserTier>;
+
+/** Tier on the wire. Derived from the shared union, never a parallel list. */
+export const userTierSchema = z.enum(USER_TIER_VALUES);
+
+/**
+ * Query for `GET /billing/spendable`. The conversation is the context that
+ * NAMES THE PAYER (BILLING §Group Funding 1): an owner-funded turn is priced
+ * from the owner's funds at the owner's tier, so the composer must ask for the
+ * numbers of the wallet that will actually pay. Absent for a solo composer,
+ * whose payer is always the caller.
+ */
+export const getSpendableQuerySchema = z.object({
+  conversationId: z.uuid().optional(),
+});
+
+export type GetSpendableQuery = z.infer<typeof getSpendableQuerySchema>;
+
+/**
+ * Schema for the `GET /billing/spendable` response — the payer's funding
+ * snapshot (BILLING §Affordability 1, §Data Structures `FundingSnapshot`).
+ * `spendableNanoUsd` is hold-aware — the number admission would gate with when
+ * the payer is the caller (it may be negative for an overdrawn self-funding
+ * wallet); `heldNanoUsd` is what active holds subtracted, so `spendable + held`
+ * reconstructs the hold-blind effective balance the picker greys on. `tier` and
+ * `payer` identify WHOSE money those figures are: an owner-funded group turn
+ * serves the owner's hold-aware group remaining at the owner's tier, not the
+ * sender's — with the owner-balance dimension priced RAW (no cushion, no owner
+ * wallet holds) so a member cannot infer the owner's activity, which is why an
+ * owner-funded figure may diverge from what admission admits and admission then
+ * refuses outright (BILLING §Group Funding 6b). Money
+ * crosses the wire as canonical NanoUSD strings, never floats. The per-wallet
+ * concurrent-run cap is deliberately NOT served — it is enforced solely at
+ * admission with its typed refusal.
  */
 export const getSpendableResponseSchema = z.object({
   spendableNanoUsd: z.string(),
   heldNanoUsd: z.string(),
+  tier: userTierSchema,
+  payer: z.enum(['self', 'owner']),
 });
 
 export type GetSpendableResponse = z.infer<typeof getSpendableResponseSchema>;

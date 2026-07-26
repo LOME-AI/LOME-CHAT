@@ -1,23 +1,22 @@
-import { createServer, type Server } from 'node:http';
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium, type Browser, type Page } from '@playwright/test';
-import { contentTypeFor } from '../mime.js';
-import { SANDBOX_CSP } from '../csp.js';
+import { openEmbeddedFrame, type BridgeLike, type EmbeddedFrame } from '../embed-harness.js';
+import type { Browser, Page } from '@playwright/test';
 
 /**
- * Test-only harness that drives the real `/python.html` page in a headless
- * browser, exactly as the sandbox origin serves it. It serves the committed
- * `public/` tree (the built `python.js` bundle plus the self-hosted Pyodide
- * assets) and applies the one authoritative sandbox Content-Security-Policy
- * (`../csp.ts`, the same string production `_headers` and the dev server serve)
- * to every response, so the integration tests prove Pyodide runs under the
- * deployed policy rather than an unconstrained dev server. This file is excluded
- * from the coverage gate: it is test infrastructure, not shipped runtime logic.
+ * Test-only harness that drives the real `/python.html` runtime the way the app
+ * drives it: embedded in a `sandbox="allow-scripts"` iframe on the sandbox
+ * origin, talked to over the `MessageChannel` the frame mints and transfers with
+ * its one-shot `ready`. The server, the embedding, and the transport all come
+ * from the shared embed harness (`../embed-harness.ts`) — everything here is the
+ * part that is specific to Python: the PyPI fixture replay and the
+ * init-then-run sequence Python's intake requires.
+ *
+ * This file is excluded from the coverage gate: it is test infrastructure, not
+ * shipped runtime logic.
  */
 
-const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
 const pypiFixtureDir = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   '..',
@@ -25,6 +24,9 @@ const pypiFixtureDir = path.join(
   'test-fixtures',
   'pypi'
 );
+
+/** The path on the sandbox origin that hosts the Python runtime. */
+const PYTHON_FRAME_PATH = '/python.html';
 
 /**
  * Serve the `micropip.install('cowsay')` path from committed fixtures so it never
@@ -60,146 +62,55 @@ export async function installPyPIInterception(page: Page): Promise<void> {
   );
 }
 
-/** A shape-loose view of a bridge message as it arrives on the window. */
-export interface BridgeLike {
-  readonly type?: string;
-  readonly requestId?: string;
-  readonly stream?: string;
-  readonly text?: string;
-  readonly phase?: string;
-  readonly code?: string;
-  readonly message?: string;
-  readonly outputs?: readonly { type?: string; data?: string }[];
-}
-
-/** A running sandbox-origin server backed by the committed `public/` tree. */
-export interface PythonSandbox {
-  readonly origin: string;
-  close(): Promise<void>;
-}
-
-/** Start a static server for `public/` that applies the production sandbox CSP. */
-export async function startPythonSandbox(): Promise<PythonSandbox> {
-  const server: Server = createServer((req, res) => {
-    const pathname = decodeURIComponent(new URL(req.url ?? '/', 'http://localhost').pathname);
-    const resolved = path.join(publicDir, `.${pathname}`);
-    let body: Buffer;
-    try {
-      if (statSync(resolved).isDirectory()) throw new Error('is a directory');
-      body = readFileSync(resolved);
-    } catch {
-      res.writeHead(404);
-      res.end();
-      return;
-    }
-    // The production sandbox origin serves these static assets cross-origin so
-    // the opaque iframe can fetch its Pyodide wasm/wheels; it is credential-free
-    // by design, so a wildcard here exposes nothing.
-    // eslint-disable-next-line sonarjs/cors -- credential-free public asset origin; wildcard CORS is intentional
-    res.writeHead(200, {
-      'Content-Type': contentTypeFor(pathname),
-      'Content-Security-Policy': SANDBOX_CSP,
-      'Access-Control-Allow-Origin': '*',
-    });
-    res.end(body);
-  });
-  await new Promise<void>((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
-      resolve();
-    });
-  });
-  const address = server.address();
-  if (address === null || typeof address === 'string') throw new Error('no server port');
-  const origin = `http://127.0.0.1:${String(address.port)}`;
-  return {
-    origin,
-    close: () =>
-      new Promise<void>((resolve) => {
-        server.close(() => {
-          resolve();
-        });
-      }),
-  };
-}
-
-/** Launch a headless Chromium for the Python integration tests. */
-export function launchBrowser(): Promise<Browser> {
-  return chromium.launch({ args: ['--no-sandbox'] });
-}
-
-/** A loaded `/python.html` page that can run several documents in sequence. */
+/** An embedded `/python.html` runtime that can run several documents in sequence. */
 export interface PythonPage {
   /** Any uncaught page errors observed since load (should stay empty). */
   readonly pageErrors: string[];
+  /** The embedded frame, for the tests that drive the transport itself. */
+  readonly frame: EmbeddedFrame;
   /** Init + run one document; resolve with the bridge messages for that request. */
   run(code: string, requestId: string, timeoutMs?: number): Promise<BridgeLike[]>;
-  /** Read a JSON-serializable value out of the loaded page (security probes). */
+  /** Read a JSON-serializable value out of the frame's own realm (security probes). */
   probe<T>(pageFunction: () => T): Promise<T>;
   close(): Promise<void>;
 }
 
 /**
- * Open a fresh `/python.html` page and wait for its `ready` handshake. An
- * optional `beforeLoad` hook runs on the page before it navigates — the seam for
- * installing `page.route` network interception (e.g. serving PyPI wheel/metadata
- * from local fixtures so the micropip path never reaches live PyPI).
+ * Embed a fresh `/python.html` frame and wait for its handshake. The optional
+ * `beforeLoad` hook runs on the page before it navigates — the seam for
+ * `page.route` interception (serving the PyPI wheel/metadata from local
+ * fixtures) and for `page.clock.install()`.
+ *
+ * The handshake this waits for costs nothing: `ready` is sent as the bootstrap
+ * script finishes, long before any Pyodide asset is fetched — the interpreter
+ * loads on the first `run`.
  */
 export async function openPythonPage(
   browser: Browser,
   origin: string,
   beforeLoad?: (page: Page) => Promise<void>
 ): Promise<PythonPage> {
-  const page = await browser.newPage();
-  const pageErrors: string[] = [];
-  page.on('pageerror', (error) => pageErrors.push(String(error)));
-  if (beforeLoad !== undefined) await beforeLoad(page);
-  await page.addInitScript(() => {
-    (globalThis as unknown as { __msgs: unknown[] }).__msgs = [];
-    window.addEventListener('message', (event) =>
-      (globalThis as unknown as { __msgs: unknown[] }).__msgs.push(event.data)
-    );
+  const frame = await openEmbeddedFrame(browser, origin, {
+    framePath: PYTHON_FRAME_PATH,
+    beforeLoad,
   });
-  await page.goto(`${origin}/python.html`);
-  await page.waitForFunction(
-    () =>
-      (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs.some((m) => m.type === 'ready'),
-    undefined,
-    { timeout: 30_000 }
-  );
   return {
-    pageErrors,
+    pageErrors: frame.pageErrors,
+    frame,
     async run(code: string, requestId: string, timeoutMs = 90_000): Promise<BridgeLike[]> {
-      await page.evaluate(
-        (payload) => {
-          // The renderer loads top-level, so `parent === window`; posting to the
-          // window itself is exactly what the parent app does across the frame.
-          // eslint-disable-next-line sonarjs/post-message -- test harness posts to its own window
-          window.postMessage(
-            { type: 'init', kind: 'python', code: payload.code, requestId: payload.requestId },
-            '*'
-          );
-          // eslint-disable-next-line sonarjs/post-message -- test harness posts to its own window
-          window.postMessage({ type: 'run', requestId: payload.requestId }, '*');
-        },
-        { code, requestId }
+      // Python's intake is two messages, deliberately: `init` only stashes the
+      // code, and nothing runs until `run` arrives.
+      await frame.send({ type: 'init', kind: 'python', code, requestId });
+      await frame.send({ type: 'run', requestId });
+      const collected = await frame.waitForMessage(
+        (message) =>
+          (message.type === 'result' || message.type === 'error') &&
+          message.requestId === requestId,
+        timeoutMs
       );
-      await page.waitForFunction(
-        (rid) =>
-          (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs.some(
-            (m) => (m.type === 'result' || m.type === 'error') && m.requestId === rid
-          ),
-        requestId,
-        { timeout: timeoutMs }
-      );
-      return page.evaluate(
-        (rid) =>
-          (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs.filter(
-            (m) => m.requestId === rid
-          ),
-        requestId
-      );
+      return collected.filter((message) => message.requestId === requestId);
     },
-    probe: <T>(pageFunction: () => T): Promise<T> => page.evaluate(pageFunction),
-    close: () => page.close(),
+    probe: <T>(pageFunction: () => T): Promise<T> => frame.probeFrame(pageFunction),
+    close: () => frame.close(),
   };
 }

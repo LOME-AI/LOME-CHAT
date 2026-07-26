@@ -60,44 +60,31 @@ export const ORT_DIR = TTS_ORT_WASM_PATH.replaceAll(/^\/+|\/+$/gu, '');
 export const ORT_EXTERN_WASM_CONDITION = 'onnxruntime-web-use-extern-wasm';
 
 /**
- * `optimizeDeps.include` entries for the TTS worker's kokoro-js chain, written
- * in Vite's nested-dependency notation so the inner specifier is resolved from
- * kokoro-js's own directory rather than the app's.
+ * Vite's worker build options, shared by both app configs.
  *
- * The chain starts at `@hushbox/ui` because every segment is resolved from the
- * previous one and the first from the app itself: under pnpm's isolated layout
- * neither app can resolve `kokoro-js` (it belongs to the UI package), so a
- * chain rooted there resolves nowhere and Vite drops the entry.
+ * `format: 'es'` is load-bearing, not a preference. Under the default `iife`
+ * worker format, rolldown's transform wraps the worker and rewrites its
+ * `MetaProperty` nodes — but it rewrites `new.target` as though it were
+ * `import.meta`, emitting `Object.setPrototypeOf(closure, <importMetaStandIn>
+ * .prototype)`. `@huggingface/transformers`' `Callable` base class, which every
+ * tokenizer and processor extends, is built on exactly that
+ * `Object.setPrototypeOf(closure, new.target.prototype)` line, so the rewrite
+ * makes the TTS worker throw "Object prototype may only be an Object or null:
+ * undefined" on its load path in every built site — while dev, which serves the
+ * worker as a native ES module and never applies the transform, stays green.
+ * The rewrite fires on `new.target` alone; the worker source need not mention
+ * `import.meta` at all.
  *
- * `@huggingface/transformers` (reached through kokoro-js) imports
- * `onnxruntime-common` as a bare specifier without declaring it — a phantom
- * dependency, resolvable only through pnpm's hoist dir. That dir is on the
- * node-resolution walk from a file inside `.pnpm/…`, but not from the physical
- * copy the dep optimizer writes into an app's `node_modules/.vite/deps`, so an
- * optimizer anchored there cannot resolve it. It then externalizes the
- * unresolvable import silently — no error, no warning; the prebundle simply
- * keeps a bare `onnxruntime-common` specifier the browser then fails to load —
- * and reuses that output forever, because a later optimize with an unchanged
- * cache key reports a consistent hash and skips. A prebundle poisoned in the
- * window between a lockfile write and a hoist-link creation therefore survives
- * every restart, and the resulting import error names neither the cause nor the
- * cache. Listing the dependency pins it to an anchor that can resolve it and
- * gives it its own prebundle, which the kokoro-js prebundle then links against
- * instead of inlining a private copy — so both hold the same ORT module and
- * `instanceof Tensor` keeps working across the boundary. When the chain does
- * break, the Astro dev server names the failing entry at start ("Failed to
- * resolve dependency: … present in client 'optimizeDeps.include'"); the Vite
- * dev server drops it without a message, so the entry is a guard there only in
- * the structural sense.
+ * `es` emits the worker unwrapped, so `new.target` survives. The TTS worker is
+ * the only `new Worker` in the repo and is already constructed with
+ * `{ type: 'module' }`, so nothing here depends on the classic-worker format.
+ * `verify-web-bundle` guards the built output against the rewrite returning.
  *
- * Dev-only: production is unaffected because Rollup resolves against the real
- * importer file, which always sits inside `.pnpm/…`.
- *
- * Applied via `optimizeDeps.include` in `apps/web/vite.config.ts` and
- * `apps/marketing/astro.config.mjs` — both import it from here rather than
- * repeating the literal.
+ * Lives beside the ORT constants because this is the build-config seam both
+ * `apps/web/vite.config.ts` and `apps/marketing/astro.config.mjs` already
+ * import from; the format must never be spelled out per-app.
  */
-export const KOKORO_ORT_COMMON_INCLUDE = ['@hushbox/ui > kokoro-js > onnxruntime-common'];
+export const WORKER_BUILD_OPTIONS = { format: 'es' } as const;
 
 /**
  * Locate the installed `@huggingface/transformers` dist directory (reached

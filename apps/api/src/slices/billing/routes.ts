@@ -10,6 +10,7 @@ import {
   usageConversationQuerySchema,
   usageDateRangeQuerySchema,
   usageTimeSeriesQuerySchema,
+  getSpendableQuerySchema,
 } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import {
@@ -30,7 +31,7 @@ import {
   readCostByModel,
   readIdempotencyKey,
   readLedgerTransactions,
-  readSpendable,
+  readFundingSnapshot,
   readSpendingByConversation,
   readSpendingOverTime,
   readTokenUsageOverTime,
@@ -49,6 +50,7 @@ import type {
   AccountDefensePort,
   ChargebackLockEmailPort,
   BillingStores,
+  ConversationFundingReader,
   DomainError,
   DomainErrorCode,
   JobRegistry,
@@ -60,6 +62,14 @@ import type {
 
 export interface BillingRouteDeps {
   readonly stores: BillingStores;
+  /**
+   * The conversations-owned facts that name a group turn's payer, bound to the
+   * request db at the composition root: billing never reads the
+   * `conversations` or `conversation_members` tables
+   * (single-writer-per-table), and no single slice may span both those rows
+   * and billing's budget rows.
+   */
+  readonly conversationFunding: (db: Database) => ConversationFundingReader;
   /**
    * Env-selected at request time (mock locally, Helcim otherwise). The
    * request-scoped `db` threads into the real Helcim adapter so an approved
@@ -204,29 +214,48 @@ export function createBillingManifest(deps: BillingRouteDeps) {
           (error) => respondDomainError(c, error)
         );
       })
-      // billing-token: the served affordability balance (cushion- and
-      // hold-aware, matching the admission gate exactly). Deliberately
-      // separate from `/balance`: this read fails CLOSED on a Redis outage
-      // (503, like admission) while the ledger-truth balance read stays up
-      // for payment polling and display.
-      .get('/spendable', routeClass('billing-token'), async (c) => {
-        const userId = billingPrincipalUserId(c.var.principal);
-        const result = await readSpendable(
-          { redis: c.var.redis, db: c.var.db, stores: deps.stores },
-          { userId, now: new Date() }
-        );
-        return result.match(
-          (view) =>
-            c.json(
-              {
-                spendableNanoUsd: serializeNanoUSD(nanoUSD(view.spendableNanoUsd)),
-                heldNanoUsd: serializeNanoUSD(nanoUSD(view.heldNanoUsd)),
-              },
-              200
-            ),
-          (error) => respondDomainError(c, error)
-        );
-      })
+      // billing-token: the PAYER's funding snapshot — hold-aware, and the
+      // admission gate itself when the payer is the caller; an owner-funded
+      // figure prices the owner dimension from the RAW balance and so may
+      // diverge (see `FundingSnapshot.spendableNanoUsd`). Deliberately separate
+      // from `/balance`: this read fails CLOSED on a Redis outage (503, like
+      // admission) while the ledger-truth balance read stays up for payment
+      // polling and display.
+      // `conversationId` names the payer — an owner-funded group turn is
+      // priced from the owner's funds at the owner's tier (BILLING §Group
+      // Funding 1), so a conversation-blind read would serve the wrong wallet
+      // AND the wrong tier to every group member.
+      .get(
+        '/spendable',
+        routeClass('billing-token'),
+        zValidator('query', getSpendableQuerySchema, rejectInvalid),
+        async (c) => {
+          const userId = billingPrincipalUserId(c.var.principal);
+          const { conversationId } = c.req.valid('query');
+          const result = await readFundingSnapshot(
+            { redis: c.var.redis, db: c.var.db, stores: deps.stores },
+            {
+              userId,
+              conversationId,
+              conversationFunding: deps.conversationFunding(c.var.db),
+              now: new Date(),
+            }
+          );
+          return result.match(
+            (snapshot) =>
+              c.json(
+                {
+                  spendableNanoUsd: serializeNanoUSD(nanoUSD(snapshot.spendableNanoUsd)),
+                  heldNanoUsd: serializeNanoUSD(nanoUSD(snapshot.heldNanoUsd)),
+                  tier: snapshot.tier,
+                  payer: snapshot.payer,
+                },
+                200
+              ),
+            (error) => respondDomainError(c, error)
+          );
+        }
+      )
       // Mobile → web billing-portal handoff: mint the short-lived login token
       // the web app exchanges for a billing-only session (redeemed on identity's
       // `POST /auth/token-login`). A normal session-class mutation: `byKey`

@@ -82,6 +82,8 @@ export type {
   ChargeSender,
   ConservationAuditFindings,
   ConversationBudgetScopeRequest,
+  ConversationFundingFacts,
+  ConversationFundingReader,
   HoldReadout,
   InitiateCardPaymentArgs,
   InitiateCardPaymentDeps,

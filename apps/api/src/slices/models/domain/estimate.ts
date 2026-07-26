@@ -1,23 +1,18 @@
+import { ERROR_CODES, outputTokensOf } from '@hushbox/shared';
+import { evaluateManifest } from '@hushbox/shared/affordability/estimate/reducers';
 import {
-  ERROR_CODES,
   NO_STORAGE,
   callManifest as sharedCallManifest,
   estimateRunCeilingNanoUsd as sharedEstimateRunCeilingNanoUsd,
-  evaluateManifest,
-  outputTokensOf,
-} from '@hushbox/shared';
+} from '@hushbox/shared/affordability/estimate/run-ceiling';
 import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
+import type { CallShapeFamily, CallUsage, EstimateResult, Pricing, Usage } from '@hushbox/shared';
 import type {
-  CallShapeFamily,
-  CallUsage,
   DeclaredCeiling,
-  EstimateResult,
-  Manifest,
   NodeStorage,
-  Pricing,
-  Usage,
-} from '@hushbox/shared';
+} from '@hushbox/shared/affordability/estimate/run-ceiling';
+import type { Manifest } from '@hushbox/shared/affordability/estimate/types';
 import type { Result } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 
@@ -27,8 +22,8 @@ import type { DomainError } from '../../../lib/errors/index.js';
  * Estimates feed admission holds and the settlement's `isEstimated` charge; the
  * authoritative charged cost lives in billing's settlement flow and is never
  * consulted here. Every cost formula (per-token sums, media rate × units,
- * the ceiling multiplier) lives ONCE in the shared estimator core
- * (`@hushbox/shared/estimate`); this module is the thin server adapter that
+ * the ceiling multiplier) lives ONCE in the shared estimator core inside the
+ * money layer; this module is the thin server adapter that
  * drives the core's `callManifest` / `estimateRunCeilingNanoUsd` /
  * `buildMediaLineItems` and translates the core's `EstimateResult` union into
  * the domain `Result` channel. A rate the usage needs but the pricing lacks is a
@@ -38,10 +33,14 @@ import type { DomainError } from '../../../lib/errors/index.js';
 // The token/media usage, declared-ceiling, and per-node storage shapes are the
 // shared estimator core's — re-exported so the models slice's callers keep their
 // `./estimate.js` import site.
-export type { CallUsage, DeclaredCeiling, NodeStorage } from '@hushbox/shared';
+export type { CallUsage } from '@hushbox/shared';
+export type {
+  DeclaredCeiling,
+  NodeStorage,
+} from '@hushbox/shared/affordability/estimate/run-ceiling';
 // The catalog `Pricing` → named-rate mapping is the shared core's single home;
 // re-exported for the slice's callers (trial eligibility, candidate builder).
-export { ratesFromPricing } from '@hushbox/shared';
+export { ratesFromPricing } from '@hushbox/shared/affordability/estimate/run-ceiling';
 
 /** The core's typed pricing failure, surfaced through the domain `Result` channel. */
 function fromEstimate<T>(result: EstimateResult<T>): Result<T, DomainError> {

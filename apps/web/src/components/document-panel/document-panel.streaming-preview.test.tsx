@@ -69,9 +69,15 @@ function statusOf(): string | null {
 }
 
 interface Frame {
-  postSpy: ReturnType<typeof vi.spyOn>;
-  emit: (data: unknown) => void;
+  /** Everything the panel sent through the port the frame transferred. */
+  toFrame: ReturnType<typeof vi.spyOn>;
+  /** The frame's one-shot announcement, carrying the port it mints. */
+  handshake: () => void;
+  emit: (data: unknown) => Promise<void>;
 }
+
+/** Every channel a test minted, so no endpoint outlives the test that made it. */
+const channels: MessageChannel[] = [];
 
 /** Open the message's document card and take hold of the sandbox frame's bridge. */
 async function openPreview(title: string): Promise<Frame> {
@@ -79,13 +85,33 @@ async function openPreview(title: string): Promise<Frame> {
   const iframe = await screen.findByTitle<HTMLIFrameElement>(title);
   const win = iframe.contentWindow;
   if (!win) throw new Error('sandbox frame has no window');
-  const postSpy = vi.spyOn(win, 'postMessage');
-  const emit = (data: unknown): void => {
+
+  // The frame mints the channel and transfers one end on `ready`; these tests
+  // stand in for the frame, so they hold the other end.
+  const channel = new MessageChannel();
+  channels.push(channel);
+  const toFrame = vi.spyOn(channel.port2, 'postMessage');
+  const handshake = (): void => {
     act(() => {
-      globalThis.dispatchEvent(new MessageEvent('message', { data, source: win }));
+      globalThis.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'ready' },
+          source: win,
+          ports: [channel.port2],
+        })
+      );
     });
   };
-  return { postSpy, emit };
+  // Port delivery is a task, not a microtask: yield the loop before asserting.
+  const emit = async (data: unknown): Promise<void> => {
+    await act(async () => {
+      channel.port1.postMessage(data);
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    });
+  };
+  return { toFrame, handshake, emit };
 }
 
 describe('document preview pipeline', () => {
@@ -102,6 +128,10 @@ describe('document preview pipeline', () => {
   });
 
   afterEach(() => {
+    for (const channel of channels.splice(0)) {
+      channel.port1.close();
+      channel.port2.close();
+    }
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
@@ -109,9 +139,9 @@ describe('document preview pipeline', () => {
   it('hides a failed attempt while the message is still streaming', async () => {
     render(<Pipeline content={PARTIAL_REACT} isStreaming />);
 
-    const { emit } = await openPreview('Widget');
-    emit({ type: 'ready' });
-    emit({ type: 'error', requestId: 'req-1', code: 'transpile_failed', message: 'boom' });
+    const { handshake, emit } = await openPreview('Widget');
+    handshake();
+    await emit({ type: 'error', requestId: 'req-1', code: 'transpile_failed', message: 'boom' });
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByTestId(TEST_IDS.highlightedCode)).toBeInTheDocument();
@@ -121,9 +151,9 @@ describe('document preview pipeline', () => {
   it('announces the wait as a status, never as a failure', async () => {
     render(<Pipeline content={PARTIAL_REACT} isStreaming />);
 
-    const { emit } = await openPreview('Widget');
-    emit({ type: 'ready' });
-    emit({ type: 'error', requestId: 'req-1', code: 'runtime_error', message: 'boom' });
+    const { handshake, emit } = await openPreview('Widget');
+    handshake();
+    await emit({ type: 'error', requestId: 'req-1', code: 'runtime_error', message: 'boom' });
 
     expect(screen.getByRole('status')).toHaveTextContent(/preview starts/i);
     expect(screen.queryByText(/could not be compiled/i)).not.toBeInTheDocument();
@@ -132,9 +162,9 @@ describe('document preview pipeline', () => {
   it('shows the compile error once the message has stopped streaming', async () => {
     render(<Pipeline content={PARTIAL_REACT} isStreaming={false} />);
 
-    const { emit } = await openPreview('Widget');
-    emit({ type: 'ready' });
-    emit({ type: 'error', requestId: 'req-1', code: 'transpile_failed', message: 'boom' });
+    const { handshake, emit } = await openPreview('Widget');
+    handshake();
+    await emit({ type: 'error', requestId: 'req-1', code: 'transpile_failed', message: 'boom' });
 
     expect(screen.getByRole('alert')).toHaveTextContent(/could not be compiled/i);
     expect(statusOf()).toBe('error');
@@ -143,16 +173,16 @@ describe('document preview pipeline', () => {
   it('keeps the last good render while a newer attempt fails', async () => {
     const { rerender } = render(<Pipeline content={CLOSED_REACT} isStreaming />);
 
-    const { postSpy, emit } = await openPreview('Widget');
-    emit({ type: 'ready' });
-    emit({ type: 'rendered', requestId: 'req-1' });
+    const { toFrame, handshake, emit } = await openPreview('Widget');
+    handshake();
+    await emit({ type: 'rendered', requestId: 'req-1' });
     expect(statusOf()).toBe('rendered');
 
     rerender(<Pipeline content={GROWN_REACT} isStreaming />);
     await waitFor(() => {
-      expect(postSpy).toHaveBeenCalledTimes(2);
+      expect(toFrame).toHaveBeenCalledTimes(2);
     });
-    emit({ type: 'error', requestId: 'req-2', code: 'transpile_failed', message: 'boom' });
+    await emit({ type: 'error', requestId: 'req-2', code: 'transpile_failed', message: 'boom' });
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(statusOf()).toBe('rendered');
@@ -163,9 +193,9 @@ describe('document preview pipeline', () => {
     // arrive together, leaving a re-init in the debounce behind them.
     const { rerender } = render(<Pipeline content={CLOSED_REACT} isStreaming />);
 
-    const { emit } = await openPreview('Widget');
-    emit({ type: 'ready' });
-    emit({ type: 'error', requestId: 'req-1', code: 'transpile_failed', message: 'boom' });
+    const { handshake, emit } = await openPreview('Widget');
+    handshake();
+    await emit({ type: 'error', requestId: 'req-1', code: 'transpile_failed', message: 'boom' });
 
     rerender(<Pipeline content={GROWN_REACT} isStreaming={false} />);
     await waitFor(() => {
@@ -179,14 +209,14 @@ describe('document preview pipeline', () => {
   it('re-drives the same frame rather than mounting a new one per token', async () => {
     const { rerender } = render(<Pipeline content={CLOSED_REACT} isStreaming />);
 
-    const { postSpy, emit } = await openPreview('Widget');
-    emit({ type: 'ready' });
-    emit({ type: 'rendered', requestId: 'req-1' });
+    const { toFrame, handshake, emit } = await openPreview('Widget');
+    handshake();
+    await emit({ type: 'rendered', requestId: 'req-1' });
     const firstFrame = screen.getByTitle('Widget');
 
     rerender(<Pipeline content={GROWN_REACT} isStreaming />);
     await waitFor(() => {
-      expect(postSpy).toHaveBeenCalledTimes(2);
+      expect(toFrame).toHaveBeenCalledTimes(2);
     });
 
     expect(screen.getByTitle('Widget')).toBe(firstFrame);
@@ -218,9 +248,9 @@ describe('document preview pipeline', () => {
   it('hides a failed attempt for a raw-HTML code block that is still streaming', async () => {
     render(<Pipeline content={RAW_HTML_REACT} isStreaming />);
 
-    const { emit } = await openPreview('Widget');
-    emit({ type: 'ready' });
-    emit({ type: 'error', requestId: 'req-1', code: 'transpile_failed', message: 'boom' });
+    const { handshake, emit } = await openPreview('Widget');
+    handshake();
+    await emit({ type: 'error', requestId: 'req-1', code: 'transpile_failed', message: 'boom' });
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(statusOf()).toBe('streaming');
@@ -229,9 +259,9 @@ describe('document preview pipeline', () => {
   it('shows the error for a raw-HTML code block once streaming has stopped', async () => {
     render(<Pipeline content={RAW_HTML_REACT} isStreaming={false} />);
 
-    const { emit } = await openPreview('Widget');
-    emit({ type: 'ready' });
-    emit({ type: 'error', requestId: 'req-1', code: 'transpile_failed', message: 'boom' });
+    const { handshake, emit } = await openPreview('Widget');
+    handshake();
+    await emit({ type: 'error', requestId: 'req-1', code: 'transpile_failed', message: 'boom' });
 
     expect(screen.getByRole('alert')).toHaveTextContent(/could not be compiled/i);
   });

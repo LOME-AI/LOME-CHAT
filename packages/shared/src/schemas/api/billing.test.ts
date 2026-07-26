@@ -5,6 +5,7 @@ import {
   processPaymentRequestSchema,
   listTransactionsQuerySchema,
   getBalanceResponseSchema,
+  getSpendableQuerySchema,
   getSpendableResponseSchema,
   paymentResponseSchema,
   balanceTransactionResponseSchema,
@@ -261,20 +262,73 @@ describe('getSpendableResponseSchema', () => {
     const parsed = getSpendableResponseSchema.parse({
       spendableNanoUsd: '-100000000',
       heldNanoUsd: '250000000',
+      tier: 'paid',
+      payer: 'self',
     });
     expect(parsed).toEqual({
       spendableNanoUsd: '-100000000',
       heldNanoUsd: '250000000',
+      tier: 'paid',
+      payer: 'self',
     });
   });
 
-  it('carries exactly the two money fields', () => {
+  it('carries the two money fields plus the payer identity that priced them', () => {
     expect(
       Object.keys(getSpendableResponseSchema.shape).toSorted((a, b) => a.localeCompare(b))
-    ).toEqual(['heldNanoUsd', 'spendableNanoUsd']);
+    ).toEqual(['heldNanoUsd', 'payer', 'spendableNanoUsd', 'tier']);
+  });
+
+  it('accepts the owner payer an owner-funded group turn serves', () => {
+    const parsed = getSpendableResponseSchema.parse({
+      spendableNanoUsd: '1000',
+      heldNanoUsd: '0',
+      tier: 'paid',
+      payer: 'owner',
+    });
+    expect(parsed.payer).toBe('owner');
+  });
+
+  it('rejects a payer outside self/owner', () => {
+    expect(
+      getSpendableResponseSchema.safeParse({
+        spendableNanoUsd: '1000',
+        heldNanoUsd: '0',
+        tier: 'paid',
+        payer: 'sender',
+      }).success
+    ).toBe(false);
+  });
+
+  it('rejects a tier outside the shared tier vocabulary', () => {
+    expect(
+      getSpendableResponseSchema.safeParse({
+        spendableNanoUsd: '1000',
+        heldNanoUsd: '0',
+        tier: 'premium',
+        payer: 'self',
+      }).success
+    ).toBe(false);
   });
 
   it('rejects a missing field', () => {
     expect(getSpendableResponseSchema.safeParse({ spendableNanoUsd: '0' }).success).toBe(false);
+  });
+});
+
+describe('getSpendableQuerySchema', () => {
+  it('accepts a conversation id — the context that names the payer', () => {
+    const parsed = getSpendableQuerySchema.parse({
+      conversationId: '018f6c1e-0000-7000-8000-000000000000',
+    });
+    expect(parsed.conversationId).toBe('018f6c1e-0000-7000-8000-000000000000');
+  });
+
+  it('accepts an absent conversation id — a solo composer serves its own numbers', () => {
+    expect(getSpendableQuerySchema.parse({})).toEqual({});
+  });
+
+  it('rejects a conversation id that is not a uuid', () => {
+    expect(getSpendableQuerySchema.safeParse({ conversationId: 'not-a-uuid' }).success).toBe(false);
   });
 });

@@ -19,11 +19,11 @@ import feeSeams from './rules/fee-seams.mjs';
  * as repo-relative path suffixes of the importing file. Each site carries a
  * comment stating why it is a seam:
  *
- * - `packages/shared/src/money.ts` — defines the helpers; fee math composes
+ * - `packages/shared/src/affordability/money.ts` — defines the helpers; fee math composes
  *   internally here and nowhere else.
  * - `packages/shared/src/index.ts` — the root barrel publishes the helpers to
  *   the sanctioned cross-package seams (publication, not application).
- * - `packages/shared/src/estimate/search-reservation.ts` — the web-search
+ * - `packages/shared/src/affordability/estimate/search-reservation.ts` — the web-search
  *   reservation constant: a raw provider per-call figure baked billable once
  *   at definition (ceil).
  * - `apps/api/src/slices/models/domain/normalize.ts` — catalog ingestion:
@@ -36,9 +36,9 @@ import feeSeams from './rules/fee-seams.mjs';
  *   from what ingestion would store.
  */
 export const FEE_APPLICATION_SEAMS = [
-  'packages/shared/src/money.ts',
+  'packages/shared/src/affordability/money.ts',
   'packages/shared/src/index.ts',
-  'packages/shared/src/estimate/search-reservation.ts',
+  'packages/shared/src/affordability/estimate/search-reservation.ts',
   'apps/api/src/slices/models/domain/normalize.ts',
   'apps/api/src/slices/billing/domain/money.ts',
   'scripts/lib/e2e-seeded-image-model.ts',

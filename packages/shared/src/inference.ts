@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { MediaValue } from './content-value.js';
-import { Modality } from './modality.js';
+import { Modality } from './affordability/modality.js';
 
 /**
  * Multimodal I/O contract — replaces the text-or-one-blob event model.

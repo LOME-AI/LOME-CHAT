@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { CLASSIFIER_EFFORT_LEVELS } from './smart-model/effort-dimension.js';
+import { CLASSIFIER_EFFORT_LEVELS } from './affordability/smart-model/effort-dimension.js';
 
 /**
  * The deterministic `x-mock-*` inference knobs the smart-model / multi-model

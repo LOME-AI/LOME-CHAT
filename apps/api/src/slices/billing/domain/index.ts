@@ -29,8 +29,14 @@ export type { ProvisionResult } from './wallets.js';
 export { chargeWithinTx } from './charge.js';
 export type { ChargeInput, ChargeResult, ChargeSender } from './charge.js';
 export { admitRun, refreshWalletSnapshot, releaseHold, writeThroughSnapshot } from './admission.js';
-export { holdReadoutAt, readBudgetScopeHolds, readSpendable } from './spendable.js';
-export type { ActiveHoldsReadout, BudgetScopeHoldRef } from './spendable.js';
+export { holdReadoutAt, readBudgetScopeHolds, readFundingSnapshot } from './spendable.js';
+export type {
+  ActiveHoldsReadout,
+  BudgetScopeHoldRef,
+  ConversationFundingFacts,
+  ConversationFundingReader,
+  FundingSnapshot,
+} from './spendable.js';
 export type {
   AdmissionDecision,
   AdmissionDeps,

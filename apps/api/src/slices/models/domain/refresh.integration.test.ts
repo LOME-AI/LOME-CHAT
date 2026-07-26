@@ -319,6 +319,51 @@ describe('refreshCatalog', () => {
     expect(recorder.capturedCodes).toHaveLength(0);
   });
 
+  it('excludes commercially unsellable models quietly, counted by reason', async () => {
+    // The three catalog-admission reasons ride the quiet-expected group: a
+    // model that cannot be sold profitably is an expected outcome, so it is
+    // counted and never persisted, and nothing alerts. The wide-context anchor
+    // is what keeps the other three outside the top-context exemption.
+    const recentCreated = Math.trunc(NOW.getTime() / 1000) - 1;
+    const freeId = freshModelId('free');
+    const cheapId = freshModelId('cheap');
+    const staleId = freshModelId('stale');
+    const anchorId = freshModelId('wide-context');
+    const recorder = recordingTelemetry();
+    const fetch = catalogFetch({
+      models: [
+        modelEntryFixture({
+          id: freeId,
+          context_length: 8000,
+          created: recentCreated,
+          pricing: { prompt: '0', completion: '0' },
+        }),
+        modelEntryFixture({
+          id: cheapId,
+          context_length: 8001,
+          created: recentCreated,
+          pricing: { prompt: '0.000000099', completion: '0.0000001' },
+        }),
+        modelEntryFixture({ id: staleId, context_length: 8002, created: 1_700_000_000 }),
+        modelEntryFixture({ id: anchorId, context_length: 1_000_000, created: recentCreated }),
+      ],
+      zdrModelIds: [freeId, cheapId, staleId, anchorId],
+    });
+
+    const summary = await unwrap(refreshCatalog(depsFor(fetch, { telemetry: recorder.telemetry })));
+
+    expect(summary.excluded).toBe(3);
+    expect(summary.excludedByReason['zero-priced']).toBe(1);
+    expect(summary.excludedByReason['below-price-floor']).toBe(1);
+    expect(summary.excludedByReason['too-old']).toBe(1);
+    expect(await descriptorsFor(freeId)).toHaveLength(0);
+    expect(await descriptorsFor(cheapId)).toHaveLength(0);
+    expect(await descriptorsFor(staleId)).toHaveLength(0);
+    expect(await descriptorsFor(anchorId)).toHaveLength(1);
+    expect(recorder.warns).toHaveLength(0);
+    expect(recorder.capturedCodes).toHaveLength(0);
+  });
+
   it('excludes a token-priced image model quietly and counts it by reason', async () => {
     const modelId = freshModelId('token-image');
     const recorder = recordingTelemetry();

@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   CLASSIFIER_OUTPUT_TOKEN_CAP,
   MAX_CLASSIFIER_CONTEXT_CHARS,
-  MINIMUM_OUTPUT_TOKENS,
   computeClassifierPromptOverhead,
-  estimateTokensForTier,
   nanoUSD,
 } from '@hushbox/shared';
+import { MINIMUM_OUTPUT_TOKENS } from '@hushbox/shared/affordability/constants';
+import { estimateTokensForTier } from '@hushbox/shared/affordability/estimate/pre-adapters';
 import { callBillableNanoUsd, estimateRunCeilingNanoUsd } from './estimate.js';
 import {
   CLASSIFIER_CHARS_PER_TOKEN,

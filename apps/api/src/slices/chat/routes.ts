@@ -597,7 +597,7 @@ function selectedModels(body: {
  * `{ enabled: false }` per reasoning-capable model.
  */
 function reasoningEngaged(selection: ReasoningEffortSelection | undefined): boolean {
-  return selection !== undefined && selection !== 'none';
+  return selection !== undefined && selection !== 'off';
 }
 
 /** The `reasoningEffort` build option, spread only when the client sent one. */
@@ -709,7 +709,7 @@ async function smartModelDefinitionOrRefusal(
       now: new Date(),
       budget: turn.budget,
       classifyEffort: body.reasoningEffort === 'auto',
-      reasoningOff: body.reasoningEffort === 'none',
+      reasoningOff: body.reasoningEffort === 'off',
     }
   );
   if (build.isErr()) return respondDomainError(c, build.error);
@@ -827,7 +827,7 @@ async function trialSmartModelDefinitionOrRefusal(
       now: new Date(),
       budget,
       classifyEffort: body.reasoningEffort === 'auto',
-      reasoningOff: body.reasoningEffort === 'none',
+      reasoningOff: body.reasoningEffort === 'off',
     }
   );
   if (build.isErr()) return respondDomainError(c, build.error);

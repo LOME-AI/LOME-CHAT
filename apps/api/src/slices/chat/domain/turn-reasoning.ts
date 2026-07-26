@@ -1,10 +1,12 @@
+import { reasoningPlanModelFrom } from '@hushbox/shared';
+import {
+  resolveEffortForModel,
+  turnEffortOptions,
+} from '@hushbox/shared/affordability/estimate/effort-options';
 import {
   planReasoning,
   planReasoningOff,
-  reasoningPlanModelFrom,
-  resolveEffortForModel,
-  turnEffortOptions,
-} from '@hushbox/shared';
+} from '@hushbox/shared/affordability/estimate/reasoning-plan';
 import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import type { Result } from '../../../lib/result/index.js';
@@ -15,6 +17,7 @@ import type {
   EffortChoice,
   ModelDescriptor,
   ReasoningEffortSelection,
+  ReasoningOff,
   ReasoningWire,
 } from '@hushbox/shared';
 
@@ -25,8 +28,8 @@ import type {
  * other code path derives a reasoning wire or budget.
  */
 export interface TurnReasoningEntry {
-  /** The resolved canonical label, or `none` for the hard-off entry (B = 0). */
-  readonly effort: CanonicalReasoningEffort | 'none';
+  /** The resolved canonical label, or `off` for the hard-off entry (B = 0). */
+  readonly effort: CanonicalReasoningEffort | ReasoningOff;
   readonly wire: ReasoningWire;
   readonly reasoningBudgetTokens: number;
 }
@@ -90,7 +93,7 @@ function offEntries(
       return err(validationError(`model '${model}' cannot disable its mandatory reasoning`));
     }
     entries.set(model, {
-      effort: 'none',
+      effort: 'off',
       wire: planned.plan.wire,
       reasoningBudgetTokens: planned.plan.reasoningBudgetTokens,
     });
@@ -143,7 +146,7 @@ function resolvedEntryFor(
        is a drift defect kept wire-silent rather than assumed impossible */
     if (!planned.feasible) return undefined;
     return {
-      effort: 'none',
+      effort: 'off',
       wire: planned.plan.wire,
       reasoningBudgetTokens: planned.plan.reasoningBudgetTokens,
     };
@@ -157,7 +160,7 @@ function resolvedEntryFor(
  * union option set; each sibling then falls to its own nearest offered rung
  * below, to hard off when nothing sits below and it can disable, up to its
  * lowest rung when reasoning is mandatory, or to wire silence when it offers
- * no choice at all. `none` outside the option set (no sibling reasons ⇒
+ * no choice at all. `off` outside the option set (no sibling reasons ⇒
  * empty set) stays the historical no-op; a level with no reasoning sibling
  * anywhere is refused — it cannot have come from an offered menu.
  */
@@ -169,7 +172,7 @@ function unionEntries(
   const known = knownDescriptors(models, resolve);
   if (known.length === 0) return ok(new Map());
   const choices = turnChoices(known);
-  if (choices.length === 0 && chosen === 'none') return ok(new Map());
+  if (choices.length === 0 && chosen === 'off') return ok(new Map());
   if (!choices.includes(chosen)) {
     return err(
       validationError(`reasoning effort '${chosen}' is outside the selected models' option set`)
@@ -247,7 +250,7 @@ export function resolveTurnReasoning(
   if (selection === 'auto') return ok(autoEntries(models, resolve));
   const single = models.length === 1 ? models[0] : undefined;
   if (single !== undefined) {
-    if (selection === 'none') return offEntries(models, resolve);
+    if (selection === 'off') return offEntries(models, resolve);
     return singleLevelEntries(single, resolve, selection);
   }
   return unionEntries(models, resolve, selection);

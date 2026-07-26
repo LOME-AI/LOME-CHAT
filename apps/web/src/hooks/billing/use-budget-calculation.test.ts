@@ -2,16 +2,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { makeBalance } from '@/test-utils/balance-fixture';
 import { renderHook, act } from '@testing-library/react';
 import {
-  affordability,
-  estimateTokensForTier,
   getEffectiveBalanceNano,
-  outputCharsPerTokenForTier,
-  priceRequest,
-  WEB_SEARCH_RESERVATION_NANO_PER_MODEL,
   type GetBalanceResponse,
   LOW_BALANCE_OUTPUT_TOKEN_THRESHOLD,
-  REASONING_BUDGET_TOKENS_BY_EFFORT,
 } from '@hushbox/shared';
+import {
+  estimateTokensForTier,
+  outputCharsPerTokenForTier,
+} from '@hushbox/shared/affordability/estimate/pre-adapters';
+import { priceRequest } from '@hushbox/shared/affordability/estimate/price-request';
+import { REASONING_BUDGET_TOKENS_BY_EFFORT } from '@hushbox/shared/affordability/estimate/reasoning-plan';
+import { affordability } from '@hushbox/shared/affordability/estimate/reducers';
+import { WEB_SEARCH_RESERVATION_NANO_PER_MODEL } from '@hushbox/shared/affordability/estimate/search-reservation';
 import { useBudgetCalculation } from '@/hooks/billing/use-budget-calculation';
 import * as billingHooks from '@/hooks/billing/billing';
 import { useSpendable } from '@/hooks/billing/use-spendable';
@@ -37,10 +39,19 @@ vi.mock('@/providers/stability-provider', () => ({
 const mockUseBalance = vi.mocked(billingHooks.useBalance);
 const mockUseSpendable = vi.mocked(useSpendable);
 
-/** Served spendable fixture: cushion- and hold-aware, as GET /billing/spendable returns it. */
-function makeSpendable(spendableNanoUsd: string): UseQueryResult<GetSpendableResponse> {
+/** No served snapshot: the endpoint is disabled for trial/guest, and pending on first render. */
+function noSpendable(): UseQueryResult<GetSpendableResponse> {
+  return { data: undefined, isPending: false } as UseQueryResult<GetSpendableResponse>;
+}
+
+/** Served funding snapshot fixture, as GET /billing/spendable returns it. */
+function makeSpendable(
+  spendableNanoUsd: string,
+  payer: GetSpendableResponse['payer'] = 'self',
+  tier: GetSpendableResponse['tier'] = 'paid'
+): UseQueryResult<GetSpendableResponse> {
   return {
-    data: { spendableNanoUsd, heldNanoUsd: '0' },
+    data: { spendableNanoUsd, heldNanoUsd: '0', tier, payer },
     isPending: false,
   } as UseQueryResult<GetSpendableResponse>;
 }
@@ -90,6 +101,9 @@ describe('useBudgetCalculation', () => {
 
   describe('tier determination', () => {
     it('uses conservative token estimation for unauthenticated (trial) user', () => {
+      // No endpoint exists for a trial caller, so no snapshot names a payer.
+      mockUseSpendable.mockReturnValue(noSpendable());
+
       const { result } = renderHook(() =>
         useBudgetCalculation({
           ...defaultInput,
@@ -132,6 +146,7 @@ describe('useBudgetCalculation', () => {
         data: makeBalance('0', '5000000000'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
+      mockUseSpendable.mockReturnValue(makeSpendable('500000000', 'self', 'free'));
 
       const { result } = renderHook(() =>
         useBudgetCalculation({
@@ -220,6 +235,7 @@ describe('useBudgetCalculation', () => {
         data: undefined,
         isPending: true,
       } as UseQueryResult<GetBalanceResponse>);
+      mockUseSpendable.mockReturnValue(noSpendable());
       mockUseStability.mockReturnValue({
         isAuthStable: true,
         isBalanceStable: false,
@@ -235,6 +251,7 @@ describe('useBudgetCalculation', () => {
         data: makeBalance('10000000000', '5000000000'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
+      mockUseSpendable.mockReturnValue(makeSpendable('10500000000'));
       mockUseStability.mockReturnValue({
         isAuthStable: true,
         isBalanceStable: true,
@@ -440,6 +457,92 @@ describe('useBudgetCalculation', () => {
     });
   });
 
+  describe("the payer's numbers, not the sender's (BILLING §Group Funding 1)", () => {
+    /** A free-tier sender: zero purchased balance, zero daily allowance left. */
+    function freeTierSender(): void {
+      mockUseBalance.mockReturnValue({
+        data: makeBalance('0', '0'),
+        isPending: false,
+      } as UseQueryResult<GetBalanceResponse>);
+    }
+
+    it('asks the served read for the payer of the conversation it composes in', () => {
+      renderHook(() => useBudgetCalculation({ ...defaultInput, conversationId: 'conv-1' }));
+
+      expect(mockUseSpendable).toHaveBeenCalledWith('conv-1');
+    });
+
+    it("estimates input tokens at the PAYER's ratio when the owner funds the turn", () => {
+      freeTierSender();
+      mockUseSpendable.mockReturnValue(makeSpendable('4000000000', 'owner', 'paid'));
+
+      const { result } = renderHook(() =>
+        useBudgetCalculation({
+          ...defaultInput,
+          promptCharacterCount: 4000,
+          conversationId: 'conv-1',
+        })
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      // The paid ratio is 4 chars/token; the sender's own free-tier ratio is 2,
+      // so a sender-scoped read would double this count.
+      expect(result.current.estimatedInputTokens).toBe(estimateTokensForTier('paid', 4000));
+    });
+
+    it("solves affordability against the PAYER's remaining, not the sender's allowance", () => {
+      freeTierSender();
+      const servedSpendable = 4_000_000_000n;
+      mockUseSpendable.mockReturnValue(makeSpendable(servedSpendable.toString(), 'owner', 'paid'));
+
+      const { result } = renderHook(() =>
+        useBudgetCalculation({
+          ...defaultInput,
+          promptCharacterCount: 4000,
+          conversationId: 'conv-1',
+        })
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      const manifest = priceRequest({
+        models: [{ pricing: { inputPerToken: 10_000n, outputPerToken: 30_000n } }],
+        inputTokens: BigInt(estimateTokensForTier('paid', 4000)),
+        inputChars: 4000,
+        outputCharsPerToken: outputCharsPerTokenForTier('paid'),
+      });
+      if (!manifest.ok) throw new Error('unpriceable test request');
+      expect(result.current.maxOutputTokens).toBe(
+        Number(affordability(manifest.value, servedSpendable).maxOutputTokens)
+      );
+    });
+
+    it("keeps the sender's own tier once the group allowance falls through", () => {
+      freeTierSender();
+      // Fall-through: the server names the sender as payer at their own tier.
+      mockUseSpendable.mockReturnValue(makeSpendable('500000000', 'self', 'free'));
+
+      const { result } = renderHook(() =>
+        useBudgetCalculation({
+          ...defaultInput,
+          promptCharacterCount: 4000,
+          conversationId: 'conv-1',
+        })
+      );
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(result.current.estimatedInputTokens).toBe(estimateTokensForTier('free', 4000));
+    });
+  });
+
   describe('served spendable as THE paid affordability input', () => {
     it('gates paid affordability on the served spendable, not the raw balance', () => {
       // Raw balance $10 but served spendable 0 (e.g. holds ate it): affordability
@@ -500,7 +603,7 @@ describe('useBudgetCalculation', () => {
         data: makeBalance('0', '0'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
-      mockUseSpendable.mockReturnValue(makeSpendable('500000000'));
+      mockUseSpendable.mockReturnValue(makeSpendable('500000000', 'self', 'free'));
 
       const { result } = renderHook(() => useBudgetCalculation(defaultInput));
 

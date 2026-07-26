@@ -1,13 +1,14 @@
 import * as React from 'react';
 import {
-  priceRequest,
-  reservationCeiling,
   ESTIMATED_IMAGE_BYTES,
   ESTIMATED_VIDEO_BYTES_PER_SECOND,
   ESTIMATED_AUDIO_BYTES_PER_SECOND,
   NANO_USD_PER_DOLLAR,
 } from '@hushbox/shared';
-import type { BillableRequest, ChatModality } from '@hushbox/shared';
+import { priceRequest } from '@hushbox/shared/affordability/estimate/price-request';
+import { reservationCeiling } from '@hushbox/shared/affordability/estimate/reducers';
+import type { ChatModality } from '@hushbox/shared';
+import type { BillableRequest } from '@hushbox/shared/affordability/estimate/types';
 
 export interface VideoRates {
   /** BASE (pre-markup) nano per-second rate for each selected model, in order. */

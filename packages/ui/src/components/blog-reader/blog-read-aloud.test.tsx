@@ -133,7 +133,7 @@ beforeEach(() => {
   h.reader.start.mockReset();
   h.reader.stop.mockReset();
   h.reader.pause.mockReset();
-  h.reader.resume.mockReset().mockResolvedValue(undefined);
+  h.reader.resume.mockReset().mockImplementation(() => Promise.resolve());
   h.highlighter.highlight.mockReset();
   h.highlighter.clear.mockReset();
   h.createDocumentReader.mockReset().mockImplementation((options: CreateDocumentReaderOptions) => {
@@ -921,6 +921,23 @@ describe('BlogReadAloud — pause and resume', () => {
     await user.keyboard('{Escape}');
 
     expect(h.reader.pause).toHaveBeenCalledTimes(1);
+    expect(h.reader.stop).not.toHaveBeenCalled();
+  });
+
+  it('ignores keys other than Escape while speaking', async () => {
+    const user = userEvent.setup();
+    render(<BlogReadAloud />);
+    await startReading(user);
+    act(() => {
+      readerOptions().onState('speaking');
+    });
+
+    // Not Space or Enter: those activate the focused control, which is the
+    // button the click left focused, so they pause by design rather than by
+    // this listener.
+    await user.keyboard('a{ArrowDown}');
+
+    expect(h.reader.pause).not.toHaveBeenCalled();
     expect(h.reader.stop).not.toHaveBeenCalled();
   });
 

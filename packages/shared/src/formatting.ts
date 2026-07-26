@@ -3,7 +3,7 @@
  * Single source of truth for number, cost, and context length formatting.
  */
 
-import { nanoUsdToFullDollarString } from './nano-usd.js';
+import { nanoUsdToFullDollarString } from './affordability/nano-usd.js';
 
 /**
  * Format a number with locale-specific thousand separators.

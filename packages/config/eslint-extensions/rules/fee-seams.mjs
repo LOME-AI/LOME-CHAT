@@ -12,7 +12,7 @@
  * Detection is syntactic and name-based at the import/re-export seam: any
  * import specifier or `export … from` source-side name matching the
  * fee-helper pattern (`applyMarkup*` — every fee-application helper in
- * `packages/shared/src/money.ts` must keep that prefix so the pattern covers
+ * `packages/shared/src/affordability/money.ts` must keep that prefix so the pattern covers
  * it) is flagged unless the importing file is on the sanctioned-seam
  * allowlist (rule options — the single data source, in the topic config) or
  * is a test file (tests compute expected values). Star re-exports of a

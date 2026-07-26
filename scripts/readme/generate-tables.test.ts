@@ -7,8 +7,8 @@ import {
   ALL_FEE_CATEGORIES,
   FEE_CATEGORIES,
   formatFeePercent,
-} from '../../packages/shared/src/fees.js';
-import { TOTAL_FEE_RATE } from '../../packages/shared/src/constants.js';
+} from '../../packages/shared/src/affordability/fees.js';
+import { TOTAL_FEE_RATE } from '../../packages/shared/src/affordability/constants.js';
 import { getBrandColors } from './brand.js';
 import {
   generateComparisonSvg,

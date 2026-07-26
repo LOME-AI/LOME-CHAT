@@ -35,12 +35,15 @@ export default mergeConfig(
         // browser renderer/runtime entries — they only run inside a real frame
         // (never imported in Node), so v8 reports them at 0%; they are exercised
         // by the browser integration tests and their pure logic lives in the
-        // covered render/*.ts and python/*.ts helpers. `python/browser-harness.ts`
-        // is the integration-test harness (spins a server, drives Playwright) —
-        // test infrastructure, not shipped runtime, excluded like an entry point.
+        // covered render/*.ts and python/*.ts helpers. `embed-harness.ts` (the
+        // origin server plus the sandboxed embedding) and
+        // `python/browser-harness.ts` (the Python-specific driver over it) are
+        // the integration-test harnesses — test infrastructure, not shipped
+        // runtime, excluded like an entry point.
         include: ['src/**/*.ts'],
         exclude: [
           'src/serve.ts',
+          'src/embed-harness.ts',
           'src/render/bootstrap.ts',
           'src/python/bootstrap.ts',
           'src/python/browser-harness.ts',

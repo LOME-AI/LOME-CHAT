@@ -8,8 +8,8 @@ import tailwindcss from '@tailwindcss/vite';
 import { defaultClientConditions } from 'vite';
 
 import {
-  KOKORO_ORT_COMMON_INCLUDE,
   ORT_EXTERN_WASM_CONDITION,
+  WORKER_BUILD_OPTIONS,
   ortAssetsPlugin,
 } from '../../scripts/lib/ort-assets-plugin.ts';
 
@@ -62,12 +62,9 @@ export default defineConfig({
     // with `apps/web`) reaches browser code. See
     // node_modules/astro/dist/core/create-vite.js:147.
     envPrefix: ['PUBLIC_', 'VITE_'],
-    optimizeDeps: {
-      // Fails the dev server at start if kokoro-js's undeclared
-      // `onnxruntime-common` import cannot be resolved, instead of letting the
-      // optimizer externalize it silently and cache that (see the constant).
-      include: KOKORO_ORT_COMMON_INCLUDE,
-    },
+    // ES-format workers keep `new.target` intact, which the TTS worker's
+    // transformers dependency needs to load at all (see the constant).
+    worker: WORKER_BUILD_OPTIONS,
     resolve: {
       // Picks onnxruntime-web's extern-wasm build variant so the blog TTS
       // worker does not drag a bundled ~21 MB wasm copy into the output

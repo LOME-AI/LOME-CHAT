@@ -983,3 +983,56 @@ Both committed bundles rebuilt; drift tests pass.
 real React through the committed bundle rather than reasoned, and the three shapes the
 previous audit found silent now all report. The one thing I declined to do — an in-suite test
 for the mutation-invisible class — is declined for a stated reason rather than skipped.
+
+---
+
+# Fix pass 7 — the once-only guard now covers the whole react channel
+
+## The comment was a promise the code did not keep
+
+`reportReactFailure`'s doc said a tree "reports its death once", but
+`reactFailureReported` was set only on the post-settle branch. Two failures inside one
+pre-settle commit round therefore posted two `error` messages for the same request: the
+first settled (clearing `pendingRequestId`), and the second fell through to the late branch
+with the flag still unset. Confirmed by the auditor 3/3 with two sibling `useEffect`s each
+throwing in the same round.
+
+I made the comment true rather than narrowing it. The guard now runs before either branch,
+so the first failure is reported and the rest of that round's failures are dropped —
+whichever branch each would have taken. The reason is stated where the guard sits: React can
+hand over several errors from one commit round, and the first already carries the only fact
+the app acts on, which is that this tree is gone.
+
+## Verified, real react@19.1.0 through the committed bundle, 3 trials each
+
+| Document | Messages |
+| --- | --- |
+| two sibling effects each throwing in the same round (pre-settle) | `error:runtime_error("boom A")` — exactly one, 3/3, never silent |
+| two sibling effects throwing in a deferred round (post-settle) | `rendered`, then `error:runtime_error("boom A")` — exactly one error, 3/3 |
+| control: healthy document | `rendered` only, 2/2 |
+
+The first error wins in both branches, and neither case goes quiet.
+
+## Correction to the pass-6 residual mechanism
+
+My pass-6 table recorded `createPortal(…, document.body)` as producing `[error]` alone,
+with the explanation that the root never mutates so the failure lands while the request is
+still pending. The auditor measured `[rendered, error:runtime_error]` instead, and their
+mechanism is the right one: with no root mutations the quiescence loop exits after its first
+re-read, so `rendered` posts at ~60 ms and the failure arrives after it. The outcome is
+identical for the reader — the panel retires the render and shows the error card — but the
+sentence explaining *why* was wrong, and a future reader would have taken it as evidence
+that a portal document is caught inside the render window. It is not; it is caught by the
+post-`rendered` channel, like the other late failures.
+
+## Self-gate
+
+| Command | Result |
+| --- | --- |
+| `pnpm test` (apps/sandbox) | pass — 17 files, 153 tests, coverage 100% st/br/fn/ln |
+| `turbo typecheck lint --filter=@hushbox/sandbox --force` | pass (2/2) |
+| `npx eslint src` (from apps/sandbox, after the last edit) | exit 0 |
+| `npx prettier --check src` | pass |
+
+`public/render.js` rebuilt (the source changed); the drift test passes. `packages/shared` and
+`apps/web` were not touched in this pass.

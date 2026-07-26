@@ -58,8 +58,8 @@ describe('calculateMonthlyCost', () => {
     const model = makeModel({ pricing: { inputPerToken: '10000', outputPerToken: '20000' } });
     const inputChars = 700; // system prompt (500) + user message (200)
     const outputChars = 400;
-    const inputTokens = estimateTokenCount(inputChars.toString().padEnd(inputChars, ' '));
-    const outputTokens = estimateTokenCount(outputChars.toString().padEnd(outputChars, ' '));
+    const inputTokens = estimateTokenCount(inputChars);
+    const outputTokens = estimateTokenCount(outputChars);
     const perMessageNano =
       BigInt(inputTokens) * 10_000n +
       BigInt(outputTokens) * 20_000n +

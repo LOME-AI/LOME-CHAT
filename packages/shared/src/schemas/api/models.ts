@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ModelReasoning } from '../../model-descriptor.js';
+import { ModelReasoning } from '../../affordability/model-descriptor.js';
 
 // No code currently produces 'internet-search'; search runs via a Perplexity tool
 // universally, not as a per-model capability. The enum is kept as a placeholder

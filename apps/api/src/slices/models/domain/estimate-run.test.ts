@@ -5,20 +5,23 @@ import {
   ESTIMATED_VIDEO_BYTES_PER_SECOND,
   MEDIA_STORAGE_COST_PER_BYTE_NANO,
   STORAGE_COST_PER_CHARACTER_NANO,
-  WEB_SEARCH_RESERVATION_NANO_PER_MODEL,
   WorkflowDefinition,
-  classifierReserveChars,
-  estimateTokensForTier,
   nanoUSD,
-  outputCharsPerTokenForTier,
-  smartModelMinimumRequiredNanoUsd,
 } from '@hushbox/shared';
+import { classifierReserveChars } from '@hushbox/shared/affordability/estimate/classifier-line-item';
+import {
+  estimateTokensForTier,
+  outputCharsPerTokenForTier,
+} from '@hushbox/shared/affordability/estimate/pre-adapters';
+import { WEB_SEARCH_RESERVATION_NANO_PER_MODEL } from '@hushbox/shared/affordability/estimate/search-reservation';
+import { smartModelMinimumRequiredNanoUsd } from '@hushbox/shared/affordability/estimate/smart-model-affordability';
 import { DAILY_ALLOWANCE_NANO_USD } from '../../billing/index.js';
 
 import { VALUE_STORE_BYTE_BUDGET_BYTES } from '../../workflows/engine/value-store.js';
 import { createEstimateRun, estimateMinMediaOutputBytes } from './estimate-run.js';
 import { buildSmartModelCandidates, classifierWorstCaseNanoUsd } from './smart-model-candidates.js';
-import type { Pricing, ModelDescriptor, SmartModelPoolCandidate, UserTier } from '@hushbox/shared';
+import type { Pricing, ModelDescriptor, UserTier } from '@hushbox/shared';
+import type { SmartModelPoolCandidate } from '@hushbox/shared/affordability/estimate/smart-model-affordability';
 import type { ModelPricingResolver } from './estimate-run.js';
 
 /**

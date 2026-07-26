@@ -210,7 +210,13 @@ function transportFor(status: UiStatus, actions: TransportActions): Transport {
       return { label: 'Pause', name: 'Pause', Icon: Pause, onClick: actions.onPause, active: true };
     }
     case 'paused': {
-      return { label: 'Resume', name: 'Resume', Icon: Play, onClick: actions.onResume, active: true };
+      return {
+        label: 'Resume',
+        name: 'Resume',
+        Icon: Play,
+        onClick: actions.onResume,
+        active: true,
+      };
     }
     case 'loading': {
       // The model download has no cancel, so ending the read outright is all

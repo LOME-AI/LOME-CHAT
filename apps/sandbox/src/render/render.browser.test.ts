@@ -1,26 +1,30 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createServer, type Server } from 'node:http';
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { chromium, type Browser } from '@playwright/test';
-import { SANDBOX_CSP } from '../csp.js';
+import type { Browser } from '@playwright/test';
 import { resolveEsmStub } from '../esm-stub.js';
-import { RENDER_BUNDLE_PATH } from './build-bundle.js';
+import {
+  launchBrowser,
+  openEmbeddedFrame,
+  startSandboxOrigin,
+  type BridgeLike,
+  type EmbeddedFrame,
+  type EmbedOptions,
+  type SandboxOrigin,
+} from '../embed-harness.js';
 
 /**
- * Drives the real renderer page in a headless browser: the committed
- * public/render.html + public/render.js (the actual bundle), with the module
- * CDN pointed at an in-test stub — exactly the shape test mode uses (a local
- * stub instead of esm.sh). This exercises the whole pipeline in a real engine:
- * specifier resolution, in-browser JSX transpile, module loading, mount, and the
- * typed bridge messages. Loaded top-level, `parent` is the window itself, so the
- * frame's outbound messages land on the same window the test posts `init` to.
+ * Drives the real renderer page in a headless browser exactly as the app drives
+ * it: the committed public/render.html + public/render.js (the actual bundle)
+ * inside a real `sandbox="allow-scripts"` iframe, with the module CDN pointed at
+ * an in-test stub — the shape test mode uses (a local stub instead of esm.sh).
+ * This exercises the whole pipeline in a real engine: specifier resolution,
+ * in-browser JSX transpile, module loading, mount, and the typed bridge
+ * messages.
+ *
+ * The embedding is load-bearing. Driving the renderer top-level, where `parent`
+ * is the window itself, exercises no opaque origin and no cross-document
+ * transport at all — so it cannot observe whether the app's messages reach the
+ * frame, only whether the renderer handles the ones it gets.
  */
-
-const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
-const RENDER_HTML = readFileSync(path.join(publicDir, 'render.html'), 'utf8');
-const RENDER_JS = readFileSync(RENDER_BUNDLE_PATH, 'utf8');
 
 // The renderer resolves bare specifiers through the same local fixture set test
 // mode serves (`esm-stub.ts`), so these tests exercise the module bodies CI and
@@ -33,123 +37,198 @@ const EXTRA_MODULES: Readonly<Record<string, string>> = {
     export default greeting;`,
 };
 
-/** Resolve a module request to the shared fixture set, then the test-local extra. */
-function moduleBodyFor(pathname: string): string | undefined {
-  return resolveEsmStub(pathname) ?? EXTRA_MODULES[pathname];
-}
+const JS_CONTENT_TYPE = 'text/javascript; charset=utf-8';
 
-interface BridgeLike {
-  readonly type?: string;
-  readonly requestId?: string;
-  readonly code?: string;
-  readonly message?: string;
-  readonly stream?: string;
-  readonly text?: string;
+/** The module URL the renderer resolves `react-dom/client` to, whatever the pin. */
+const REACT_DOM_CLIENT_URL = /\/react-dom@[^/]+\/client$/;
+
+/**
+ * A `react-dom/client` stand-in whose root reports two failures from a single
+ * commit round, which is what React does when two sibling effects throw: each
+ * captured commit-phase error enqueues its own root error update, and each of
+ * those calls the root's `onUncaughtError`. The shared module stub cannot stand
+ * in here — its reconciler stops flushing effects at the first throw, so it
+ * reports once no matter how many effects would have failed.
+ */
+const DOUBLE_REPORTING_REACT_DOM = `export function createRoot(container, options) {
+  return {
+    unmount() { container.textContent = ''; },
+    render() {
+      queueMicrotask(() => {
+        // React tears the tree down before reporting, so the container is
+        // already empty when either failure is handed over.
+        container.textContent = '';
+        options.onUncaughtError(new Error('first sibling boom'));
+        options.onUncaughtError(new Error('second sibling boom'));
+      });
+    },
+  };
+}`;
+
+/**
+ * The routes the committed `public/` tree does not carry: the env-derived
+ * `/config.js` (pointed at the in-test module stub) and the stub modules.
+ */
+function renderRoute(
+  pathname: string,
+  origin: string
+): { contentType: string; body: string } | undefined {
+  if (pathname === '/config.js') {
+    const config = JSON.stringify({ esmCdnUrl: `${origin}/esm-stub` });
+    return { contentType: JS_CONTENT_TYPE, body: `globalThis['__SANDBOX_CONFIG__'] = ${config};` };
+  }
+  const stub = resolveEsmStub(pathname) ?? EXTRA_MODULES[pathname];
+  if (stub === undefined) return undefined;
+  return { contentType: JS_CONTENT_TYPE, body: stub };
 }
 
 let browser: Browser;
-let server: Server;
-let origin: string;
+let sandbox: SandboxOrigin;
+
+/** Open the renderer inside a fresh sandboxed frame on the running origin. */
+function openRenderer(beforeLoad?: EmbedOptions['beforeLoad']): Promise<EmbeddedFrame> {
+  return openEmbeddedFrame(browser, sandbox.origin, { framePath: '/render.html', beforeLoad });
+}
+
+/** Read what the document rendered, from inside the frame's own realm. */
+function rootHtmlOf(frame: EmbeddedFrame): Promise<string> {
+  return frame.probeFrame(() => document.querySelector('#document-root')?.innerHTML ?? '');
+}
+
+/** Sleep in Node: one of these tests mocks the page's own clock. */
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
 
 beforeAll(async () => {
-  await new Promise<void>((resolve) => {
-    server = createServer((req, res) => {
-      const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
-      // Serve the one authoritative sandbox CSP on every response, exactly as the
-      // production `_headers` and dev server do, so these tests prove the renderer
-      // runs under the deployed policy rather than an unconstrained dev server.
-      const send = (contentType: string, body: string): void => {
-        res.writeHead(200, { 'Content-Type': contentType, 'Content-Security-Policy': SANDBOX_CSP });
-        res.end(body);
-      };
-      if (pathname === '/render.html') {
-        send('text/html; charset=utf-8', RENDER_HTML);
-        return;
-      }
-      if (pathname === '/render.js') {
-        send('text/javascript; charset=utf-8', RENDER_JS);
-        return;
-      }
-      if (pathname === '/config.js') {
-        const config = JSON.stringify({ esmCdnUrl: `${origin}/esm-stub` });
-        send('text/javascript; charset=utf-8', `globalThis['__SANDBOX_CONFIG__'] = ${config};`);
-        return;
-      }
-      const stub = moduleBodyFor(pathname);
-      if (stub !== undefined) {
-        send('text/javascript; charset=utf-8', stub);
-        return;
-      }
-      res.writeHead(404);
-      res.end();
-    }).listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      if (address === null || typeof address === 'string') throw new Error('no server port');
-      origin = `http://127.0.0.1:${String(address.port)}`;
-      resolve();
-    });
-  });
-  browser = await chromium.launch({ args: ['--no-sandbox'] });
+  sandbox = await startSandboxOrigin(renderRoute);
+  browser = await launchBrowser();
 }, 60_000);
 
 afterAll(async () => {
   await browser.close();
-  await new Promise<void>((resolve) =>
-    server.close(() => {
-      resolve();
-    })
-  );
+  await sandbox.close();
 });
 
 /**
- * Load the renderer page fresh, send one `init`, and collect the bridge
- * messages. `observeAfterMs` keeps watching past the terminal message, so a test
- * can assert that nothing further arrives once a document has rendered.
+ * Embed the renderer fresh, send one `init` over the port, and collect the
+ * bridge messages. `observeAfterMs` keeps watching past the terminal message, so
+ * a test can assert that nothing further arrives once a document has rendered.
  */
 async function render(
   kind: string,
   code: string,
   observeAfterMs = 0
 ): Promise<{ messages: BridgeLike[]; rootHtml: string }> {
-  const page = await browser.newPage();
+  const frame = await openRenderer();
   try {
-    await page.addInitScript(() => {
-      (globalThis as unknown as { __msgs: unknown[] }).__msgs = [];
-      window.addEventListener('message', (event) =>
-        (globalThis as unknown as { __msgs: unknown[] }).__msgs.push(event.data)
-      );
-    });
-    await page.goto(`${origin}/render.html`);
-    await page.waitForFunction(() =>
-      (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs.some((m) => m.type === 'ready')
-    );
-    await page.evaluate(
-      (payload) => {
-        // eslint-disable-next-line sonarjs/post-message -- test harness posts init to its own window (the renderer loads top-level, so parent === window)
-        window.postMessage({ type: 'init', requestId: 'r1', ...payload }, '*');
-      },
-      { kind, code }
-    );
-    await page.waitForFunction(
-      () =>
-        (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs.some(
-          (m) => m.type === 'rendered' || m.type === 'error'
-        ),
-      undefined,
-      { timeout: 15_000 }
-    );
-    if (observeAfterMs > 0) await page.waitForTimeout(observeAfterMs);
-    const messages = await page.evaluate(
-      () => (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs
-    );
-    const rootHtml = await page.evaluate(
-      () => document.querySelector('#document-root')?.innerHTML ?? ''
-    );
-    return { messages, rootHtml };
+    await frame.send({ type: 'init', requestId: 'r1', kind, code });
+    await frame.waitForMessage((m) => m.type === 'rendered' || m.type === 'error');
+    if (observeAfterMs > 0) await sleep(observeAfterMs);
+    return { messages: await frame.messages(), rootHtml: await rootHtmlOf(frame) };
   } finally {
-    await page.close();
+    await frame.close();
   }
 }
+
+describe('sandbox origin static server', () => {
+  it('refuses a percent-encoded path that would escape the served directory', async () => {
+    // `new URL()` normalizes literal dot segments, so a request has to hide the
+    // separator to keep them: `..%2f` survives parsing and only becomes `../`
+    // when the pathname is decoded, after the normalization that would have
+    // removed it.
+    const response = await fetch(`${sandbox.origin}/..%2fpackage.json`);
+    expect(response.status).toBe(404);
+  });
+});
+
+describe('web renderer bridge transport (embedded in a sandboxed frame)', () => {
+  it('transfers a MessagePort with its ready broadcast', async () => {
+    const frame = await openRenderer();
+    try {
+      expect(await frame.hasPort()).toBe(true);
+    } finally {
+      await frame.close();
+    }
+  }, 30_000);
+
+  it('keeps its end of the channel off the frame global', async () => {
+    // Probed against the shipped bundle, not the source: the port is the
+    // embedder's authority over this frame, and document code shares this
+    // realm. Anything reachable from `globalThis` is reachable by the document.
+    const frame = await openRenderer();
+    try {
+      const reachable = await frame.probeFrame(() => {
+        const scope = globalThis as unknown as Record<string, unknown>;
+        return Object.getOwnPropertyNames(globalThis).filter((key) => {
+          try {
+            return scope[key] instanceof MessagePort;
+          } catch {
+            return false;
+          }
+        });
+      });
+      expect(reachable).toEqual([]);
+    } finally {
+      await frame.close();
+    }
+  }, 30_000);
+
+  it('renders a document from an init delivered only through the transferred port', async () => {
+    // The delivery test the top-level harness could not express. The embedder's
+    // origin never reaches the frame — its own origin is opaque, so an
+    // explicitly-targeted `window.postMessage` is discarded without an error —
+    // and the port is the only channel the app has.
+    const frame = await openRenderer();
+    try {
+      await frame.send({
+        type: 'init',
+        kind: 'html',
+        requestId: 'port-1',
+        code: '<p id="port-out">delivered over the port</p>',
+      });
+      const messages = await frame.waitForMessage(
+        (m) => m.type === 'rendered' && m.requestId === 'port-1'
+      );
+      expect(messages.some((m) => m.type === 'error')).toBe(false);
+      expect(await rootHtmlOf(frame)).toContain('delivered over the port');
+    } finally {
+      await frame.close();
+    }
+  }, 30_000);
+
+  it('ignores an init posted at its window instead of the port', async () => {
+    // Anything sharing the embedder's realm — including a document the app is
+    // showing elsewhere — can post at this frame's window with '*', and the
+    // browser delivers it. The frame registers no window listener, so the
+    // forgery reaches nothing. The port init that follows is the control: it
+    // proves the frame was alive and simply refused the window message.
+    const frame = await openRenderer();
+    try {
+      await frame.postToFrameWindow({
+        type: 'init',
+        kind: 'html',
+        requestId: 'forged-1',
+        code: '<p id="forged-out">forged</p>',
+      });
+      await sleep(500);
+      const afterForgery = await frame.messages();
+      expect(afterForgery.some((m) => m.requestId === 'forged-1')).toBe(false);
+      await frame.send({
+        type: 'init',
+        kind: 'html',
+        requestId: 'genuine-1',
+        code: '<p id="genuine-out">genuine</p>',
+      });
+      await frame.waitForMessage((m) => m.type === 'rendered' && m.requestId === 'genuine-1');
+      const rootHtml = await rootHtmlOf(frame);
+      expect(rootHtml).toContain('id="genuine-out"');
+      expect(rootHtml).not.toContain('id="forged-out"');
+    } finally {
+      await frame.close();
+    }
+  }, 30_000);
+});
 
 describe('web renderer (real browser)', () => {
   it('renders a plain HTML document', async () => {
@@ -405,6 +484,43 @@ describe('web renderer (real browser)', () => {
     expect(rootHtml).toBe('');
   }, 30_000);
 
+  it('reports one error when a React root reports two failures from one commit round', async () => {
+    // The tree died once, so the app is owed one explanation, not two: the
+    // second failure carries no fact the first did not. Nothing else in the
+    // suite can reach this — the shared module stub reports a single failure per
+    // root — so the react-dom this frame loads is replaced for this test alone.
+    const frame = await openRenderer(async (page) => {
+      await page.route(REACT_DOM_CLIENT_URL, (route) =>
+        route.fulfill({
+          contentType: JS_CONTENT_TYPE,
+          // The frame's origin is opaque, so even a same-server module fetch is
+          // cross-origin and needs CORS, exactly as the harness's own responses do.
+          headers: { 'Access-Control-Allow-Origin': '*' },
+          body: DOUBLE_REPORTING_REACT_DOM,
+        })
+      );
+    });
+    try {
+      await frame.send({
+        type: 'init',
+        kind: 'react',
+        requestId: 'twice-1',
+        code: 'export default function App() { return <p id="doomed">doomed</p>; }',
+      });
+      await frame.waitForMessage((m) => m.type === 'error' && m.requestId === 'twice-1');
+      // Both reports land in the same round, but the frame's second message —
+      // if it sent one — would follow the first by a turn, so the count is only
+      // meaningful after watching past it.
+      await sleep(300);
+      const collected = await frame.messages();
+      const errors = collected.filter((m) => m.type === 'error' && m.requestId === 'twice-1');
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.message).toContain('first sibling boom');
+    } finally {
+      await frame.close();
+    }
+  }, 30_000);
+
   it('reports a typed transpile error for a syntax-error React document', async () => {
     const { messages } = await render('react', `export default () => <div>`);
     const error = messages.find((m) => m.type === 'error');
@@ -417,69 +533,30 @@ describe('web renderer (real browser)', () => {
     // and a bare import can first appear in a later version of it. The frame must
     // resolve a specifier its first init never saw, and mount over its own
     // previous React tree.
-    const page = await browser.newPage();
+    const frame = await openRenderer();
     try {
-      await page.addInitScript(() => {
-        (globalThis as unknown as { __msgs: unknown[] }).__msgs = [];
-        window.addEventListener('message', (event) =>
-          (globalThis as unknown as { __msgs: unknown[] }).__msgs.push(event.data)
+      const waitFor = (requestId: string): Promise<BridgeLike[]> =>
+        frame.waitForMessage(
+          (m) => (m.type === 'rendered' || m.type === 'error') && m.requestId === requestId
         );
-      });
-      await page.goto(`${origin}/render.html`);
-      const waitFor = async (requestId: string): Promise<void> => {
-        await page.waitForFunction(
-          (rid) =>
-            (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs.some(
-              (m) => (m.type === 'rendered' || m.type === 'error') && m.requestId === rid
-            ),
-          requestId,
-          { timeout: 15_000 }
-        );
-      };
-      await page.waitForFunction(
-        () =>
-          (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs.some(
-            (m) => m.type === 'ready'
-          ),
-        undefined,
-        { timeout: 15_000 }
-      );
-      await page.evaluate(() => {
-        // eslint-disable-next-line sonarjs/post-message -- test harness posts init to its own window
-        window.postMessage(
-          {
-            type: 'init',
-            kind: 'react',
-            requestId: 'grow-1',
-            code: 'export default function App() { return <p id="first">first</p>; }',
-          },
-          '*'
-        );
+      await frame.send({
+        type: 'init',
+        kind: 'react',
+        requestId: 'grow-1',
+        code: 'export default function App() { return <p id="first">first</p>; }',
       });
       await waitFor('grow-1');
-      await page.evaluate(() => {
-        // eslint-disable-next-line sonarjs/post-message -- test harness posts init to its own window
-        window.postMessage(
-          {
-            type: 'init',
-            kind: 'react',
-            requestId: 'grow-2',
-            code: `import greeting from 'greeting-fixture';
-              export default function App() { return <p id="second">{greeting()}</p>; }`,
-          },
-          '*'
-        );
+      await frame.send({
+        type: 'init',
+        kind: 'react',
+        requestId: 'grow-2',
+        code: `import greeting from 'greeting-fixture';
+          export default function App() { return <p id="second">{greeting()}</p>; }`,
       });
-      await waitFor('grow-2');
-      const messages = await page.evaluate(() =>
-        (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs.filter(
-          (m) => m.requestId === 'grow-2'
-        )
-      );
-      const rootHtml = await page.evaluate(
-        () => document.querySelector('#document-root')?.innerHTML ?? ''
-      );
-      const importMaps = await page.evaluate(
+      const collected = await waitFor('grow-2');
+      const messages = collected.filter((m) => m.requestId === 'grow-2');
+      const rootHtml = await rootHtmlOf(frame);
+      const importMaps = await frame.probeFrame(
         () => document.querySelectorAll('script[type="importmap"]').length
       );
       expect(messages.find((m) => m.type === 'error')?.message).toBeUndefined();
@@ -490,7 +567,7 @@ describe('web renderer (real browser)', () => {
       // including on an engine that honors only the first map in a document.
       expect(importMaps).toBe(0);
     } finally {
-      await page.close();
+      await frame.close();
     }
   }, 30_000);
 
@@ -499,72 +576,35 @@ describe('web renderer (real browser)', () => {
     // never remounts it, so the previous document is still live — its timers keep
     // firing. Attributing one of those to the request that happens to be in
     // flight would put a sticky error card over a working preview.
-    const page = await browser.newPage();
+    const frame = await openRenderer();
     try {
-      await page.addInitScript(() => {
-        (globalThis as unknown as { __msgs: unknown[] }).__msgs = [];
-        window.addEventListener('message', (event) =>
-          (globalThis as unknown as { __msgs: unknown[] }).__msgs.push(event.data)
-        );
+      await frame.send({
+        type: 'init',
+        kind: 'html',
+        requestId: 'stale-1',
+        code: `<script>setTimeout(() => { throw new Error('stale boom'); }, 300);</script>`,
       });
-      await page.goto(`${origin}/render.html`);
-      await page.waitForFunction(
-        () =>
-          (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs.some(
-            (m) => m.type === 'ready'
-          ),
-        undefined,
-        { timeout: 15_000 }
-      );
-      await page.evaluate(() => {
-        // eslint-disable-next-line sonarjs/post-message -- test harness posts init to its own window
-        window.postMessage(
-          {
-            type: 'init',
-            kind: 'html',
-            requestId: 'stale-1',
-            code: `<script>setTimeout(() => { throw new Error('stale boom'); }, 300);</script>`,
-          },
-          '*'
-        );
+      await sleep(280);
+      await frame.send({
+        type: 'init',
+        kind: 'js',
+        requestId: 'fresh-2',
+        code: `await new Promise((resolve) => setTimeout(resolve, 400));
+          const root = document.querySelector('#document-root');
+          root.textContent = 'fresh output';`,
       });
-      await page.waitForTimeout(280);
-      await page.evaluate(() => {
-        // eslint-disable-next-line sonarjs/post-message -- test harness posts init to its own window
-        window.postMessage(
-          {
-            type: 'init',
-            kind: 'js',
-            requestId: 'fresh-2',
-            code: `await new Promise((resolve) => setTimeout(resolve, 400));
-              const root = document.querySelector('#document-root');
-              root.textContent = 'fresh output';`,
-          },
-          '*'
-        );
-      });
-      await page.waitForFunction(
-        () =>
-          (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs.some(
-            (m) => (m.type === 'rendered' || m.type === 'error') && m.requestId === 'fresh-2'
-          ),
-        undefined,
-        { timeout: 15_000 }
+      await frame.waitForMessage(
+        (m) => (m.type === 'rendered' || m.type === 'error') && m.requestId === 'fresh-2'
       );
-      await page.waitForTimeout(200);
-      const messages = await page.evaluate(() =>
-        (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs.filter(
-          (m) => m.requestId === 'fresh-2'
-        )
-      );
-      const rootHtml = await page.evaluate(
-        () => document.querySelector('#document-root')?.innerHTML ?? ''
-      );
+      await sleep(200);
+      const collected = await frame.messages();
+      const messages = collected.filter((m) => m.requestId === 'fresh-2');
+      const rootHtml = await rootHtmlOf(frame);
       expect(messages.some((m) => m.type === 'error')).toBe(false);
       expect(messages.some((m) => m.type === 'rendered')).toBe(true);
       expect(rootHtml).toContain('fresh output');
     } finally {
-      await page.close();
+      await frame.close();
     }
   }, 30_000);
 
@@ -572,50 +612,30 @@ describe('web renderer (real browser)', () => {
     // A document whose module never finishes loading (here: a top-level await
     // that never resolves) reports nothing at all, and the panel reads silence
     // as "still working". Time is mocked, so the deadline is exercised without
-    // the test waiting it out.
-    const page = await browser.newPage();
+    // the test waiting it out. Every wait here polls from Node — a page-side
+    // waiter would need the page's own (mocked) timers to tick.
+    const frame = await openRenderer((page) => page.clock.install());
     try {
-      await page.clock.install();
-      await page.addInitScript(() => {
-        (globalThis as unknown as { __msgs: unknown[] }).__msgs = [];
-        window.addEventListener('message', (event) =>
-          (globalThis as unknown as { __msgs: unknown[] }).__msgs.push(event.data)
-        );
+      await frame.send({
+        type: 'init',
+        kind: 'js',
+        requestId: 'r1',
+        code: 'await new Promise(() => {});',
       });
-      await page.goto(`${origin}/render.html`);
-      // Polled from Node: the page's own timers are mocked, so a page-side wait
-      // would never tick.
-      for (let attempt = 0; attempt < 100; attempt++) {
-        const ready = await page.evaluate(() =>
-          (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs.some((m) => m.type === 'ready')
-        );
-        if (ready) break;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      await page.evaluate(() => {
-        // eslint-disable-next-line sonarjs/post-message -- test harness posts init to its own window (the renderer loads top-level, so parent === window)
-        window.postMessage(
-          { type: 'init', kind: 'js', requestId: 'r1', code: 'await new Promise(() => {});' },
-          '*'
-        );
-      });
-      await page.clock.fastForward(120_000);
-      const messages = await page.evaluate(
-        () => (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs
-      );
+      await frame.page.clock.fastForward(120_000);
+      const messages = await frame.waitForMessage((m) => m.type === 'error');
       const error = messages.find((m) => m.type === 'error');
       expect(error?.code).toBe('timed_out');
       expect(messages.some((m) => m.type === 'rendered')).toBe(false);
     } finally {
-      await page.close();
+      await frame.close();
     }
   }, 30_000);
 
   it('neutralizes the WebRTC constructors on the frame before document code runs', async () => {
-    const page = await browser.newPage();
+    const frame = await openRenderer();
     try {
-      await page.goto(`${origin}/render.html`);
-      const probe = await page.evaluate(() => {
+      const probe = await frame.probeFrame(() => {
         const w = globalThis as unknown as Record<string, unknown>;
         const construct = (): boolean => {
           try {
@@ -639,7 +659,7 @@ describe('web renderer (real browser)', () => {
       expect(probe.dataChannel).toBeUndefined();
       expect(probe.constructThrows).toBe(true);
     } finally {
-      await page.close();
+      await frame.close();
     }
   }, 30_000);
 });

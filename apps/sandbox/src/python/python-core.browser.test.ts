@@ -1,27 +1,33 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Browser } from '@playwright/test';
 import {
-  startPythonSandbox,
   launchBrowser,
-  openPythonPage,
-  type PythonSandbox,
-  type PythonPage,
+  startSandboxOrigin,
   type BridgeLike,
-} from './browser-harness.js';
+  type SandboxOrigin,
+} from '../embed-harness.js';
+import { openPythonPage, type PythonPage } from './browser-harness.js';
 
 /**
  * Drives the real `/python.html` runtime in a headless browser under the
- * production sandbox CSP. One page is reused across the lightweight documents so
- * Pyodide loads once; the heavier matplotlib and micropip paths live in sibling
- * files to keep each browser file well under the pole threshold.
+ * production sandbox CSP, embedded in a real `sandbox="allow-scripts"` iframe —
+ * so the runtime's origin is opaque and the transport under test is the one the
+ * app uses. One page is reused across the lightweight documents so Pyodide loads
+ * once; the heavier matplotlib and micropip paths live in sibling files to keep
+ * each browser file well under the pole threshold.
  */
 
-let sandbox: PythonSandbox;
+let sandbox: SandboxOrigin;
 let browser: Browser;
 let page: PythonPage;
 
+/** Sleep in Node, so a page with a mocked clock cannot stall the waiter. */
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 beforeAll(async () => {
-  sandbox = await startPythonSandbox();
+  sandbox = await startSandboxOrigin();
   browser = await launchBrowser();
   page = await openPythonPage(browser, sandbox.origin);
 }, 120_000);
@@ -37,6 +43,52 @@ const consoleText = (messages: BridgeLike[], stream: string): string =>
     .filter((m) => m.type === 'console' && m.stream === stream)
     .map((m) => m.text ?? '')
     .join('');
+
+describe('python runtime bridge transport (embedded in a sandboxed frame)', () => {
+  it('runs a document from an init and run delivered only through the transferred port', async () => {
+    // The delivery test the top-level harness could not express. The embedder's
+    // origin never reaches this frame — the frame's own origin is opaque, so an
+    // explicitly-targeted `window.postMessage` is discarded without an error —
+    // and the port is the only channel the app has.
+    expect(await page.frame.hasPort()).toBe(true);
+    await page.frame.send({
+      type: 'init',
+      kind: 'python',
+      code: `print("delivered over the port")`,
+      requestId: 'port-1',
+    });
+    await page.frame.send({ type: 'run', requestId: 'port-1' });
+    const messages = await page.frame.waitForMessage(
+      (m) => m.type === 'result' && m.requestId === 'port-1',
+      120_000
+    );
+    const mine = messages.filter((m) => m.requestId === 'port-1');
+    expect(consoleText(mine, 'stdout')).toContain('delivered over the port');
+    expect(mine.some((m) => m.type === 'error')).toBe(false);
+  }, 150_000);
+
+  it('ignores an init and run posted at its window instead of the port', async () => {
+    // Anything sharing the embedder's realm — including a document the app is
+    // showing elsewhere — can post at this frame's window with '*', and the
+    // browser delivers it. The frame registers no window listener, so the
+    // forgery reaches nothing. The port run that follows is the control: it
+    // proves the frame was alive and simply refused the window messages.
+    await page.frame.postToFrameWindow({
+      type: 'init',
+      kind: 'python',
+      code: `print("forged")`,
+      requestId: 'forged-1',
+    });
+    await page.frame.postToFrameWindow({ type: 'run', requestId: 'forged-1' });
+    await sleep(500);
+    const afterForgery = await page.frame.messages();
+    expect(afterForgery.some((m) => m.requestId === 'forged-1')).toBe(false);
+
+    const control = await page.run(`print("genuine")`, 'genuine-1');
+    expect(consoleText(control, 'stdout')).toContain('genuine');
+    expect(control.some((m) => m.type === 'result')).toBe(true);
+  }, 120_000);
+});
 
 describe('python runtime (real browser)', () => {
   it('streams a print round-trip on stdout and finishes with a result', async () => {
@@ -100,44 +152,30 @@ print(int(np.arange(15).sum()))`;
     // settles and the run reports nothing at all — the shape the panel reads as
     // "still working". Time is mocked, so the deadline is exercised without the
     // test waiting it out.
-    const hung = await browser.newPage();
-    try {
-      await hung.clock.install();
-      await hung.route(
+    const hung = await openPythonPage(browser, sandbox.origin, async (target) => {
+      await target.clock.install();
+      await target.route(
         (url) => url.pathname.endsWith('/pyodide/pyodide.mjs'),
         () => {
           // Deliberately never fulfilled or aborted.
         }
       );
-      await hung.addInitScript(() => {
-        (globalThis as unknown as { __msgs: unknown[] }).__msgs = [];
-        window.addEventListener('message', (event) =>
-          (globalThis as unknown as { __msgs: unknown[] }).__msgs.push(event.data)
-        );
+    });
+    try {
+      await hung.frame.send({
+        type: 'init',
+        kind: 'python',
+        code: 'print("never runs")',
+        requestId: 'hang-1',
       });
-      await hung.goto(`${sandbox.origin}/python.html`);
-      // Polled from Node: the page's own timers are mocked, so a page-side wait
-      // would never tick.
-      for (let attempt = 0; attempt < 100; attempt++) {
-        const ready = await hung.evaluate(() =>
-          (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs.some((m) => m.type === 'ready')
-        );
-        if (ready) break;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      await hung.evaluate(() => {
-        // eslint-disable-next-line sonarjs/post-message -- test harness posts to its own window
-        window.postMessage(
-          { type: 'init', kind: 'python', code: 'print("never runs")', requestId: 'hang-1' },
-          '*'
-        );
-        // eslint-disable-next-line sonarjs/post-message -- test harness posts to its own window
-        window.postMessage({ type: 'run', requestId: 'hang-1' }, '*');
-      });
-      await hung.clock.fastForward(600_000);
-      const messages: BridgeLike[] = await hung.evaluate(
-        () => (globalThis as unknown as { __msgs: BridgeLike[] }).__msgs
-      );
+      await hung.frame.send({ type: 'run', requestId: 'hang-1' });
+      // The `loading-runtime` message is the frame saying it has begun the load
+      // and armed the deadline; fast-forwarding before that would advance a clock
+      // no timer is waiting on. Every wait here polls from Node — a page-side
+      // waiter would need the page's own (mocked) timers to tick.
+      await hung.frame.waitForMessage((m) => m.type === 'loading' && m.requestId === 'hang-1');
+      await hung.frame.page.clock.fastForward(600_000);
+      const messages = await hung.frame.waitForMessage((m) => m.type === 'error');
       const error = messages.find((m) => m.type === 'error');
       expect(error?.code).toBe('timed_out');
       expect(messages.some((m) => m.type === 'result')).toBe(false);

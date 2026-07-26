@@ -2,18 +2,20 @@ import {
   ERROR_CODES,
   IMAGE_MIME_TYPES,
   MAX_SEARCH_TOOL_CALLS,
-  MINIMUM_OUTPUT_TOKENS,
   ReasoningWire,
-  computeSafeMaxTokens,
-  estimateTokensForTier,
   mediaTag,
-  outputCharsPerTokenForTier,
   reasoningBudgetForWire,
   reasoningPlanModelFrom,
   spendableFundsNanoUsd,
   textTag,
-  turnEffortOptions,
 } from '@hushbox/shared';
+import { computeSafeMaxTokens } from '@hushbox/shared/affordability/budget';
+import { MINIMUM_OUTPUT_TOKENS } from '@hushbox/shared/affordability/constants';
+import { turnEffortOptions } from '@hushbox/shared/affordability/estimate/effort-options';
+import {
+  estimateTokensForTier,
+  outputCharsPerTokenForTier,
+} from '@hushbox/shared/affordability/estimate/pre-adapters';
 import {
   DEFAULT_WORKFLOW_CAPABILITIES,
   buildWorkflow,
@@ -48,10 +50,10 @@ import type {
   Node,
   PolicyHooks,
   ReasoningEffortSelection,
-  SmartModelStorageContext,
   UserTier,
   WorkflowDefinition,
 } from '@hushbox/shared';
+import type { SmartModelStorageContext } from '@hushbox/shared/affordability/estimate/smart-model-affordability';
 
 /**
  * The web-search tool selection a modelCall carries when the turn enabled web
@@ -912,7 +914,7 @@ function turnAnswerSizing(
   const maxReasoningBudget = Math.max(
     ...[...reasoning.values()].map((entry) => entry.reasoningBudgetTokens)
   );
-  // All-off entries ('none') reserve no thinking tokens: the answer sizes
+  // All-off entries ('off') reserve no thinking tokens: the answer sizes
   // exactly like a reasoning-free turn (B = 0 ⇒ the cap is H alone), so the
   // hard-off wire never changes what a payer or trial sender could run.
   if (maxReasoningBudget === 0) return ok(derivedCeiling(budget, models, resolve));
@@ -1076,7 +1078,7 @@ export function trialReasoningSelection(
   budget: TurnBudget,
   selection: ReasoningEffortSelection
 ): Result<TrialReasoningDecision, DomainError> {
-  if (selection === 'none') return ok({ accepted: true, selection });
+  if (selection === 'off') return ok({ accepted: true, selection });
   const pricings = turnModelPricings([descriptor.id], () => descriptor);
   const fitsCeiling = (entry: TurnReasoningEntry): boolean =>
     pricings !== undefined &&
@@ -1089,7 +1091,7 @@ export function trialReasoningSelection(
     // model that cannot disable either offers nothing or offers ≥ 2 rungs.
     const options = turnEffortOptions([reasoningPlanModelFrom(descriptor)]);
     const sole = options.length === 1 ? options[0] : undefined;
-    if (sole?.choice === 'none') return ok({ accepted: true, selection: 'none' });
+    if (sole?.choice === 'off') return ok({ accepted: true, selection: 'off' });
     return ok({ accepted: true, selection: undefined });
   }
   return requiredReasoningEntryFor(descriptor, selection).map((entry) =>

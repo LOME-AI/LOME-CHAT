@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Modality } from '../../modality.js';
+import { Modality } from '../../affordability/modality.js';
 import { USAGE_STATS_TREND_BUCKETS, USAGE_STATS_WINDOW_KEYS } from '../../usage-stats-windows.js';
 
 /**

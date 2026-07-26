@@ -11,7 +11,20 @@ import type {
 export const billingKeys = {
   all: ['billing'] as const,
   balance: () => [...billingKeys.all, 'balance'] as const,
+  /**
+   * The family prefix for every served funding snapshot. Freshness invalidates
+   * THIS key with no argument (WS run frames, socket-ready catch-up, focus), and
+   * TanStack matches by prefix — so every payer-scoped key below must extend it
+   * rather than sit beside it, or a group composer would never see a released
+   * hold.
+   */
   spendable: () => [...billingKeys.all, 'spendable'] as const,
+  /**
+   * One entry per payer: the numbers of a group conversation's owner are a
+   * different value from the caller's own, so they cannot share a cache slot.
+   */
+  spendableFor: (conversationId: string | null) =>
+    [...billingKeys.spendable(), { conversationId }] as const,
   transactions: () => [...billingKeys.all, 'transactions'] as const,
   transactionList: (cursor?: string) => [...billingKeys.transactions(), { cursor }] as const,
 };

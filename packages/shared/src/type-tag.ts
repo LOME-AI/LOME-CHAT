@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { MediaValue } from './content-value.js';
-import { MODALITIES } from './modality.js';
-import type { Modality } from './modality.js';
+import { MODALITIES } from './affordability/modality.js';
+import type { Modality } from './affordability/modality.js';
 
 /**
  * The closed TypeTag algebra typed workflow edges run on.

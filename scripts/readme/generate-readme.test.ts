@@ -10,8 +10,8 @@ import {
   STORAGE_COST_PER_1K_CHARS,
   STORAGE_COST_PER_CHARACTER,
   TOTAL_FEE_RATE,
-} from '../../packages/shared/src/constants.js';
-import { formatFeePercent } from '../../packages/shared/src/fees.js';
+} from '../../packages/shared/src/affordability/constants.js';
+import { formatFeePercent } from '../../packages/shared/src/affordability/fees.js';
 import { generateReadme, getTemplateValues } from './generate-readme.js';
 import { countLinesChurned } from './lines-churned.js';
 import { countLinesOfCode } from './lines-of-code.js';

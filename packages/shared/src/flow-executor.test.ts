@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { FilePartMapper } from './inference.js';
-import { nanoUSD } from './nano-usd.js';
+import { nanoUSD } from './affordability/nano-usd.js';
 import { WorkflowDefinition } from './workflow.js';
 import type {
   AdmissionDecision,

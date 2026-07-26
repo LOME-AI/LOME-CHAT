@@ -264,7 +264,7 @@ describe('multi-model effort resolution (union choice set, per-model downgrade)'
   /** Every sibling's wire, in selected order, for a multi-model text build. */
   async function siblingWires(
     models: readonly { readonly id: string; readonly reasoning?: ModelReasoning }[],
-    reasoningEffort: 'lite' | 'low' | 'medium' | 'high' | 'max' | 'none'
+    reasoningEffort: 'lite' | 'low' | 'medium' | 'high' | 'max' | 'off'
   ): Promise<unknown[]> {
     const result = await withModelCatalogLock(redis, async () => {
       for (const model of models) await seedVariantModel(model.id, model.reasoning);
@@ -367,7 +367,7 @@ describe('multi-model effort resolution (union choice set, per-model downgrade)'
   });
 });
 
-describe("the hard-off ('none') turn build", () => {
+describe("the hard-off ('off') turn build", () => {
   async function noneAnswerParams(
     options: Parameters<typeof buildTurnDefinition>[2]
   ): Promise<Record<string, unknown>> {
@@ -375,7 +375,7 @@ describe("the hard-off ('none') turn build", () => {
       await seedReasoningModel();
       return buildTurnDefinition({ db, telemetry: silentTelemetry }, REASONING_MODEL, {
         ...options,
-        reasoningEffort: 'none',
+        reasoningEffort: 'off',
       });
     });
     const answer = result._unsafeUnwrap().nodes.find((node) => node.type === 'modelCall');

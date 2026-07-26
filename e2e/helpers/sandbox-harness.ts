@@ -13,6 +13,14 @@ import type { Locator, Page } from '@playwright/test';
  * typed bridge as observable DOM, so every assertion is a web-first retrying
  * check on app-emitted state — never a wall-clock wait.
  *
+ * The transport is the shipped one: the frame mints a `MessageChannel` and
+ * transfers one end with its one-shot `ready` broadcast, and every message after
+ * that — both directions — rides that port. The parent never posts into
+ * `contentWindow`; an `allow-scripts` frame has an opaque (`"null"`) origin, so
+ * an origin-targeted post is discarded silently and a wildcard post is readable
+ * by any document sharing the frame's realm. Driving the corpus through the port
+ * is what makes it a test of the delivery path rather than only of containment.
+ *
  * The parent page is served from a throwaway loopback HTTP server on an
  * ephemeral port, never a real app route, so the corpus exercises pure
  * containment (sandbox-origin CSP + iframe attributes) without dragging in the
@@ -61,6 +69,11 @@ export function sandboxOriginUrl(): string {
  * `<pre>` log, tracks how many frames have announced `ready` so a re-created
  * frame is a positive fence, and exposes a control object to send bridge
  * messages, tear the frame down, and re-create it.
+ *
+ * The window `message` listener is registered before the iframe is created, and
+ * that ordering is load-bearing: `ready` is sent once per frame instance and
+ * does not queue, so a listener installed after the frame begins loading loses
+ * the handshake — and with it the only port into the frame — permanently.
  */
 function buildHarnessHtml(
   sandboxOrigin: string,
@@ -85,22 +98,47 @@ function buildHarnessHtml(
   var logEl = document.getElementById(${JSON.stringify(BRIDGE_LOG_ID)});
   var statusEl = document.getElementById(${JSON.stringify(STATUS_ID)});
   var readyCount = 0;
+  var frame = null;
+  var port = null;
   function append(line) { logEl.textContent += line + String.fromCharCode(10); }
   // A frame-src violation on a child self-navigation is reported to THIS
   // (embedding) document, so the parent is where the block is observable.
   document.addEventListener('securitypolicyviolation', function (e) {
     append('CSPV ' + e.violatedDirective + ' ' + e.blockedURI);
   });
-  globalThis.addEventListener('message', function (ev) {
-    var d = ev.data;
+  // Every frame->parent message except the handshake arrives on the port.
+  function record(d) {
     if (!d || typeof d.type !== 'string') return;
-    if (d.type === 'ready') { readyCount += 1; statusEl.textContent = 'ready:' + readyCount; append('MSG ready'); return; }
     if (d.type === 'console') { append('MSG console:' + d.stream + ' ' + d.text); return; }
     if (d.type === 'error') { append('MSG error ' + d.code + ' ' + d.message); return; }
     if (d.type === 'result') { append('MSG result ' + JSON.stringify(d.outputs)); return; }
     append('MSG ' + d.type + (d.requestId ? (' ' + d.requestId) : '') + (d.phase ? (' ' + d.phase) : ''));
+  }
+  // The window carries the handshake and nothing else. Registered before the
+  // first frame exists, because 'ready' fires once and does not queue.
+  globalThis.addEventListener('message', function (ev) {
+    if (!frame || ev.source !== frame.contentWindow) return;
+    var d = ev.data;
+    if (!d || d.type !== 'ready') return;
+    // First ready wins, until the frame is replaced: document code shares the
+    // frame's realm and can announce a channel of its own, but the bootstrap
+    // runs first, so only its port is ever taken.
+    if (port) return;
+    var p = ev.ports[0];
+    if (!p) return;
+    port = p;
+    p.addEventListener('message', function (pe) { record(pe.data); });
+    // A port added to with addEventListener stays paused; without this start()
+    // nothing the frame reports is ever delivered.
+    p.start();
+    readyCount += 1;
+    statusEl.textContent = 'ready:' + readyCount;
+    append('MSG ready');
   });
   function makeFrame() {
+    // A new frame instance mints a new channel, so the captured port is dropped
+    // here and re-captured from that frame's own handshake.
+    port = null;
     var f = document.createElement('iframe');
     f.setAttribute('sandbox', ${JSON.stringify(DOCUMENT_IFRAME_SANDBOX_ATTR)});
     f.setAttribute('title', 'document sandbox');
@@ -108,10 +146,15 @@ function buildHarnessHtml(
     document.body.appendChild(f);
     return f;
   }
-  var frame = makeFrame();
+  frame = makeFrame();
   globalThis.__docFrame = {
-    send: function (msg) { frame.contentWindow.postMessage(msg, '*'); },
-    teardown: function () { frame.remove(); },
+    // Fail loudly rather than drop: a silently discarded parent->frame message
+    // is the exact defect this transport exists to prevent.
+    send: function (msg) {
+      if (!port) throw new Error('document sandbox harness: no port captured');
+      port.postMessage(msg);
+    },
+    teardown: function () { frame.remove(); port = null; },
     recreate: function () { frame = makeFrame(); },
   };
 })();
@@ -194,7 +237,11 @@ export class DocumentSandboxHarness {
     return this;
   }
 
-  /** Wait until `count` frames have announced `ready` (a re-created frame is a positive fence). */
+  /**
+   * Wait until `count` frames have completed the handshake (a re-created frame
+   * is a positive fence). The counter advances only after that frame's port is
+   * captured and started, so it also fences the frame being drivable.
+   */
   async waitForReady(count: number): Promise<void> {
     await expect(this.status()).toHaveText(`ready:${String(count)}`, { timeout: TIMEOUTS.MODAL });
   }

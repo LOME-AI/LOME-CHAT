@@ -40,6 +40,30 @@ describe('billingKeys.spendable', () => {
   it('nests under the billing key family for family-wide invalidation', () => {
     expect(billingKeys.spendable()).toEqual(['billing', 'spendable']);
   });
+
+  it('scopes a payer-specific key under the family prefix', () => {
+    expect(billingKeys.spendableFor('conv-1')).toEqual([
+      'billing',
+      'spendable',
+      { conversationId: 'conv-1' },
+    ]);
+  });
+
+  it('keeps the solo key under the same prefix', () => {
+    expect(billingKeys.spendableFor(null)).toEqual([
+      'billing',
+      'spendable',
+      { conversationId: null },
+    ]);
+  });
+
+  it('starts every scoped key with the family prefix, so one invalidation clears them all', () => {
+    // The freshness path invalidates `billingKeys.spendable()` with no argument;
+    // TanStack matches by prefix, so a conversation-scoped entry must be a
+    // prefix extension of it, never a sibling key.
+    const prefix = billingKeys.spendable();
+    expect(billingKeys.spendableFor('conv-1').slice(0, prefix.length)).toEqual(prefix);
+  });
 });
 
 describe('useSpendable', () => {
@@ -54,7 +78,12 @@ describe('useSpendable', () => {
   });
 
   it('fetches the served spendable for an authenticated user', async () => {
-    const response = { spendableNanoUsd: '1500000000', heldNanoUsd: '300000000' };
+    const response = {
+      spendableNanoUsd: '1500000000',
+      heldNanoUsd: '300000000',
+      tier: 'paid',
+      payer: 'self',
+    };
     mockedFetchJson.mockResolvedValue(response);
 
     const { result } = renderHook(() => useSpendable(), { wrapper: createWrapper() });
@@ -63,6 +92,88 @@ describe('useSpendable', () => {
       expect(result.current.data).toEqual(response);
     });
     expect(mockedClient.billing.spendable.$get).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks for no conversation scope outside a conversation', async () => {
+    mockedFetchJson.mockResolvedValue({
+      spendableNanoUsd: '1',
+      heldNanoUsd: '0',
+      tier: 'paid',
+      payer: 'self',
+    });
+
+    const { result } = renderHook(() => useSpendable(), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.data).toBeDefined();
+    });
+    expect(mockedClient.billing.spendable.$get).toHaveBeenCalledWith({ query: {} });
+  });
+
+  it('asks for the payer of the conversation it is given', async () => {
+    mockedFetchJson.mockResolvedValue({
+      spendableNanoUsd: '800000000',
+      heldNanoUsd: '0',
+      tier: 'paid',
+      payer: 'owner',
+    });
+
+    const { result } = renderHook(() => useSpendable('conv-9'), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.data?.payer).toBe('owner');
+    });
+    expect(mockedClient.billing.spendable.$get).toHaveBeenCalledWith({
+      query: { conversationId: 'conv-9' },
+    });
+  });
+
+  it('refetches a conversation-scoped read when the whole family is invalidated', async () => {
+    // The freshness path (WS run frames, socket-ready catch-up, focus)
+    // invalidates the family prefix with no conversation argument. A
+    // payer-scoped key must still be reached by it, or a released hold would
+    // stay invisible to a group composer until its stale time expired.
+    mockedFetchJson.mockResolvedValue({
+      spendableNanoUsd: '800000000',
+      heldNanoUsd: '0',
+      tier: 'paid',
+      payer: 'owner',
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    function Wrapper({ children }: Readonly<{ children: ReactNode }>): React.JSX.Element {
+      return createElement(QueryClientProvider, { client: queryClient }, children);
+    }
+    const { result } = renderHook(() => useSpendable('conv-9'), { wrapper: Wrapper });
+    await waitFor(() => {
+      expect(result.current.data).toBeDefined();
+    });
+
+    await queryClient.invalidateQueries({ queryKey: billingKeys.spendable() });
+
+    await waitFor(() => {
+      expect(mockedClient.billing.spendable.$get).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('caches the solo and conversation reads separately — they are different payers', async () => {
+    mockedFetchJson.mockResolvedValue({
+      spendableNanoUsd: '1',
+      heldNanoUsd: '0',
+      tier: 'paid',
+      payer: 'self',
+    });
+    const wrapper = createWrapper();
+
+    const solo = renderHook(() => useSpendable(), { wrapper });
+    await waitFor(() => {
+      expect(solo.result.current.data).toBeDefined();
+    });
+    const scoped = renderHook(() => useSpendable('conv-9'), { wrapper });
+    await waitFor(() => {
+      expect(scoped.result.current.data).toBeDefined();
+    });
+
+    expect(mockedClient.billing.spendable.$get).toHaveBeenCalledTimes(2);
   });
 
   it('does not fetch for an unauthenticated (trial/guest) user — no endpoint exists for them', () => {

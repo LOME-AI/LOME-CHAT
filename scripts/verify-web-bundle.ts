@@ -3,7 +3,7 @@
  * `buildWebBundle` right after the marketing merge so prod, e2e, and the
  * preview build all pay them.
  *
- * Three classes of problem it turns into a build failure:
+ * Four classes of problem it turns into a build failure:
  *   - onnxruntime-web bloat: the TTS worker must reference only the
  *     self-hosted `/ort/` runtime. A bundler-emitted copy (or a built chunk
  *     still pointing at one) means the wasm ships two or three times — tens of
@@ -11,6 +11,9 @@
  *   - onnxruntime version skew: which onnxruntime-common copy ends up in the
  *     worker is decided by pnpm's hoist selection, so a dependency bump can
  *     silently swap it, or split the chunk across two versions.
+ *   - worker `new.target` corruption: the iife worker transform rewrites
+ *     `new.target` as `import.meta`, which kills the TTS worker on load in
+ *     every built site while dev stays green.
  *   - Cloudflare Pages hard limits: exceeding either one fails the deploy, and
  *     a routine transformers bump is enough to push the ORT wasm past the
  *     per-file cap. Failing here surfaces it at build time instead.
@@ -198,9 +201,15 @@ const ORT_VERSION_SITE = new RegExp(
 const QUOTE = /^[`'"]/u;
 
 /** Identifiers match `[A-Za-z_$][\w$]*`, so `$` is the only regex-special char. */
+function escapeIdentifier(identifier: string): string {
+  return identifier.replaceAll('$', () => String.raw`\$`);
+}
+
 function assignmentsTo(identifier: string): RegExp {
-  const escaped = identifier.replaceAll('$', () => String.raw`\$`);
-  return new RegExp(String.raw`(?<=(?<![\w$])${escaped}\s*=\s*)` + QUOTED_VERSION, 'gu');
+  return new RegExp(
+    String.raw`(?<=(?<![\w$])${escapeIdentifier(identifier)}\s*=\s*)` + QUOTED_VERSION,
+    'gu'
+  );
 }
 
 /** The version a `versions.common` site reports, or null if it cannot be read. */
@@ -254,6 +263,68 @@ async function checkOrtCommonVersion(
   return violations;
 }
 
+const WORKER_CHUNK = /^tts\.worker-.*\.js$/u;
+
+/**
+ * The identifier a bundler binds its synthesised `import.meta` stand-in to,
+ * recognised by the declaration it always carries — an object literal holding
+ * the module URL (`{ url: self.location.href }`). The name is not stable:
+ * minification renames `_vite_importMeta` to whatever is free (`df` in the
+ * marketing build), so a guard keyed to the literal name would stop guarding
+ * the minified bundle, which is the one users get. Matched as `match[0]` via a
+ * lookahead rather than a capture group, so there is no
+ * "group did not participate" branch.
+ */
+const IMPORT_META_STANDIN = new RegExp(
+  String.raw`(?<![\w$.])[A-Za-z_$][\w$]*` +
+    String.raw`(?=\s*=\s*\{\s*url\s*:\s*(?:self\s*\.\s*)?location\s*\.\s*href\s*[,}])`,
+  'gu'
+);
+
+function prototypeReadsOf(identifier: string): RegExp {
+  return new RegExp(String.raw`(?<![\w$.])${escapeIdentifier(identifier)}\s*\.\s*prototype`, 'u');
+}
+
+/**
+ * `@huggingface/transformers`' `Callable` base class — extended by every
+ * tokenizer and processor — does `Object.setPrototypeOf(closure,
+ * new.target.prototype)`. Under rolldown's iife worker format, `new.target` and
+ * `import.meta` are both `MetaProperty` nodes and the transform rewrites the
+ * wrong one: `new.target` becomes the synthesised `import.meta` stand-in, whose
+ * `.prototype` is `undefined`, so every worker dies on load with "Object
+ * prototype may only be an Object or null: undefined". Dev serves the worker as
+ * a native ES module and never applies the transform, so nothing but the built
+ * output can catch this. Reading `.prototype` off the stand-in is never
+ * intentional — it is `undefined` by construction — so the read itself is the
+ * signal, whatever consumes it.
+ */
+async function checkWorkerMetaProperty(files: readonly BundleFile[]): Promise<string[]> {
+  const workers = files.filter((file) => WORKER_CHUNK.test(path.posix.basename(file.relativePath)));
+  const violations: string[] = [];
+  for (const file of workers) {
+    const source = await fs.readFile(file.absolutePath, 'utf8');
+    const standins = [...source.matchAll(IMPORT_META_STANDIN)].map((match) => match[0]);
+    for (const standin of new Set(standins)) {
+      if (prototypeReadsOf(standin).test(source)) {
+        violations.push(
+          `built TTS worker reads \`${standin}.prototype\` off the bundler's ` +
+            `import.meta stand-in: ${file.relativePath} — the iife worker transform ` +
+            `rewrote \`new.target\` as \`import.meta\`, so every worker throws ` +
+            `"Object prototype may only be an Object or null: undefined" on load`
+        );
+      }
+    }
+  }
+  if (workers.length === 0) {
+    violations.push(
+      `no tts.worker-*.js chunk in the bundle — either the build stopped ` +
+        `emitting the TTS worker or this check no longer recognizes it, and it ` +
+        `must not pass vacuously`
+    );
+  }
+  return violations;
+}
+
 export function checkPagesLimits(files: readonly BundleFile[]): string[] {
   const violations = files
     .filter((file) => file.bytes > PAGES_MAX_FILE_BYTES)
@@ -281,6 +352,7 @@ export async function collectWebBundleViolations(
     ...checkStrayRuntimeCopies(files),
     ...(await checkBundledRuntimeReferences(files)),
     ...(await checkOrtCommonVersion(files, await declaredOrtCommonVersion())),
+    ...(await checkWorkerMetaProperty(files)),
     ...checkPagesLimits(files),
   ];
 }

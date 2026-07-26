@@ -92,7 +92,8 @@ test.describe('Notifications', { tag: '@chromium-only' }, () => {
 
     await authenticatedPage.goto('/chat', { waitUntil: 'domcontentloaded' });
     await waitForAppStable(authenticatedPage);
-    await new SidebarPage(authenticatedPage).ensureSidebarExpanded();
+    const sidebar = new SidebarPage(authenticatedPage);
+    await sidebar.ensureSidebarExpanded();
 
     const offer = enableOffer(authenticatedPage);
     await expect(offer).toBeVisible();
@@ -111,6 +112,10 @@ test.describe('Notifications', { tag: '@chromium-only' }, () => {
     // Answered platforms are never asked again.
     await reloadWithPreferences(authenticatedPage);
     await waitForAppStable(authenticatedPage);
+    // Expanded explicitly rather than relying on the collapsed/expanded state
+    // surviving the reload: the assertion below only means something while the
+    // place the offer would render is on screen.
+    await sidebar.ensureSidebarExpanded();
     await expect(offer).toBeHidden();
   });
 

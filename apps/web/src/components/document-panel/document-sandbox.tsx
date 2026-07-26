@@ -9,7 +9,7 @@ import {
   type DocumentErrorCode,
   type LoadingPhase,
 } from '@hushbox/shared/documents';
-import { sandboxOrigin, sandboxPageUrl } from '../../lib/sandbox-origin';
+import { sandboxPageUrl } from '../../lib/sandbox-origin';
 import { DocumentRenderStatus, PENDING_PREVIEW_TEXT } from './document-render-status';
 import type { DocumentRenderStatusValue } from './document-render-status';
 
@@ -455,6 +455,7 @@ export function DocumentSandbox({
   const requestIdRef = React.useRef<string | null>(null);
   const requestCounterRef = React.useRef(0);
   const readyRef = React.useRef(false);
+  const portRef = React.useRef<MessagePort | null>(null);
   const [state, dispatch] = React.useReducer(sandboxReducer, INITIAL_STATE);
   const { errorCode, frameKey } = state;
 
@@ -464,9 +465,13 @@ export function DocumentSandbox({
   }, []);
 
   const postToFrame = React.useCallback((message: ParentToFrameMessage): void => {
-    // Target the sandbox origin explicitly — never '*' — so the message is never
-    // delivered to a frame that navigated itself elsewhere.
-    iframeRef.current?.contentWindow?.postMessage(message, sandboxOrigin());
+    // The port, never the frame's window. A sandboxed frame without
+    // `allow-same-origin` has an opaque origin, so a window post naming the
+    // sandbox origin is discarded without an error and a wildcard would reach
+    // whatever document the frame navigated itself to. A port is a capability
+    // bound to the document that received it: it dies with that document rather
+    // than following the window.
+    portRef.current?.postMessage(message);
   }, []);
 
   const startAutoRun = React.useCallback((): void => {
@@ -487,8 +492,28 @@ export function DocumentSandbox({
   const stop = React.useCallback((): void => {
     readyRef.current = false;
     requestIdRef.current = null;
+    // The frame this port belongs to is about to be replaced, and the fresh one
+    // brings its own. Clearing it here is what lets the next handshake win.
+    portRef.current = null;
     dispatch({ type: 'stop' });
   }, []);
+
+  const handleFrameMessage = React.useCallback(
+    (data: unknown): void => {
+      const parsed = parseFrameToParentMessage(data);
+      if (!parsed.success) return;
+      const message = parsed.data;
+      // `ready` is the handshake that hands over this very port; arriving on the
+      // port itself it is noise, and re-running it would restart the document.
+      if (message.type === 'ready') return;
+
+      // Drop stale messages (teardown races, killed runs) so a dead frame can
+      // never mutate the live UI.
+      if (message.requestId !== requestIdRef.current) return;
+      dispatch({ type: 'frame', message, isPython });
+    },
+    [isPython]
+  );
 
   React.useEffect(() => {
     const onMessage = (event: MessageEvent): void => {
@@ -496,29 +521,36 @@ export function DocumentSandbox({
       if (event.source !== frame) return;
       const parsed = parseFrameToParentMessage(event.data);
       if (!parsed.success) return;
-      const message = parsed.data;
+      // The window carries the handshake and nothing else: every message about a
+      // request rides the port the handshake transferred.
+      if (parsed.data.type !== 'ready') return;
+      // First ready wins, until the frame is replaced. Untrusted document code
+      // shares the frame's realm and can announce a channel of its own; the
+      // bootstrap runs first, so only its channel is ever taken.
+      if (portRef.current) return;
+      const port = event.ports[0];
+      if (!port) return;
 
-      if (message.type === 'ready') {
-        readyRef.current = true;
-        if (isPython) {
-          dispatch({ type: 'idle' });
-        } else {
-          startAutoRun();
-        }
-        return;
+      portRef.current = port;
+      port.addEventListener('message', (portEvent: MessageEvent): void => {
+        handleFrameMessage(portEvent.data);
+      });
+      // A listener added this way leaves the port paused, unlike an `onmessage`
+      // assignment; without this the frame's first report is never delivered.
+      port.start();
+      readyRef.current = true;
+      if (isPython) {
+        dispatch({ type: 'idle' });
+      } else {
+        startAutoRun();
       }
-
-      // Drop stale messages (teardown races, killed runs) so a dead frame can
-      // never mutate the live UI.
-      if (message.requestId !== requestIdRef.current) return;
-      dispatch({ type: 'frame', message, isPython });
     };
 
     globalThis.addEventListener('message', onMessage);
     return () => {
       globalThis.removeEventListener('message', onMessage);
     };
-  }, [isPython, startAutoRun]);
+  }, [isPython, startAutoRun, handleFrameMessage]);
 
   // Re-drive the live frame once the code has held still. The frame itself is
   // never remounted for a new attempt: a fresh one would be blank, discarding

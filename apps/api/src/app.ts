@@ -120,6 +120,7 @@ import { createAppTwoFactorEnabledEmailPort } from './adapters/two-factor-enable
 import { createAppTwoFactorDisabledEmailPort } from './adapters/two-factor-disabled-email.js';
 import { createAppLoginLockoutEmailPort } from './adapters/login-lockout-email.js';
 import { createAppAdminOpNotifier } from './adapters/admin-op-notification-email.js';
+import { createConversationFundingReader } from './adapters/conversation-funding.js';
 import { createPresignReaders } from './adapters/presign-readers.js';
 import { createLinkResolutionAdapter } from './adapters/link-resolution.js';
 import {
@@ -387,6 +388,10 @@ const mediaManifest = createMediaManifest({
 });
 const billingManifest = createBillingManifest({
   stores: billingStores,
+  // The payer of a group turn is named by conversations-owned rows, which
+  // billing may not read (single-writer-per-table) — composed here, exactly
+  // like media's presign readers.
+  conversationFunding: createConversationFundingReader,
   // The request-scoped db threads into the real charge adapter for CI
   // service-evidence (no-op in production, where isCI is false — a charge's
   // success never depends on the evidence write).

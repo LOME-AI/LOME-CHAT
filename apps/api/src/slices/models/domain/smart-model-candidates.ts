@@ -1,15 +1,14 @@
+import { outputCharsPerTokenForTier } from '@hushbox/shared/affordability/estimate/pre-adapters';
 import {
   admitSmartModel,
   classifierReserveLineItems,
-  outputCharsPerTokenForTier,
-} from '@hushbox/shared';
+} from '@hushbox/shared/affordability/estimate/smart-model-affordability';
 import { isTextModel } from './trial-eligibility.js';
+import type { ModelDescriptor, Pricing } from '@hushbox/shared';
 import type {
-  ModelDescriptor,
-  Pricing,
   SmartModelPoolCandidate,
   SmartModelStorageContext,
-} from '@hushbox/shared';
+} from '@hushbox/shared/affordability/estimate/smart-model-affordability';
 
 /**
  * The Smart Model candidate menu for one paid send: the ELIGIBLE subset of the
@@ -17,7 +16,7 @@ import type {
  * answer cap `cap(m)`, sorted ascending by combined per-token base price, with the
  * cheapest doubling as the classifier model (and the runtime fallback). Pure over
  * an exposed-catalog snapshot plus the payer's effective balance. The affordability
- * gate lives ONCE in `@hushbox/shared/estimate` ({@link admitSmartModel}), so the
+ * gate lives ONCE in the shared money layer ({@link admitSmartModel}), so the
  * client affordability preflight and this server admission builder can never
  * disagree (the biconditional).
  *
@@ -43,11 +42,11 @@ import type {
  * the shared conservative constant is the single source (equals 2). The reserve
  * itself divides via the shared `estimateTokensForTier` helper — this alias is
  * exported for callers that need the ratio value directly. */
-export { CHARS_PER_TOKEN_CONSERVATIVE as CLASSIFIER_CHARS_PER_TOKEN } from '@hushbox/shared';
+export { CHARS_PER_TOKEN_CONSERVATIVE as CLASSIFIER_CHARS_PER_TOKEN } from '@hushbox/shared/affordability/constants';
 
 /** The classifier pre-reserve line items — the single shared home; re-exported so
  * the admission estimator (`estimate-run`) reads the SAME reserve formula. */
-export { classifierReserveLineItems } from '@hushbox/shared';
+export { classifierReserveLineItems } from '@hushbox/shared/affordability/estimate/smart-model-affordability';
 
 export interface SmartModelCandidatesInput {
   /** The exposed catalog (`listDescriptors`' already-filtered set). */

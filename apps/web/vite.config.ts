@@ -9,8 +9,8 @@ import { resolveDeviceKeyStoreE2eVariant } from './src/lib/device-key-store-e2e-
 import { previewDirectoryIndexFallback } from './src/lib/preview-directory-index-fallback';
 import { headersPlugin } from '../../scripts/lib/headers-vite-plugin';
 import {
-  KOKORO_ORT_COMMON_INCLUDE,
   ORT_EXTERN_WASM_CONDITION,
+  WORKER_BUILD_OPTIONS,
   ortAssetsPlugin,
 } from '../../scripts/lib/ort-assets-plugin';
 
@@ -254,12 +254,9 @@ export default defineConfig(({ mode, command }) => {
         },
       },
     },
-    optimizeDeps: {
-      // Fails the dev server at start if kokoro-js's undeclared
-      // `onnxruntime-common` import cannot be resolved, instead of letting the
-      // optimizer externalize it silently and cache that (see the constant).
-      include: KOKORO_ORT_COMMON_INCLUDE,
-    },
+    // ES-format workers keep `new.target` intact, which the TTS worker's
+    // transformers dependency needs to load at all (see the constant).
+    worker: WORKER_BUILD_OPTIONS,
     resolve: {
       // Picks onnxruntime-web's extern-wasm build variant so the TTS worker
       // does not drag a bundled ~21 MB wasm copy into the output alongside the

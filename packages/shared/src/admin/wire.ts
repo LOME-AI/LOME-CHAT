@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { FeedbackKind, FeedbackStatus } from '../feedback.js';
-import { CALL_SHAPE_FAMILIES } from '../model-descriptor.js';
+import { CALL_SHAPE_FAMILIES } from '../affordability/model-descriptor.js';
 import {
   NewsletterConsentSource,
   NewsletterIssueStatus,

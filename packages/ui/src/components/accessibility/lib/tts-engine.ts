@@ -107,10 +107,12 @@ export function _setLoadTimeoutMsForTesting(ms: number | null): void {
 // Constructs a real module Worker, which cannot load under jsdom; tests always
 // inject a fake factory via _setWorkerFactoryForTesting.
 function defaultWorkerFactory(): Worker {
-  // Vite bundles workers referenced via `new URL(..., import.meta.url)` as
-  // a separate chunk. `type: 'module'` matches the worker's ES module
-  // source — Vite's default `iife` format would break the static
-  // kokoro-js import at the top of tts.worker.ts.
+  // Vite bundles workers referenced via `new URL(..., import.meta.url)` as a
+  // separate chunk. `type: 'module'` says how the browser loads that chunk; it
+  // does NOT decide the format the chunk is built in — that comes from the
+  // apps' `worker.format` build option, which must stay `es`. Under the `iife`
+  // default the bundler rewrites `new.target` as `import.meta` and the worker
+  // dies on load; the shared build constant carries the full explanation.
   return new Worker(new URL('tts.worker.ts', import.meta.url), { type: 'module' });
 }
 /* v8 ignore stop */

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Modality } from './modality.js';
+import { Modality } from './affordability/modality.js';
 
 /**
  * The uniform media value. `ref` is an R2 key —

@@ -2,7 +2,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { SMART_MODEL_ID, TEST_IDS, turnEffortOptions } from '@hushbox/shared';
+import { SMART_MODEL_ID, TEST_IDS } from '@hushbox/shared';
+import { turnEffortOptions } from '@hushbox/shared/affordability/estimate/effort-options';
 import { createModelStoreStub, type ModelStoreStub } from '@/test-utils/model-store-mock';
 import { useReasoningEffortStore } from '@/stores/reasoning-effort';
 import type { EffortModel } from '@/hooks/chat/use-reasoning-effort';
@@ -105,7 +106,7 @@ describe('effortOptionStates', () => {
       { selection: 'high', state: 'enabled' },
       { selection: 'medium', state: 'enabled' },
       { selection: 'low', state: 'enabled' },
-      { selection: 'none', state: 'enabled' },
+      { selection: 'off', state: 'enabled' },
     ]);
   });
 
@@ -138,7 +139,7 @@ describe('effortOptionStates', () => {
       maxOutputTokens: 100_000,
       estimatedInputTokens: 100,
     });
-    expect(states.some((option) => option.selection === 'none')).toBe(false);
+    expect(states.some((option) => option.selection === 'off')).toBe(false);
   });
 
   it('disables None when no output headroom remains at all', () => {
@@ -147,7 +148,7 @@ describe('effortOptionStates', () => {
       maxOutputTokens: 0,
       estimatedInputTokens: 100,
     });
-    expect(states).toContainEqual({ selection: 'none', state: 'balance' });
+    expect(states).toContainEqual({ selection: 'off', state: 'balance' });
   });
 
   it('marks None output-limit-infeasible when the context itself is exhausted', () => {
@@ -157,7 +158,7 @@ describe('effortOptionStates', () => {
       maxOutputTokens: 1_000_000,
       estimatedInputTokens: 200,
     });
-    expect(states).toContainEqual({ selection: 'none', state: 'output-limit' });
+    expect(states).toContainEqual({ selection: 'off', state: 'output-limit' });
   });
 
   it.each([
@@ -190,7 +191,7 @@ describe('effortOptionStates', () => {
       { selection: 'medium', state: 'enabled' },
       { selection: 'low', state: 'enabled' },
       { selection: 'lite', state: 'unsupported' },
-      { selection: 'none', state: 'enabled' },
+      { selection: 'off', state: 'enabled' },
     ]);
   });
 
@@ -202,7 +203,7 @@ describe('effortOptionStates', () => {
     });
     expect(states).toEqual([
       { selection: 'auto', state: 'enabled' },
-      { selection: 'none', state: 'enabled' },
+      { selection: 'off', state: 'enabled' },
     ]);
   });
 
@@ -230,7 +231,7 @@ describe('effortOptionStates', () => {
       { selection: 'high', state: 'output-limit' },
       { selection: 'medium', state: 'output-limit' },
       { selection: 'low', state: 'output-limit' },
-      { selection: 'none', state: 'enabled' },
+      { selection: 'off', state: 'enabled' },
     ]);
   });
 });
@@ -293,7 +294,7 @@ describe('ReasoningEffortMenu', () => {
     const chip = screen.getByTestId(TEST_IDS.effortChip);
     // Every label is stacked invisibly in the same grid cell, so the chip is
     // always as wide as the widest "Effort · <word>" — regardless of selection.
-    // 'Min' is the OFF row's display word (selection value `none`).
+    // 'Min' is the OFF row's display word (selection value `off`).
     for (const word of ['Auto', 'Lite', 'Low', 'Mid', 'High', 'Max', 'Min']) {
       const ghost = [...chip.querySelectorAll('[aria-hidden="true"]')].find(
         (node) => node.textContent === `Effort · ${word}`

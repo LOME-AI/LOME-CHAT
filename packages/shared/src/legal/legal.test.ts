@@ -10,10 +10,9 @@ import {
   TERMS_OF_SERVICE_EFFECTIVE_DATE,
   PRIVACY_CONTACT_EMAIL,
   BILLING_CONTACT_EMAIL,
-  TOTAL_FEE_RATE,
-  STORAGE_COST_PER_1K_CHARS,
 } from '../constants.js';
-import { ALL_FEE_CATEGORIES, FEE_CATEGORIES, formatFeePercent } from '../fees.js';
+import { TOTAL_FEE_RATE, STORAGE_COST_PER_1K_CHARS } from '../affordability/constants.js';
+import { ALL_FEE_CATEGORIES, FEE_CATEGORIES, formatFeePercent } from '../affordability/fees.js';
 import type { LegalSection } from './types.js';
 
 function assertValidSections(sections: LegalSection[]): void {

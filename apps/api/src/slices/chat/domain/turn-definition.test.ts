@@ -5,13 +5,13 @@ import {
   ESTIMATED_IMAGE_BYTES,
   ESTIMATED_VIDEO_BYTES_PER_SECOND,
   MEDIA_STORAGE_COST_PER_BYTE_NANO,
-  MINIMUM_OUTPUT_TOKENS,
-  REASONING_BUDGET_TOKENS_BY_EFFORT,
   ReasoningWire,
   STORAGE_COST_PER_CHARACTER_NANO,
   nanoUSD,
-  outputCharsPerTokenForTier,
 } from '@hushbox/shared';
+import { MINIMUM_OUTPUT_TOKENS } from '@hushbox/shared/affordability/constants';
+import { outputCharsPerTokenForTier } from '@hushbox/shared/affordability/estimate/pre-adapters';
+import { REASONING_BUDGET_TOKENS_BY_EFFORT } from '@hushbox/shared/affordability/estimate/reasoning-plan';
 import { MAX_SEARCH_TOOL_CALLS } from '@hushbox/shared';
 import { WEB_SEARCH_TOOL_NAME, createEstimateRun } from '../../models/index.js';
 import {
@@ -1092,7 +1092,7 @@ describe('reasoning-bearing turn builds', () => {
       constraints,
       maxOutputTokens: 5000,
       reasoning: {
-        effort: 'none',
+        effort: 'off',
         wire: ReasoningWire.parse({ enabled: false }),
         reasoningBudgetTokens: 0,
       },
@@ -1110,7 +1110,7 @@ describe('reasoning-bearing turn builds', () => {
       nodes,
       constraints,
       reasoning: {
-        effort: 'none',
+        effort: 'off',
         wire: ReasoningWire.parse({ enabled: false }),
         reasoningBudgetTokens: 0,
       },
@@ -1263,7 +1263,7 @@ describe('reasoning answer cap fitting (B constant, H sized)', () => {
 
   it('re-derives B as 0 from the hard-off wire when refitting', () => {
     const entry: TurnReasoningEntry = {
-      effort: 'none',
+      effort: 'off',
       wire: ReasoningWire.parse({ enabled: false }),
       reasoningBudgetTokens: 0,
     };
@@ -1345,7 +1345,7 @@ describe('trialReasoningSelection', () => {
     expect(decision).toEqual({ accepted: true, selection: undefined });
   });
 
-  it("picks the sole real choice deterministically on a Min-only model ('auto' → 'none')", () => {
+  it("picks the sole real choice deterministically on a Min-only model ('auto' → 'off')", () => {
     // A disableable model with no offered rungs has exactly one real choice
     // (Min), so auto picks it with no classifier and no reserve (§Effort 5).
     const decision = trialReasoningSelection(
@@ -1353,12 +1353,12 @@ describe('trialReasoningSelection', () => {
       budget,
       'auto'
     )._unsafeUnwrap();
-    expect(decision).toEqual({ accepted: true, selection: 'none' });
+    expect(decision).toEqual({ accepted: true, selection: 'off' });
   });
 
-  it("passes 'none' through untouched (the build owns the mandatory refusal)", () => {
-    const decision = trialReasoningSelection(trialDescriptor(), budget, 'none')._unsafeUnwrap();
-    expect(decision).toEqual({ accepted: true, selection: 'none' });
+  it("passes 'off' through untouched (the build owns the mandatory refusal)", () => {
+    const decision = trialReasoningSelection(trialDescriptor(), budget, 'off')._unsafeUnwrap();
+    expect(decision).toEqual({ accepted: true, selection: 'off' });
   });
 
   it('surfaces an infeasible explicit level as the validation error (400, not 402)', () => {

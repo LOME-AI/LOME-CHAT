@@ -2,12 +2,12 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as lucideStatic from 'lucide-static';
 import { isMainModule } from '../lib/is-main.js';
-import { TOTAL_FEE_RATE } from '../../packages/shared/src/constants.js';
-import { FEE_CATEGORIES, formatFeePercent } from '../../packages/shared/src/fees.js';
+import { TOTAL_FEE_RATE } from '../../packages/shared/src/affordability/constants.js';
+import { FEE_CATEGORIES, formatFeePercent } from '../../packages/shared/src/affordability/fees.js';
 import {
   FREE_ALLOWANCE_CENTS_VALUE,
   TRIAL_MESSAGE_LIMIT,
-} from '../../packages/shared/src/tiers.js';
+} from '../../packages/shared/src/affordability/tiers.js';
 import { COMPARISON_ROWS } from '../../packages/shared/src/comparison.js';
 import { SHIPPED_FEATURES, COMING_SOON_FEATURES } from '../../packages/shared/src/features.js';
 import { getBrandColors, type ThemeColors } from './brand.js';
@@ -403,9 +403,9 @@ export function collectTableInputs(repoRoot: string): string[] {
     path.join(repoRoot, 'scripts/readme/brand.ts'),
     path.join(repoRoot, 'packages/shared/src/features.ts'),
     path.join(repoRoot, 'packages/shared/src/comparison.ts'),
-    path.join(repoRoot, 'packages/shared/src/constants.ts'),
-    path.join(repoRoot, 'packages/shared/src/fees.ts'),
-    path.join(repoRoot, 'packages/shared/src/tiers.ts'),
+    path.join(repoRoot, 'packages/shared/src/affordability/constants.ts'),
+    path.join(repoRoot, 'packages/shared/src/affordability/fees.ts'),
+    path.join(repoRoot, 'packages/shared/src/affordability/tiers.ts'),
     path.join(repoRoot, 'packages/config/tailwind/index.css'),
     path.join(repoRoot, 'node_modules/lucide-static/package.json'),
   ];

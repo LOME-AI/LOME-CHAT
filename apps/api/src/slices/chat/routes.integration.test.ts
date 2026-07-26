@@ -39,7 +39,6 @@ import { withModelCatalogLock } from '../models/__tests__/model-catalog-lock.js'
 import { LINK_CREDENTIAL_HEADER, hashCanonicalJson, hashIp } from './domain/index.js';
 import {
   MAX_SELECTED_MODELS,
-  REASONING_BUDGET_TOKENS_BY_EFFORT,
   SMART_MODEL_ID,
   buildTurnSystemPrompt,
   historyCharacterCount,
@@ -47,6 +46,7 @@ import {
   toBase64,
   utcDayKey,
 } from '@hushbox/shared';
+import { REASONING_BUDGET_TOKENS_BY_EFFORT } from '@hushbox/shared/affordability/estimate/reasoning-plan';
 import type { MembershipReader } from '../notifications/index.js';
 import type { NotifyNewMessage } from './index.js';
 import type { Telemetry } from '../../lib/telemetry/index.js';
@@ -1025,7 +1025,7 @@ describe('chat route: POST /chat', () => {
     expect(await res.json()).toEqual({ code: 'VALIDATION' });
   });
 
-  it("refuses 'none' on a mandatory-reasoning model with 400 (never silently ignored)", async () => {
+  it("refuses 'off' on a mandatory-reasoning model with 400 (never silently ignored)", async () => {
     const model = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
     await seedGateModel(model, {
       reasoning: { mandatory: true, supportedEfforts: null },
@@ -1040,7 +1040,7 @@ describe('chat route: POST /chat', () => {
       {
         conversationId,
         model,
-        reasoningEffort: 'none',
+        reasoningEffort: 'off',
         userMessage: { id: crypto.randomUUID(), content: 'hello' },
       }
     );
@@ -1221,7 +1221,7 @@ describe('chat route: POST /chat', () => {
   });
 
   it('stamps the explicit hard-off wire on a Smart Model + none send (201)', async () => {
-    // The founder's hard-off ruling: 'none' wires { enabled: false }
+    // The founder's hard-off ruling: 'off' wires { enabled: false }
     // explicitly — never parameter omission — so a default_enabled candidate
     // truly stops reasoning on the composite path too.
     const reasoner = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
@@ -1247,7 +1247,7 @@ describe('chat route: POST /chat', () => {
         {
           conversationId,
           model: SMART_MODEL_ID,
-          reasoningEffort: 'none',
+          reasoningEffort: 'off',
           userMessage: { id: crypto.randomUUID(), content: 'hello' },
         }
       )
@@ -1256,7 +1256,7 @@ describe('chat route: POST /chat', () => {
     const node = captured[0]?.nodes[0];
     if (node?.type !== 'smartModel') throw new Error('expected a captured smartModel node');
     expect(node.params['reasoning']).toEqual({ enabled: false });
-    // No effort dimension: 'none' is the user's choice, nothing to classify.
+    // No effort dimension: 'off' is the user's choice, nothing to classify.
     expect(node.classify).toBeUndefined();
   });
 
@@ -1530,7 +1530,7 @@ describe('chat route: POST /chat', () => {
     expect(await res.json()).toEqual({ code: 'VALIDATION' });
   });
 
-  it("passes 'none' through a media turn untouched (201 — the no-op direction of the refusal seam)", async () => {
+  it("passes 'off' through a media turn untouched (201 — the no-op direction of the refusal seam)", async () => {
     const imageModel = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
     await seedGateModel(imageModel, { outputs: ['image'], pricing: { perImage: '40000000' } });
     const userId = await seedUser();
@@ -1543,14 +1543,14 @@ describe('chat route: POST /chat', () => {
         conversationId,
         model: imageModel,
         modality: 'image',
-        reasoningEffort: 'none',
+        reasoningEffort: 'off',
         userMessage: { id: crypto.randomUUID(), content: 'a red cube' },
       }
     );
     expect(res.status).toBe(201);
   });
 
-  it("passes 'none' through a Smart Model send untouched (201 — the no-op direction of the refusal seam)", async () => {
+  it("passes 'off' through a Smart Model send untouched (201 — the no-op direction of the refusal seam)", async () => {
     await seedModelId(MODEL);
     await seedModelId(MODEL_B);
     const userId = await seedUser();
@@ -1563,7 +1563,7 @@ describe('chat route: POST /chat', () => {
         {
           conversationId,
           model: SMART_MODEL_ID,
-          reasoningEffort: 'none',
+          reasoningEffort: 'off',
           userMessage: { id: crypto.randomUUID(), content: 'hello' },
         }
       )
@@ -3806,13 +3806,13 @@ describe('chat route: POST /chat/trial', () => {
     expect(await res.json()).toEqual({ code: 'VALIDATION' });
   });
 
-  it("passes 'none' through a trial smart-model send untouched (201 — the no-op direction of the refusal seam)", async () => {
+  it("passes 'off' through a trial smart-model send untouched (201 — the no-op direction of the refusal seam)", async () => {
     await seedModel();
     const res = await withIsolatedCatalog(() =>
       postTrial(fakeRealtime(STARTED), trialHeaders(), {
         model: SMART_MODEL_ID,
         prompt: 'hi',
-        reasoningEffort: 'none',
+        reasoningEffort: 'off',
       })
     );
     expect(res.status).toBe(201);

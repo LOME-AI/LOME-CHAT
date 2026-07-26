@@ -4,7 +4,7 @@ import { renderHook, act } from '@testing-library/react';
 import { SMART_MODEL_ID } from '@hushbox/shared';
 import {
   offeredEffortLabels,
-  offersEffortNone,
+  offersEffortOff,
   effectiveReasoningSelection,
   serverAcceptsChoice,
   useReasoningEffort,
@@ -76,13 +76,13 @@ describe('offeredEffortLabels', () => {
   });
 });
 
-describe('offersEffortNone', () => {
+describe('offersEffortOff', () => {
   it('offers None when no selected model has mandatory reasoning', () => {
-    expect(offersEffortNone([effortModel, budgetModel])).toBe(true);
+    expect(offersEffortOff([effortModel, budgetModel])).toBe(true);
   });
 
   it('hides None when any selected model has mandatory reasoning', () => {
-    expect(offersEffortNone([effortModel, mandatoryModel])).toBe(false);
+    expect(offersEffortOff([effortModel, mandatoryModel])).toBe(false);
   });
 });
 
@@ -96,11 +96,11 @@ describe('serverAcceptsChoice', () => {
   });
 
   it('accepts Min when no selected model has mandatory reasoning', () => {
-    expect(serverAcceptsChoice([effortModel, budgetModel], 'none')).toBe(true);
+    expect(serverAcceptsChoice([effortModel, budgetModel], 'off')).toBe(true);
   });
 
   it('rejects Min when any selected model has mandatory reasoning', () => {
-    expect(serverAcceptsChoice([effortModel, mandatoryModel], 'none')).toBe(false);
+    expect(serverAcceptsChoice([effortModel, mandatoryModel], 'off')).toBe(false);
   });
 });
 
@@ -125,14 +125,14 @@ describe('effectiveReasoningSelection', () => {
 
   it('keeps none when no selected model is mandatory', () => {
     expect(
-      effectiveReasoningSelection({ preferred: 'none', models: [effortModel], modality: 'text' })
-    ).toBe('none');
+      effectiveReasoningSelection({ preferred: 'off', models: [effortModel], modality: 'text' })
+    ).toBe('off');
   });
 
   it('clamps none to auto when a selected model has mandatory reasoning', () => {
     expect(
       effectiveReasoningSelection({
-        preferred: 'none',
+        preferred: 'off',
         models: [mandatoryModel],
         modality: 'text',
       })

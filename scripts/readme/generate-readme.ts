@@ -8,12 +8,12 @@ import {
   PROVIDER_FEE_RATE,
   STORAGE_COST_PER_CHARACTER,
   STORAGE_COST_PER_1K_CHARS,
-} from '../../packages/shared/src/constants.js';
+} from '../../packages/shared/src/affordability/constants.js';
 import {
   FREE_ALLOWANCE_CENTS_VALUE,
   TRIAL_MESSAGE_LIMIT,
   WELCOME_CREDIT_CENTS,
-} from '../../packages/shared/src/tiers.js';
+} from '../../packages/shared/src/affordability/tiers.js';
 import { withCache } from './cache.js';
 import { countLinesChurned } from './lines-churned.js';
 import { countLinesOfCode } from './lines-of-code.js';
@@ -48,9 +48,9 @@ export function collectReadmeInputs(rootDir: string): string[] {
     path.join(rootDir, 'scripts/readme/lines-churned.ts'),
     path.join(rootDir, 'scripts/readme/lines-of-code.ts'),
     path.join(rootDir, 'README.template.md'),
-    path.join(rootDir, 'packages/shared/src/constants.ts'),
-    path.join(rootDir, 'packages/shared/src/fees.ts'),
-    path.join(rootDir, 'packages/shared/src/tiers.ts'),
+    path.join(rootDir, 'packages/shared/src/affordability/constants.ts'),
+    path.join(rootDir, 'packages/shared/src/affordability/fees.ts'),
+    path.join(rootDir, 'packages/shared/src/affordability/tiers.ts'),
   ];
 }
 

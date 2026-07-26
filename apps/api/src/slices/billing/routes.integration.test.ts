@@ -5,10 +5,14 @@ import { eq, inArray, like } from 'drizzle-orm';
 import {
   LOCAL_NEON_DEV_CONFIG,
   allowanceSpending,
+  conversationMembers,
+  conversationSpending,
+  conversations,
   createDb,
   idempotencyKeys,
   jobs,
   ledgerEntries,
+  memberBudgets,
   payments,
   usageRecords,
   users,
@@ -28,6 +32,7 @@ import {
 } from './domain/index.js';
 import { spendableFundsNanoUsd } from '@hushbox/shared';
 import { BILLING_KEYS, admitRun } from './domain/index.js';
+import { createConversationFundingReader } from '../../adapters/conversation-funding.js';
 import { createMockPaymentProvider } from './adapters/payment-mock.js';
 import { requiredIdempotencyKey } from './routes.js';
 import { createBillingManifest, createBillingStores } from './index.js';
@@ -89,6 +94,7 @@ async function paymentBody(res: Response): Promise<PaymentBody> {
 }
 const BYTES = new Uint8Array([1, 2, 3]);
 const createdUserIds: string[] = [];
+const createdConversationIds: string[] = [];
 let userCounter = 0;
 
 async function createUser(): Promise<string> {
@@ -197,6 +203,9 @@ function buildDeps(
   );
   const deps: BillingRouteDeps = {
     stores,
+    // The real composition-root reader: this test exercises the wiring the
+    // product Worker uses, not a stand-in for it.
+    conversationFunding: createConversationFundingReader,
     paymentProvider: () => provider,
     webhookVerifier: () => createWebhookVerifier({ verifier: WEBHOOK_VERIFIER }),
     jobRegistry: registry,
@@ -298,6 +307,10 @@ afterAll(async () => {
     const walletIds = walletRows.map((row) => row.id);
     if (walletIds.length > 0) {
       await db.delete(wallets).where(inArray(wallets.id, walletIds));
+    }
+    if (createdConversationIds.length > 0) {
+      // The member-budget and conversation-spending rows cascade from here.
+      await db.delete(conversations).where(inArray(conversations.id, createdConversationIds));
     }
     await db.delete(users).where(inArray(users.id, createdUserIds));
   }
@@ -412,6 +425,8 @@ describe('GET /billing/spendable', () => {
   interface SpendableBody {
     spendableNanoUsd: string;
     heldNanoUsd: string;
+    tier: string;
+    payer: string;
   }
 
   async function spendableBody(res: Response): Promise<SpendableBody> {
@@ -471,13 +486,70 @@ describe('GET /billing/spendable', () => {
       (spendableFundsNanoUsd(balance, 'paid') - estimate).toString(10)
     );
     expect(body.heldNanoUsd).toBe(estimate.toString(10));
-    // The wire shape is exactly the two money fields (the run cap is enforced
-    // solely at admission, never served).
+    // The wire shape is the two money fields plus the payer identity that
+    // priced them (the run cap is enforced solely at admission, never served).
     expect(Object.keys(body).toSorted((a, b) => a.localeCompare(b))).toEqual([
       'heldNanoUsd',
+      'payer',
       'spendableNanoUsd',
+      'tier',
     ]);
+    expect(body.payer).toBe('self');
+    expect(body.tier).toBe('paid');
     await cleanupWalletKeys(walletId);
+  });
+
+  it("serves the OWNER's group figures to a free-tier member composing in the group", async () => {
+    const ownerUserId = await createUser();
+    const memberUserId = await createUser();
+    const ownerWalletId = await seedPurchasedWallet(ownerUserId, 5_000_000_000n);
+    // The member's own wallet is empty: a sender-scoped read would serve $0.
+    await seedPurchasedWallet(memberUserId, 0n);
+    const conversationId = crypto.randomUUID();
+    await db.insert(conversations).values({
+      id: conversationId,
+      userId: ownerUserId,
+      title: BYTES,
+      conversationBudgetNanoUsd: 4_000_000_000n,
+    });
+    createdConversationIds.push(conversationId);
+    const memberRows = await db
+      .insert(conversationMembers)
+      .values({
+        conversationId,
+        userId: memberUserId,
+        privilege: 'write',
+        visibleFromEpoch: 1,
+        acceptedAt: new Date(),
+      })
+      .returning({ id: conversationMembers.id });
+    const memberId = memberRows[0]?.id;
+    if (memberId === undefined) throw new Error('member seed failed');
+    await db
+      .insert(memberBudgets)
+      .values({ memberId, budgetNanoUsd: 900_000_000n, spentNanoUsd: 100_000_000n });
+    await db.insert(conversationSpending).values({ conversationId, spentNanoUsd: 0n });
+
+    const res = await request(`/billing/spendable?conversationId=${conversationId}`, {
+      headers: { cookie: await sessionCookie(memberUserId) },
+    });
+    expect(res.status).toBe(200);
+    const body = await spendableBody(res);
+    // The member dimension binds: $0.90 cap − $0.10 spent.
+    expect(body.spendableNanoUsd).toBe('800000000');
+    expect(body.payer).toBe('owner');
+    expect(body.tier).toBe('paid');
+    await cleanupWalletKeys(ownerWalletId);
+  });
+
+  it('rejects a conversation id that is not a uuid', async () => {
+    const userId = await createUser();
+    await seedPurchasedWallet(userId, 1_000_000_000n);
+    const res = await request('/billing/spendable?conversationId=nope', {
+      headers: { cookie: await sessionCookie(userId) },
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'VALIDATION' });
   });
 
   it('admits a billing-only session scoped to its own wallet', async () => {

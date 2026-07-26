@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { REASONING_EFFORT_LABELS, TEST_IDS, turnEffortOptions } from '@hushbox/shared';
+import { REASONING_EFFORT_LABELS, TEST_IDS } from '@hushbox/shared';
+import { turnEffortOptions } from '@hushbox/shared/affordability/estimate/effort-options';
 import {
   cn,
   useIsMobile,
@@ -14,7 +15,8 @@ import {
   TooltipTrigger,
 } from '@hushbox/ui';
 import { useReasoningEffort, serverAcceptsChoice } from '@/hooks/chat/use-reasoning-effort';
-import type { EffortOption as SharedEffortOption, ReasoningEffortSelection } from '@hushbox/shared';
+import type { ReasoningEffortSelection } from '@hushbox/shared';
+import type { EffortOption as SharedEffortOption } from '@hushbox/shared/affordability/estimate/effort-options';
 import type { EffortModel } from '@/hooks/chat/use-reasoning-effort';
 
 type OptionState = 'enabled' | 'balance' | 'output-limit' | 'unsupported';
@@ -78,8 +80,8 @@ export function effortOptionStates(input: EffortOptionStatesInput): EffortOption
   const contextHeadroom =
     Math.min(...models.map((model) => model.contextLength)) - input.estimatedInputTokens;
   const shared = turnEffortOptions(models);
-  const levelsDescending = shared.filter((option) => option.choice !== 'none').toReversed();
-  const min = shared.find((option) => option.choice === 'none');
+  const levelsDescending = shared.filter((option) => option.choice !== 'off').toReversed();
+  const min = shared.find((option) => option.choice === 'off');
   const displayOrder = min === undefined ? levelsDescending : [...levelsDescending, min];
   const options: EffortOption[] = [{ selection: 'auto', state: 'enabled' }];
   for (const option of displayOrder) {

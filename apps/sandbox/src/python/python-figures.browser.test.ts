@@ -1,24 +1,19 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Browser } from '@playwright/test';
-import {
-  startPythonSandbox,
-  launchBrowser,
-  openPythonPage,
-  type PythonSandbox,
-  type PythonPage,
-} from './browser-harness.js';
+import { launchBrowser, startSandboxOrigin, type SandboxOrigin } from '../embed-harness.js';
+import { openPythonPage, type PythonPage } from './browser-harness.js';
 
 /**
  * Isolated so the heavy matplotlib wheel load does not pile onto the core file's
  * runtime — each browser file stays well under the pole threshold.
  */
 
-let sandbox: PythonSandbox;
+let sandbox: SandboxOrigin;
 let browser: Browser;
 let page: PythonPage;
 
 beforeAll(async () => {
-  sandbox = await startPythonSandbox();
+  sandbox = await startSandboxOrigin();
   browser = await launchBrowser();
   page = await openPythonPage(browser, sandbox.origin);
 }, 120_000);

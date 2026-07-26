@@ -1,19 +1,21 @@
 import {
-  buildClassifierMessages,
   CLASSIFIER_OUTPUT_TOKEN_CAP,
-  parseClassifierAnswer,
   parseReasoningText,
-  pickClassifiedEffortPlan,
-  planReasoningOff,
   ReasoningWire,
   reasoningPlanModelFrom,
-  resolveClassifiedEffort,
-  resolveClassifierOutput,
   smartModelClassifierDimensions,
   textTag,
-  truncateForClassifier,
 } from '@hushbox/shared';
+import { planReasoningOff } from '@hushbox/shared/affordability/estimate/reasoning-plan';
+import {
+  parseClassifierAnswer,
+  pickClassifiedEffortPlan,
+  resolveClassifiedEffort,
+} from '@hushbox/shared/affordability/smart-model/effort-dimension';
+import { resolveClassifierOutput } from '@hushbox/shared/affordability/smart-model/resolve';
 import { err } from '../../../lib/result/index.js';
+import { truncateForClassifier } from './classifier-context.js';
+import { buildClassifierMessages } from './classifier-messages.js';
 import { streamModelCall } from './model-call-execution.js';
 import { validateNodeInput } from './node-input.js';
 import type {

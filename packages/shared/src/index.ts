@@ -1,13 +1,43 @@
 export * from './constants.js';
+// Named, not `export *`: the minimum-answer constant, the two tier ratios and
+// the per-call search rate are behind the money layer's export wall
+// (`docs/BILLING.md` §Where the Code Lives).
+export {
+  CAPACITY_RED_THRESHOLD,
+  CAPACITY_YELLOW_THRESHOLD,
+  CHARACTERS_PER_KILOBYTE,
+  CREDIT_CARD_FEE_RATE,
+  ESTIMATED_AUDIO_BYTES_PER_SECOND,
+  ESTIMATED_IMAGE_BYTES,
+  ESTIMATED_VIDEO_BYTES_PER_SECOND,
+  EXPENSIVE_MODEL_THRESHOLD_PER_1K,
+  HUSHBOX_FEE_RATE,
+  KILOBYTES_PER_GIGABYTE,
+  LOW_BALANCE_OUTPUT_TOKEN_THRESHOLD,
+  MAX_ALLOWED_NEGATIVE_BALANCE_CENTS,
+  MAX_SEARCH_TOOL_CALLS,
+  MAX_TRIAL_MESSAGE_COST_CENTS,
+  MEDIA_MONTHLY_COST_PER_GB,
+  MEDIA_STORAGE_COST_PER_BYTE,
+  MONTHLY_COST_PER_GB,
+  MONTHS_PER_YEAR,
+  PROVIDER_FEE_RATE,
+  STORAGE_COST_PER_1K_CHARS,
+  STORAGE_COST_PER_CHARACTER,
+  STORAGE_YEARS,
+  TOTAL_FEE_RATE,
+} from './affordability/constants.js';
 export * from './websocket.js';
-export * from './fees.js';
+export * from './affordability/fees.js';
 export * from './routes.js';
 export * from './formatting.js';
-export * from './pricing.js';
-export * from './tiers.js';
-export * from './budget.js';
-export * from './billing/funding-decision.js';
-export * from './billing/client-billing.js';
+export * from './affordability/pricing.js';
+export * from './affordability/tiers.js';
+// Named: the output-token clamp is behind the wall; the notice generator is not.
+export { generateNotifications } from './affordability/budget.js';
+export type { BudgetError, MessageSegment, NotificationInput } from './affordability/budget.js';
+export * from './affordability/billing/funding-decision.js';
+export * from './affordability/billing/client-billing.js';
 export * from './env.js';
 export * from './env.config.js';
 export * from './schemas/dev-persona.js';
@@ -24,7 +54,7 @@ export * from './retry.js';
 export * from './text-encoder.js';
 export * from './utils/privileges.js';
 export * from './utils/base64.js';
-export * from './utils/levenshtein.js';
+export * from './affordability/levenshtein.js';
 export * from './utils/assert-never.js';
 export * from './legal/index.js';
 export * from './linear/index.js';
@@ -33,30 +63,16 @@ export * from './mobile.js';
 export * from './platform.js';
 export * from './documents/index.js';
 export * from './models/index.js';
-export * from './smart-model/index.js';
+export * from './affordability/smart-model/index.js';
 export * from './pre-inference/index.js';
-// Canonical nano-USD cost estimator. Named (not `export *`) so the barrel's
-// surface stays explicit and cannot collide with the money/pricing re-exports
-// below. The tier/token/cushion pre-adapters are re-homed here from the
-// now-deleted `budget.js` copies.
+// The canonical estimator's published surface. Named (not `export *`) so the
+// barrel's surface stays explicit and cannot collide with the money/pricing
+// re-exports below. The pricing machinery itself — rates, manifests, the two
+// reducers, the ceiling solvers, the ladder, the tier ratios — is behind the
+// wall and is not re-exported by the estimator's own barrel either.
 export {
-  admitSmartModel,
-  affordability,
-  buildMediaLineItems,
-  callManifest,
-  charsPerTokenForTier,
-  classifierLineItems,
-  classifierReserveChars,
-  classifierReserveLineItems,
-  computePromptCapacity,
-  estimateRunCeilingNanoUsd,
-  estimateTokensForTier,
-  evaluateManifest,
-  NO_STORAGE,
-  outputTokensOf,
-  priceSmartModelPool,
-  smartModelMinimumRequiredNanoUsd,
-  ratesFromPricing,
+  estimateErr,
+  estimateOk,
   getCushionNano,
   getEffectiveBalanceNano,
   isExpensiveModelNano,
@@ -64,63 +80,30 @@ export {
   nanoPricePer1k,
   nanoPriceRangePer1k,
   nanoUnitPriceUsd,
-  offeredEffortLabels,
-  offeredLevels,
-  outputCharsPerTokenForTier,
+  outputTokensOf,
   PAID_CUSHION_NANO_USD,
-  planReasoning,
-  planReasoningOff,
   REASONING_OFF_WIRE,
   ReasoningWire,
   reasoningBudgetForWire,
   reasoningPlanModelFrom,
-  priceRequest,
-  REASONING_BUDGET_FLOOR_TOKENS,
-  REASONING_BUDGET_TOKENS_BY_EFFORT,
-  reservationCeiling,
-  resolveEffortForModel,
   spendableFundsNanoUsd,
-  turnEffortOptions,
   STORAGE_COST_PER_CHARACTER_NANO,
-  WEB_SEARCH_RESERVATION_NANO_PER_MODEL,
-  webSearchLineItem,
-} from './estimate/index.js';
+} from './affordability/estimate/index.js';
 export type {
-  Affordability,
-  BillableRequest,
   CallUsage,
-  ClassifierStage,
-  DeclaredCeiling,
   EffortChoice,
-  EffortOption,
   EstimateError,
   EstimateErrorCode,
   EstimateResult,
-  Manifest,
-  MediaBillable,
-  MediaRateKey,
-  ModelRatesNano,
-  NanoLineItem,
-  NodeStorage,
-  OfferedLevel,
-  PricedSmartModelCandidate,
-  PricedSmartModelPool,
-  SmartModelAdmission,
-  SmartModelCandidateId,
-  SmartModelCappedCandidate,
-  SmartModelPoolCandidate,
-  SmartModelStorageContext,
-  PromptCapacity,
-  PromptCapacityInput,
-  ReasoningInfeasibleReason,
-  ReasoningPlan,
   ReasoningPlanDescriptorInput,
   ReasoningPlanModel,
-  ReasoningPlanResult,
-  ReservationCeilingInput,
-  ResolvedEffort,
-} from './estimate/index.js';
-export * from './reasoning-effort.js';
+} from './affordability/estimate/index.js';
+export * from './affordability/reasoning-effort.js';
+// Premium classification and the narrow money projection it reads — two of the
+// named structural seams of `docs/BILLING.md` §Where the Code Lives.
+export * from './affordability/premium.js';
+export * from './affordability/priceable-model.js';
+export * from './affordability/dimensions/index.js';
 export * from './features.js';
 export * from './comparison.js';
 export * from './test-ids.js';
@@ -156,7 +139,7 @@ export {
 export { LEDGER_ENTRY_KINDS, PAYMENT_STATUSES } from './billing-enums.js';
 export { IMAGE_MIME_TYPES } from './media-mime.js';
 export { MEMBER_PRIVILEGES, MemberPrivilege } from './member-privilege.js';
-export { MODALITIES, Modality } from './modality.js';
+export { MODALITIES, Modality } from './affordability/modality.js';
 // Fee-seam: this barrel PUBLISHES the fee helpers to the sanctioned
 // cross-package application seams; the vendored fee-seams lint rule confines
 // who may import them (seam list in fee-seams.config.mjs).
@@ -166,7 +149,7 @@ export {
   applyMarkupCeil,
   roundHalfEvenDiv,
   usdToNanoUsd,
-} from './money.js';
+} from './affordability/money.js';
 export {
   NanoUSD,
   NANO_USD_PER_CENT,
@@ -180,7 +163,7 @@ export {
   dollarsToNanoUsd,
   parseNanoUSD,
   serializeNanoUSD,
-} from './nano-usd.js';
+} from './affordability/nano-usd.js';
 export {
   DOMAIN_ERROR_CODE_TO_WIRE_CODE,
   friendlyErrorMessage,
@@ -222,8 +205,13 @@ export type {
   TextTag,
   TypeTag,
 } from './type-tag.js';
-export { compileParamSpec, PARAM_TYPES, PARAM_WIRES, ParamSpec } from './param-spec.js';
-export type { ParamType, ParamWire } from './param-spec.js';
+export {
+  compileParamSpec,
+  PARAM_TYPES,
+  PARAM_WIRES,
+  ParamSpec,
+} from './affordability/param-spec.js';
+export type { ParamType, ParamWire } from './affordability/param-spec.js';
 export { CONSTRAINT_KINDS } from './constraint-registry.js';
 export type {
   ConstraintEntryOf,
@@ -242,8 +230,8 @@ export {
   PricingSchema,
   callShapeFamilyFor,
   isRunnableModelShape,
-} from './model-descriptor.js';
-export type { CallShapeFamily, Pricing } from './model-descriptor.js';
+} from './affordability/model-descriptor.js';
+export type { CallShapeFamily, Pricing } from './affordability/model-descriptor.js';
 export {
   ChatHistoryMessage,
   FilePart,

@@ -8,6 +8,7 @@ import {
   type ErrorMessage,
   type FrameToParentMessage,
   type InitMessage,
+  type ReadyMessage,
   type RenderedMessage,
 } from '@hushbox/shared/documents';
 import { SANDBOX_CONFIG_GLOBAL } from '../config.js';
@@ -25,10 +26,27 @@ import { transpileReact, TranspileError } from './transpile.js';
  * (`resolve-imports.ts`); the frame installs no import map, so nothing depends
  * on how many maps an engine honors or on when one was injected.
  *
- * The embedding app is never trusted: inbound messages are validated by shape
- * (not by the sender's origin, which may be `capacitor://localhost`), and
- * results are broadcast without echoing any origin. Containment is the opaque
- * sandbox origin itself, enforced by the frame's attributes and CSP.
+ * Trust here rests on one thing: possession of the port. The embedder is the
+ * party this frame answers to, and holding the other end of the channel minted
+ * below is what makes it that party — there is no other intake. No origin is
+ * checked anywhere, because there is none to check: a port message carries no
+ * sender origin, and an opaque frame cannot learn its embedder's (it is
+ * `capacitor://localhost` on mobile). Inbound messages are still validated by
+ * shape, but that is payload validation, not authentication. The untrusted
+ * party is the document code this frame runs; it is contained by the opaque
+ * sandbox origin itself — the frame's attributes and CSP — never by a check at
+ * this intake.
+ *
+ * All traffic rides a `MessageChannel` this frame mints and hands the embedder
+ * with its one-shot `ready`. That is forced, not preferred: the frame's origin
+ * is opaque, so an embedder targeting it by origin string has nothing to name —
+ * `postMessage` to a `"null"` origin is discarded silently, and the literal
+ * `'null'` is rejected as a target. It is also the stronger boundary in both
+ * directions. Inbound, the port is a capability held by whoever received it, so
+ * a document sharing this realm cannot forge an `init` by posting at the window
+ * the way it could when a window listener was the intake. Outbound, a
+ * document's console output and rendered result go to the one holder of the
+ * port instead of being broadcast to every listener on the embedding page.
  */
 
 const ROOT_ID = 'document-root';
@@ -93,13 +111,20 @@ let captureRequestId: string | null = null;
 
 let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
 
+/**
+ * This frame's end of the channel it handed the embedder. Closure-scoped inside
+ * the bundle's IIFE and never published on `window`, so untrusted document code
+ * sharing this realm cannot reach it — the port is a capability, and holding it
+ * is what the embedder's authority consists of.
+ */
+let embedderPort: MessagePort | undefined;
+
 /** Post a typed message back to the embedding app. */
 function post(message: FrameToParentMessage): void {
-  // Broadcast with '*' on purpose: this opaque-origin frame cannot know its
-  // embedder's origin (it is capacitor://localhost on mobile), and the payload
-  // carries no secret — containment is the sandbox boundary, not an origin match.
-  // eslint-disable-next-line sonarjs/post-message -- intentional '*' to an unknowable embedder origin; payload is non-secret
-  parent.postMessage(message, '*');
+  // Every sender runs downstream of a message that arrived on the port, so an
+  // unset port here is a broken bootstrap, not a state to tolerate.
+  if (embedderPort === undefined) throw new Error('no embedder port: bootstrap did not run');
+  embedderPort.postMessage(message);
 }
 
 /**
@@ -155,6 +180,12 @@ function beginRequest(requestId: string): void {
  */
 function reportReactFailure(requestId: string, error: unknown): void {
   if (latestRequestId !== requestId) return;
+  // The guard covers both branches, not just the late one: React can hand over
+  // several errors from a single commit round (two sibling effects throwing, say)
+  // and the first already carries the only fact the app acts on — this tree is
+  // gone. Reporting the rest would be repeating it.
+  if (reactFailureReported) return;
+  reactFailureReported = true;
   const failure = {
     type: 'error',
     requestId,
@@ -165,8 +196,6 @@ function reportReactFailure(requestId: string, error: unknown): void {
     settle(failure);
     return;
   }
-  if (reactFailureReported) return;
-  reactFailureReported = true;
   post(failure);
 }
 
@@ -486,7 +515,13 @@ async function handleInit(msg: InitMessage): Promise<void> {
   settle({ type: 'rendered', requestId: msg.requestId });
 }
 
-/** Wire the message listener and announce readiness. */
+/**
+ * Mint the channel, take its receiving end, and hand the other to the embedder.
+ *
+ * No `window` message listener is installed, and that absence is the security
+ * property: the only way into this frame is the port, which reaches whoever the
+ * `ready` transfer handed it to and nobody else.
+ */
 export function startRenderer(): void {
   globalThis.addEventListener('error', (event) => {
     reportUncaught(event.error ?? event.message);
@@ -494,18 +529,31 @@ export function startRenderer(): void {
   globalThis.addEventListener('unhandledrejection', (event) => {
     reportUncaught(event.reason);
   });
-  // The sender's origin is deliberately not checked: the embedder is
-  // capacitor://localhost on mobile, so authentication is by message *shape*
-  // (schema validation below), never by origin string. This frame is opaque and
-  // holds nothing worth spoofing into.
-  // eslint-disable-next-line sonarjs/post-message -- shape-validated instead of origin-checked; embedder origin is unknowable
-  window.addEventListener('message', (event: MessageEvent) => {
+  const channel = new MessageChannel();
+  embedderPort = channel.port1;
+  // Holding the other end of this channel is the embedder's authority, and it
+  // is unforgeable: a document sharing this realm has no way to obtain the port
+  // and no window listener to post at. A port event carries no sender origin to
+  // check either way (`event.origin` is always empty), so the parse below is
+  // input validation on a channel whose holder is already trusted — not the
+  // thing that decides whom to trust.
+  channel.port1.addEventListener('message', (event: MessageEvent) => {
     const parsed = parseParentToFrameMessage(event.data);
     // Only `init` drives this page; run/stop belong to the Python runtime page.
     if (!parsed.success || parsed.data.type !== 'init') return;
     void handleInit(parsed.data);
   });
-  post({ type: 'ready' });
+  // A port delivers nothing until it is started, and `addEventListener` (unlike
+  // assigning `onmessage`) does not start it implicitly. Started before the
+  // transfer, so anything the embedder sends immediately is queued, not dropped.
+  channel.port1.start();
+  // The one broadcast in the system, sent once per frame instance. It cannot be
+  // narrowed: an opaque frame genuinely cannot learn its embedder's origin (it
+  // is capacitor://localhost on mobile), and `parent` names exactly one window
+  // regardless. The payload is a bare type tag; the capability is the port.
+  const ready: ReadyMessage = { type: 'ready' };
+  // eslint-disable-next-line sonarjs/post-message -- intentional '*' to an unknowable embedder origin; payload is a bare type tag
+  parent.postMessage(ready, '*', [channel.port2]);
 }
 
 // Close the WebRTC egress channel before any document code can run. This classic

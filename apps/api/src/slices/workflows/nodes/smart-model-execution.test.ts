@@ -5,10 +5,10 @@ import {
   CLASSIFIER_OUTPUT_TOKEN_CAP,
   CLASSIFIER_SYSTEM_PROMPT_MARKER,
   Node as NodeSchema,
-  REASONING_BUDGET_TOKENS_BY_EFFORT,
   serializeReasoningText,
   textTag,
 } from '@hushbox/shared';
+import { REASONING_BUDGET_TOKENS_BY_EFFORT } from '@hushbox/shared/affordability/estimate/reasoning-plan';
 import { providerUsdToBillableNanoUsd } from '../../billing/index.js';
 import { ok } from '../../../lib/result/index.js';
 import { InferenceError } from '../../models/index.js';

@@ -69,6 +69,10 @@ function buildApp(overrides: Partial<BillingRouteDeps> = {}): Hono<AppEnv> {
   });
   const deps: BillingRouteDeps = {
     stores,
+    // The usage routes never resolve a payer; a reader that throws pins that.
+    conversationFunding: () => () => {
+      throw new Error('conversationFunding unexpectedly invoked');
+    },
     paymentProvider: () => provider,
     webhookVerifier: () => createWebhookVerifier({ verifier: 'c2VjcmV0LXNlY3JldC1zZWNyZXQ=' }),
     jobRegistry: createJobRegistry(),

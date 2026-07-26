@@ -365,6 +365,7 @@ function resolvePayerWallet(
         conversationRemainingNanoUsd: 0n,
         ownerPurchasedBalanceNanoUsd: self.callerPurchasedBalanceNanoUsd,
         callerOwnPurchasedBalanceNanoUsd: self.callerPurchasedBalanceNanoUsd,
+        turnEstimateNanoUsd: undefined,
       },
     }));
   }
@@ -384,6 +385,17 @@ function resolvePayerWallet(
     // is `self` regardless of its value — the real balance is read below and
     // frozen for the tier gate. `isPremiumModel` is `false`: who-pays is
     // tier-agnostic (the route's tier gate re-runs the core with the model).
+    // No turn estimate is available here, and the ordering is why: the payer
+    // must be frozen BEFORE the turn is priced, because the turn's output
+    // ceiling is bounded by what the payer can pay. The consequence, which this
+    // ordering does not excuse: priority 1's estimate clause cannot run here, so
+    // a member whose group headroom is positive but too small for the turn is
+    // frozen as owner-funded and then refused by admission's per-scope check,
+    // while the same shared core on the client falls that member through to
+    // personal funds — the two verdicts differ. BILLING §Funding Decision Matrix
+    // priority 1 and §Group Funding 6(a) rule the fall-through; 6(b)'s hard
+    // refusal covers only the race case, where the client's retry re-resolves,
+    // and this case is deterministic — the retry re-resolves to the same refusal.
     const groupInputs: FundingDecisionInputs = {
       isSolo: false,
       isGuest: args.sender.kind === 'linkGuest',
@@ -391,6 +403,7 @@ function resolvePayerWallet(
       conversationRemainingNanoUsd: conversationRemaining,
       ownerPurchasedBalanceNanoUsd: ownerBalance,
       callerOwnPurchasedBalanceNanoUsd: 0n,
+      turnEstimateNanoUsd: undefined,
     };
     const decision = resolveFundingDecision({ ...groupInputs, isPremiumModel: false });
     if (decision.payer === 'owner') {

@@ -88,7 +88,10 @@ describe('fee-seams', () => {
 
   it('flags a star re-export of a money module outside the seams', async () => {
     expect(
-      await lintAtPath("export * from '../money.js';\n", 'packages/shared/src/estimate/index.ts')
+      await lintAtPath(
+        "export * from '../money.js';\n",
+        'packages/shared/src/affordability/estimate/index.ts'
+      )
     ).toHaveLength(1);
   });
 
@@ -237,9 +240,9 @@ describe('fee-seams', () => {
   it('pins the seam list to exactly the sanctioned inventory', () => {
     expect(FEE_APPLICATION_SEAMS.toSorted()).toEqual(
       [
-        'packages/shared/src/money.ts',
+        'packages/shared/src/affordability/money.ts',
         'packages/shared/src/index.ts',
-        'packages/shared/src/estimate/search-reservation.ts',
+        'packages/shared/src/affordability/estimate/search-reservation.ts',
         'apps/api/src/slices/models/domain/normalize.ts',
         'apps/api/src/slices/billing/domain/money.ts',
         'scripts/lib/e2e-seeded-image-model.ts',

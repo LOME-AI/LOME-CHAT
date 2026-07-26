@@ -1,5 +1,4 @@
 import {
-  CHARS_PER_TOKEN_STANDARD,
   CLASSIFIER_EFFORT_DIMENSION_MARKER,
   CLASSIFIER_MODEL_DIMENSION_MARKER,
   CLASSIFIER_SYSTEM_PROMPT_MARKER,
@@ -9,6 +8,7 @@ import {
   getSupportedVideoDurations,
   mockDirectivesSchema,
 } from '@hushbox/shared';
+import { CHARS_PER_TOKEN_STANDARD } from '@hushbox/shared/affordability/constants';
 import {
   InferenceError,
   invalidRequestError,

@@ -46,8 +46,8 @@ export function calculateMonthlyCost(models: Model[]): MonthlyCostResult {
   const inputChars = SYSTEM_PROMPT_CHARS + USER_MESSAGE_CHARS;
   const outputChars = AI_RESPONSE_CHARS;
 
-  const inputTokens = estimateTokenCount(inputChars.toString().padEnd(inputChars, ' '));
-  const outputTokens = estimateTokenCount(outputChars.toString().padEnd(outputChars, ' '));
+  const inputTokens = estimateTokenCount(inputChars);
+  const outputTokens = estimateTokenCount(outputChars);
 
   // All money math stays in integer nano-USD: the wire rates are billable
   // (fees baked at catalog ingestion) and pass-through storage adds unmarked,

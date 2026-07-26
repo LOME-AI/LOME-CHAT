@@ -1,13 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Browser } from '@playwright/test';
-import {
-  startPythonSandbox,
-  launchBrowser,
-  openPythonPage,
-  installPyPIInterception,
-  type PythonSandbox,
-  type PythonPage,
-} from './browser-harness.js';
+import { launchBrowser, startSandboxOrigin, type SandboxOrigin } from '../embed-harness.js';
+import { openPythonPage, installPyPIInterception, type PythonPage } from './browser-harness.js';
 
 /**
  * The micropip fallback path: a document imports a pure-Python PyPI package that
@@ -19,12 +13,12 @@ import {
  * install against the real sandbox CSP.
  */
 
-let sandbox: PythonSandbox;
+let sandbox: SandboxOrigin;
 let browser: Browser;
 let page: PythonPage;
 
 beforeAll(async () => {
-  sandbox = await startPythonSandbox();
+  sandbox = await startSandboxOrigin();
   browser = await launchBrowser();
   page = await openPythonPage(browser, sandbox.origin, installPyPIInterception);
 }, 120_000);

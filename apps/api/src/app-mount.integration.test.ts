@@ -302,6 +302,10 @@ describe('billing /payments fires the dispatcher wake post-commit', () => {
   function buildApp(): Hono<AppEnv> {
     const manifest = createBillingManifest({
       stores,
+      // Unused on the payment paths under test.
+      conversationFunding: () => () => {
+        throw new Error('conversationFunding unexpectedly invoked');
+      },
       paymentProvider: () => approvingProvider,
       // Unused on the success/validation paths under test.
       webhookVerifier: () => {

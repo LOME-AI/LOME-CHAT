@@ -1,19 +1,11 @@
 import * as React from 'react';
 import {
-  MINIMUM_OUTPUT_TOKENS,
   SMART_MODEL_ID,
   buildTurnSystemPrompt,
-  evaluateManifest,
   generateNotifications,
   nanoUSD,
-  outputCharsPerTokenForTier,
-  payerSizingTier,
-  planReasoning,
-  priceRequest,
   promptCharacterCount,
   resolveClientBilling,
-  smartModelMinimumRequiredNanoUsd,
-  turnEffortOptions,
   type CanonicalReasoningEffort,
   type Model,
   type BudgetError,
@@ -21,10 +13,15 @@ import {
   type MemberPrivilege,
   type Pricing,
   type ReasoningEffortSelection,
-  type SmartModelPoolCandidate,
-  type SmartModelStorageContext,
   type UserTier,
 } from '@hushbox/shared';
+import { MINIMUM_OUTPUT_TOKENS } from '@hushbox/shared/affordability/constants';
+import { turnEffortOptions } from '@hushbox/shared/affordability/estimate/effort-options';
+import { outputCharsPerTokenForTier } from '@hushbox/shared/affordability/estimate/pre-adapters';
+import { priceRequest } from '@hushbox/shared/affordability/estimate/price-request';
+import { planReasoning } from '@hushbox/shared/affordability/estimate/reasoning-plan';
+import { evaluateManifest } from '@hushbox/shared/affordability/estimate/reducers';
+import { smartModelMinimumRequiredNanoUsd } from '@hushbox/shared/affordability/estimate/smart-model-affordability';
 import {
   useBudgetCalculation,
   type BudgetModelPricing,
@@ -44,6 +41,10 @@ import { useModelStore } from '@/stores/model';
 import { useModels } from '@/hooks/models/models';
 import { useSession, useAuthStore } from '@/lib/auth';
 import { useWebSearch } from '@/hooks/chat/use-web-search';
+import type {
+  SmartModelPoolCandidate,
+  SmartModelStorageContext,
+} from '@hushbox/shared/affordability/estimate/smart-model-affordability';
 
 interface PromptBudgetInput {
   value: string;
@@ -148,22 +149,28 @@ interface GroupBillingContext {
 
 /**
  * Owner-funded means owner-priced (BILLING §Group Funding 1): the tier that
- * sizes the storage context is the PAYER's — 'paid' whenever the shared
- * funding core says the owner funds the turn (the server derives the same
- * tier from the admitted wallet's kind), the caller's own tier everywhere the
- * sender pays. Hoisted out of the hook so the conditional spread doesn't bump
- * its cyclomatic complexity past the lint threshold.
+ * sizes every money figure is the PAYER's, and it is SERVED with the funding
+ * snapshot for the conversation — never re-derived client-side, so the client
+ * cannot disagree with the wallet admission will actually gate. Trial and guest
+ * hold no wallet and have no endpoint, so their own tier stands.
  */
-function resolveSizingTier(
-  tier: UserTier,
-  purchasedBalanceNanoUsd: bigint,
-  groupContext: GroupBillingContext | undefined
+function payerTierOf(
+  served: { readonly tier: UserTier } | undefined,
+  callerTier: UserTier
 ): UserTier {
-  return payerSizingTier({
-    tier,
-    purchasedBalanceNanoUsd,
-    ...(groupContext !== undefined && { group: groupContext }),
-  });
+  return served?.tier ?? callerTier;
+}
+
+/**
+ * The conversation scope the served funding read is keyed by: a solo composer
+ * (or a picker opened outside a conversation) asks for its own numbers.
+ */
+function conversationScope(conversationId: string | null | undefined): string | null {
+  return conversationId ?? null;
+}
+
+function groupScope(group: ModelFloorGroupContext | undefined): string | null {
+  return conversationScope(group?.conversationId);
 }
 
 /**
@@ -289,7 +296,7 @@ function reasoningBudgetInput(
   selectedModels: readonly { id: string }[],
   modelCatalog: readonly Model[] | undefined
 ): { reasoningBudgetTokens?: number } {
-  if (selection === undefined || selection === 'auto' || selection === 'none') return {};
+  if (selection === undefined || selection === 'auto' || selection === 'off') return {};
   const level: CanonicalReasoningEffort = selection;
   let largest = 0;
   for (const sm of selectedModels) {
@@ -455,6 +462,8 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
   // caps price against — the SAME storage the server admission holds, so the
   // client and server affordability verdicts agree.
   const tierInfo = useUserTierInfo(isAuthenticated);
+  // The funding snapshot for THIS conversation: its tier is the payer's.
+  const { data: spendableData } = useSpendable(conversationScope(input.conversationId));
 
   const isGroupMember = resolveIsGroupMember(input.conversationId, input.currentUserPrivilege);
 
@@ -487,6 +496,8 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
     promptCharacterCount: promptChars,
     models: modelsPricing,
     isAuthenticated,
+    // The conversation names the payer whose funds and tier size the turn.
+    conversationId: conversationScope(input.conversationId),
     ...(webSearchActive && { webSearch: true }),
     ...reasoningBudgetInput(input.reasoningEffort, selectedModels, modelsData?.models),
   });
@@ -515,11 +526,7 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
 
   // 3. Resolve billing: who pays or why denied
   const isPremiumModel = selectedModels.some((sm) => modelsData?.premiumIds.has(sm.id) ?? false);
-  const sizingTier = resolveSizingTier(
-    tierInfo.tier,
-    tierInfo.purchasedBalanceNanoUsd,
-    groupContext
-  );
+  const sizingTier = payerTierOf(spendableData, tierInfo.tier);
   // Smart Model prices through the shared affordability gate (reserve + cheapest
   // floor), never the catalog's headline-min — so the client refuses exactly the
   // sends the server refuses. A non-Smart text turn keeps the token-derived cost.
@@ -668,7 +675,18 @@ function modelFloorNanoUsd(
  */
 export function useModelFloor(input: UseModelFloorInput): ModelFloorResult {
   const tierInfo = useUserTierInfo(input.isAuthenticated);
-  const { data: spendableData, isPending: isSpendablePending } = useSpendable();
+  // Two reads, two wallets, two jobs. The conversation-scoped snapshot names the
+  // PAYER, so it sizes the turn (§Group Funding 1). The argument-free snapshot is
+  // the CALLER's own wallet, which is what `resolveClientBilling` compares once
+  // the group headroom fails to cover the turn and the member falls through to
+  // personal funds — feeding it the payer-scoped figure would grey models the
+  // member can self-fund. The composer path splits them the same way:
+  // `usePromptBudget` takes the scoped read for sizing and delegates the compare
+  // to `useResolveBilling`, which takes the argument-free one.
+  const { data: payerSpendableData, isPending: isSpendablePending } = useSpendable(
+    groupScope(input.group)
+  );
+  const { data: ownSpendableData, isPending: isOwnSpendablePending } = useSpendable();
   const isGroupMember = resolveIsGroupMember(
     input.group?.conversationId,
     input.group?.currentUserPrivilege
@@ -680,10 +698,11 @@ export function useModelFloor(input: UseModelFloorInput): ModelFloorResult {
   const { data: modelsData } = useModels();
 
   const isPending =
-    (input.isAuthenticated && isSpendablePending) || (isGroupMember && isGroupBudgetPending);
-  const spendableNanoUsd = spendableData ? BigInt(spendableData.spendableNanoUsd) : 0n;
+    (input.isAuthenticated && (isSpendablePending || isOwnSpendablePending)) ||
+    (isGroupMember && isGroupBudgetPending);
+  const spendableNanoUsd = ownSpendableData ? BigInt(ownSpendableData.spendableNanoUsd) : 0n;
   const { tier, purchasedBalanceNanoUsd, freeAllowanceNanoUsd } = tierInfo;
-  const sizingTier = resolveSizingTier(tier, purchasedBalanceNanoUsd, groupContext);
+  const sizingTier = payerTierOf(payerSpendableData, tier);
   const modelCatalog = modelsData?.models;
 
   const isBelowFloor = React.useCallback(
