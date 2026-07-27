@@ -208,6 +208,25 @@ describe('readLatestDescriptorRows', () => {
     expect(stored?.catalogId).toBeDefined();
   });
 
+  it('reads in model_id order however the rows were written', async () => {
+    // A plain select has no defined row order, and every exposure surface derives
+    // its catalog list from this map's insertion order — so the order is part of
+    // the contract. Written deliberately out of order.
+    const ids = [freshModelId('order-c'), freshModelId('order-a'), freshModelId('order-b')];
+    for (const modelId of ids) {
+      const written = await upsertCatalog(db, {
+        modelId,
+        content: contentFor(modelId),
+        popularityRank: null,
+        fetchedAt: new Date(),
+      });
+      expect(written.isOk()).toBe(true);
+    }
+    const map = await unwrap(readLatestDescriptorRows(db));
+    const read = [...map.keys()].filter((modelId) => ids.includes(modelId));
+    expect(read).toEqual([...ids].toSorted((left, right) => left.localeCompare(right)));
+  });
+
   it('carries the admin kill-switch state on every row (null when never disabled)', async () => {
     const modelId = freshModelId('read-enabled');
     const written = await upsertCatalog(db, {

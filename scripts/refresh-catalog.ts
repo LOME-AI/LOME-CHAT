@@ -16,9 +16,10 @@
  * gets a live catalog without the E2E-specific gate).
  */
 import { LOCAL_NEON_DEV_CONFIG, createDb } from '@hushbox/db';
+import { EXCLUDE_REASONS } from '@hushbox/shared';
 import {
-  EXCLUDE_REASONS,
   OPENROUTER_BASE_URL,
+  createCatalogSightingRecorder,
   createConsoleTelemetry,
   refreshCatalog,
 } from '@hushbox/api/dev-seed';
@@ -69,6 +70,7 @@ export async function runRefreshCatalog(requireE2eModels: boolean): Promise<void
       gatewayBaseUrl: OPENROUTER_BASE_URL,
       telemetry: createConsoleTelemetry(),
       now: () => new Date(),
+      recordSighting: createCatalogSightingRecorder(db),
       // Dev-only script (NODE_ENV=development): fan the image-endpoints N+1
       // out wider than production's 6-connection cap so a cold refresh fills
       // faster. Equivalent to `createEnvUtilities(process.env).isProduction ? 6 : 30`.

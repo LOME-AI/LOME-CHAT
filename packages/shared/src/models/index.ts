@@ -1,4 +1,6 @@
 export type { RawModel, ProcessedModels, ChatModality } from './types.js';
+export { EXCLUDE_REASONS } from './exclude-reasons.js';
+export type { ExcludeReason } from './exclude-reasons.js';
 export { MODALITY_ARIA_LABELS } from './modality-labels.js';
 export { publicModelEntrySchema } from './fetch.js';
 export { PROVIDER_MAP } from './provider-map.js';

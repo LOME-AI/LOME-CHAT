@@ -64,10 +64,13 @@ describe('offeredLevels ladder rules', () => {
     expect(offeredLevels({ reasoning: { supportedEfforts: ['none'] } })).toEqual([]);
   });
 
-  it('returns nothing for a single-level mandatory model (no choice exists)', () => {
-    expect(offeredLevels({ reasoning: { mandatory: true, supportedEfforts: ['high'] } })).toEqual(
-      []
-    );
+  it('offers the one rung of a single-level mandatory model, since it is priced', () => {
+    // No choice exists on such a model, but a BUDGET does: the provider spends it
+    // whether or not a menu shows the rung, so it has to be offerable for
+    // `e_min(m)` to be a reachable corner rather than an unreachable zero.
+    expect(offeredLevels({ reasoning: { mandatory: true, supportedEfforts: ['high'] } })).toEqual([
+      { label: 'high', wire: { effort: 'high' } },
+    ]);
   });
 
   it('offers [High] for a single-level model whose reasoning can be turned off', () => {
@@ -283,11 +286,26 @@ describe('planReasoning positional wiring', () => {
     }
   });
 
-  it('reports effort-not-supported on a single-level mandatory model (nothing offered)', () => {
+  it('plans the one rung of a single-level mandatory model', () => {
     const model: ReasoningPlanModel = {
       reasoning: { mandatory: true, supportedEfforts: ['high'] },
     };
     expect(planReasoning(model, 'high', 500)).toEqual({
+      feasible: true,
+      plan: {
+        reasoningBudgetTokens: REASONING_BUDGET_TOKENS_BY_EFFORT.high,
+        answerHeadroomTokens: 500,
+        maxTokens: REASONING_BUDGET_TOKENS_BY_EFFORT.high + 500,
+        wire: { effort: 'high' },
+      },
+    });
+  });
+
+  it('still reports effort-not-supported for a level that single rung does not carry', () => {
+    const model: ReasoningPlanModel = {
+      reasoning: { mandatory: true, supportedEfforts: ['high'] },
+    };
+    expect(planReasoning(model, 'low', 500)).toEqual({
       feasible: false,
       reason: 'effort-not-supported',
     });

@@ -9,6 +9,7 @@ import { upsertCatalog } from './catalog-store.js';
 import { TEST_GATEWAY_BASE_URL, catalogFetch, modelEntryFixture } from './gateway-fixtures.js';
 import { createModelPricingResolver } from './pricing-resolver.js';
 import { refreshCatalog } from './refresh.js';
+import { createCatalogSightingRecorder } from '../adapters/catalog-lifecycle.js';
 import type { DescriptorContent } from './normalize.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -214,6 +215,7 @@ describe('catalog refresh non-clobber', () => {
         gatewayBaseUrl: TEST_GATEWAY_BASE_URL,
         telemetry: silentTelemetry,
         now: () => new Date('2026-07-13T00:00:00.000Z'),
+        recordSighting: createCatalogSightingRecorder(db),
       });
       result._unsafeUnwrap();
     };

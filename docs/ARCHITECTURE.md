@@ -198,8 +198,9 @@ documents run live in the document panel. Full design: `docs/DOCUMENTS.md`.
   (`allow-scripts`, never `allow-same-origin`) cross-origin iframe served by a
   credential-free static Worker — no cookies, no session, no API, nothing to steal. The
   app origin, holding plaintext and the device key, is unreachable by construction rather
-  than by diligence. Parent↔frame traffic is a Zod-typed postMessage bridge shared from
-  `packages/shared`.
+  than by diligence. Parent↔frame traffic rides a frame-minted `MessageChannel`: the frame
+  transfers one port end on a one-shot `ready` broadcast, and every later message crosses
+  that port. The Zod schemas are shared from `packages/shared`.
 - **Containment is the network lockdown, not `script-src`.** The sandbox CSP is
   `default-src 'none'` with `connect-src` narrowed to the Python wheel hosts and
   frame/child/worker/object `'none'` (no fresh realm to escape into); `script-src`

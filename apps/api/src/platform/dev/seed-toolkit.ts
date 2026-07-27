@@ -31,12 +31,12 @@ export type { VerificationEmailPort } from '../../slices/identity/index.js';
 // hand-authored descriptors. `OPENROUTER_BASE_URL` single-sources the gateway
 // base URL; `createConsoleTelemetry` gives the script the Telemetry the refresh
 // needs to alert on excluded models.
-export { refreshCatalog, OPENROUTER_BASE_URL, EXCLUDE_REASONS } from '../../slices/models/index.js';
-export type {
-  ExcludeReason,
-  RefreshCatalogDeps,
-  RefreshSummary,
+export {
+  createCatalogSightingRecorder,
+  refreshCatalog,
+  OPENROUTER_BASE_URL,
 } from '../../slices/models/index.js';
+export type { RefreshCatalogDeps, RefreshSummary } from '../../slices/models/index.js';
 
 // Single-writer catalog upsert, exposed so `scripts/seed.ts` injects ONE
 // synthetic strict-image descriptor into `model_catalog` through the models

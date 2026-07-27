@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  createValueStore,
-  measureValueBytes,
-  VALUE_STORE_BYTE_BUDGET_BYTES,
-} from './value-store.js';
+import { VALUE_STORE_BYTE_BUDGET_BYTES } from '@hushbox/shared';
+import { createValueStore, measureValueBytes } from './value-store.js';
 
 describe('measureValueBytes', () => {
   it('meters text at two bytes per UTF-16 code unit', () => {

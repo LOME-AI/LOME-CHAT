@@ -45,44 +45,44 @@ Each value names its enforcement — a rule without a mechanism is a suggestion.
 
 1. **The Reversibility Iron Law** (founder ruling, 2026-07-05 — full formalization in
    §3): every admin mutation has a registered inverse; no irreversible admin operation
-   exists. *Enforce:* registry rejects a mutation op without a registered inverse; the
+   exists. _Enforce:_ registry rejects a mutation op without a registered inverse; the
    §12 interleaving battery.
 2. **Invariant-preserving by construction:** every write composes published slice
-   barrels inside one settlement transaction; never a raw table write. *Enforce:* admin
+   barrels inside one settlement transaction; never a raw table write. _Enforce:_ admin
    slice owns only `admin_audit`; arch rule bans raw Drizzle writes in the slice.
 3. **Atomic total auditability:** the audit row commits in the same transaction as the
    effect — effect-without-audit and audit-without-effect are both structurally
-   impossible. Sensitive reads audited too. *Enforce:* the engine writes the row inside
+   impossible. Sensitive reads audited too. _Enforce:_ the engine writes the row inside
    the op transaction; `admin_audit` is append-only via UPDATE/DELETE/TRUNCATE-raising
    triggers (the separate INSERT-only role was ruled out at build time — §10;
    owner-level bypass accepted, off-vendor Kopia→B2 copy is the backstop).
 4. **Preview that cannot lie:** preview is execute inside a rolled-back transaction —
-   the same code path, never a parallel implementation. *Enforce:* one engine code path
+   the same code path, never a parallel implementation. _Enforce:_ one engine code path
    with a rollback sentinel; the preview≡execute test.
 5. **Exactly-once:** every op runs under `runMutation` + `idempotent.byKey`;
-   double-click/retry never double-applies. *Enforce:* existing idempotency machinery;
+   double-click/retry never double-applies. _Enforce:_ existing idempotency machinery;
    the §12 idempotency trio.
 6. **Reason-required:** every mutation's input schema includes `reason`; it lands in the
-   audit row. *Enforce:* contract-shape check in the registry exhaustiveness test.
+   audit row. _Enforce:_ contract-shape check in the registry exhaustiveness test.
 7. **Guardrails as data:** per-op caps (`maxAmountNanoUsd`, `maxTargets`, rate-limit
-   keys); exceeding refuses, and the refusal is audited. *Enforce:* engine checks before
+   keys); exceeding refuses, and the refusal is audited. _Enforce:_ engine checks before
    execute; guardrail-trip test per op.
 8. **One definition, many surfaces:** an op is defined once and automatically becomes a
    UI form and an API endpoint hitting the same audited engine.
-   *Enforce:* generic routes + generic `<OpForm>`; no bespoke
+   _Enforce:_ generic routes + generic `<OpForm>`; no bespoke
    per-op wiring exists to drift.
 9. **Recovery paths are authentication paths:** every way in — enrollment, recovery,
    break-glass — is pre-staged at a physical ceremony and at least as strong as the
    primary path. No email, IdP, or online tool is a trust root; the fail strength is the
-   safe, not an inbox. *Enforce:* no self-service enrollment or recovery route exists in
+   safe, not an inbox. _Enforce:_ no self-service enrollment or recovery route exists in
    code; §6's ladder is physical artifacts + a tested runbook.
 10. **Nothing in the repo can mint access:** no credential, enrollment store, break-glass
     flag, or access-granting policy in code, CI secrets, or any store deployable code can
-    write. *Enforce:* enforcement lives at the edge (Cloudflare dashboard config); no
+    write. _Enforce:_ enforcement lives at the edge (Cloudflare dashboard config); no
     `BREAK_GLASS`-style deploy flag exists.
 11. **Privacy by default:** content unreadable by construction; metadata reads scoped,
-    audited, and volume-capped; exports are reason-gated ops. *Enforce:* read-audit rows
-    + rate-limit registry entries on 360 loads; SQL panel role is SELECT-only.
+    audited, and volume-capped; exports are reason-gated ops. _Enforce:_ read-audit rows
+    - rate-limit registry entries on 360 loads; SQL panel role is SELECT-only.
 12. **One pane of glass:** HushBox-owned data lives in the admin app; vendor internals
     (Sentry stack traces, raw Workers logs) deep-link out, never duplicate.
 
@@ -107,7 +107,7 @@ a violation.
 
 Two precision rules, without which the test harness will be built wrong:
 
-- **Feasibility divergence is accepted, not a violation.** If `A` *enabled* a user
+- **Feasibility divergence is accepted, not a violation.** If `A` _enabled_ a user
   action (a credit let admission pass), the control run blocks that action and the two
   runs cannot be literally identical. The testable invariant is: **the op's own delta
   nets to exactly zero across any interleaving** (credit +5 … clawback −5 ⇒ net 0, even
@@ -183,16 +183,16 @@ apps/admin/                       # Vite React SPA (§13); + CLAUDE.md at T5.3
 
 Integration points (small, named edits):
 
-| File | Change |
-|---|---|
-| `apps/api/src/lib/context/route-class.ts` | add `'admin'` to `ROUTE_CLASSES`; the exhaustive `match` in `authorizeAccess` forces the new arm |
-| `apps/api/src/middleware/` | new pipeline stage: on `'admin'`-classed routes, verify `Cf-Access-Jwt-Assertion` (jose + remote JWKS, issuer + AUD + email allowlist, fail-closed) and set an `admin-actor` principal — the one `Principal`-union extension |
-| `apps/api/src/app.ts` | mount `adminManifest` in the chained `.route(…)` list (AppType flows to the SPA) |
-| `apps/api/wrangler.toml` | `admin.hushbox.ai/api/*` route |
-| `packages/shared/src/env.config.ts` | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` registry entries (per-mode, no fallbacks) |
-| `packages/config/eslint-extensions/admin.config.mjs` | op modules importable only by the registry |
-| `packages/config/arch/rules/` | `admin-op-registry.rule.ts`: every op registered; mutation ⇒ inverse present; audit insert inside the op tx; no `fetch`/adapter imports in op bodies |
-| `apps/api/package.json` | add `jose` (not currently a dependency) |
+| File                                                 | Change                                                                                                                                                                                                                       |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api/src/lib/context/route-class.ts`            | add `'admin'` to `ROUTE_CLASSES`; the exhaustive `match` in `authorizeAccess` forces the new arm                                                                                                                             |
+| `apps/api/src/middleware/`                           | new pipeline stage: on `'admin'`-classed routes, verify `Cf-Access-Jwt-Assertion` (jose + remote JWKS, issuer + AUD + email allowlist, fail-closed) and set an `admin-actor` principal — the one `Principal`-union extension |
+| `apps/api/src/app.ts`                                | mount `adminManifest` in the chained `.route(…)` list (AppType flows to the SPA)                                                                                                                                             |
+| `apps/api/wrangler.toml`                             | `admin.hushbox.ai/api/*` route                                                                                                                                                                                               |
+| `packages/shared/src/env.config.ts`                  | `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` registry entries (per-mode, no fallbacks)                                                                                                                                           |
+| `packages/config/eslint-extensions/admin.config.mjs` | op modules importable only by the registry                                                                                                                                                                                   |
+| `packages/config/arch/rules/`                        | `admin-op-registry.rule.ts`: every op registered; mutation ⇒ inverse present; audit insert inside the op tx; no `fetch`/adapter imports in op bodies                                                                         |
+| `apps/api/package.json`                              | add `jose` (not currently a dependency)                                                                                                                                                                                      |
 
 The eslint-boundaries `slices/(*)` capture and the arch-test globs pick the new slice up
 with zero configuration changes. Local dev and e2e fake Access at the real seam: a test
@@ -228,7 +228,7 @@ Enterprise. The design of record:
   remote JWKS handles the ~6-week key rotation; issuer + AUD + allowlist; fail-closed —
   missing/invalid ⇒ 401, no effect). This is the belt; the edge wall is the suspenders.
 - **The Single Auth Path Law:** hardware-security-key MFA through Cloudflare Access is the
-  *only* production authentication path. No second credential class exists — no service
+  _only_ production authentication path. No second credential class exists — no service
   tokens, no API keys, no bearer secrets, no non-interactive path. The Access application
   policy carries **only** the email-allowlist + hardware-key rule and **no Service-Auth
   rule**. This is enforced in code as well as config: the JWT stage requires a non-empty
@@ -251,11 +251,11 @@ factor; the second YubiKey is the fallback.
 All rungs physical, none in code (Charter #9/#10). No deploy-flag auth mode exists — a
 break-glass reachable by deploying code is exactly what a GitHub attacker can trigger.
 
-| Rung | Scenario | Path |
-|---|---|---|
-| 1 | Primary YubiKey lost | Backup YubiKey from the safe — already enrolled, identical strength |
-| 2 | All admin keys lost | Cloudflare dashboard (its own hardware key / paper backup codes) → re-run the ceremony: enroll new keys, delete old authenticators |
-| 3 | Cloudflare account lost | Offline Neon owner + R2 credentials on paper in the safe + written runbook — read/repair per procedure, bypassing the plane entirely |
+| Rung | Scenario                | Path                                                                                                                                 |
+| ---- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 1    | Primary YubiKey lost    | Backup YubiKey from the safe — already enrolled, identical strength                                                                  |
+| 2    | All admin keys lost     | Cloudflare dashboard (its own hardware key / paper backup codes) → re-run the ceremony: enroll new keys, delete old authenticators   |
+| 3    | Cloudflare account lost | Offline Neon owner + R2 credentials on paper in the safe + written runbook — read/repair per procedure, bypassing the plane entirely |
 
 Rung 3 bypasses every invariant (raw SQL, no `settle()`, no audit middleware): the
 runbook restricts it to reading and emergency repair per written procedure, and every
@@ -281,18 +281,18 @@ required review, a Cloudflare deploy token scoped to the one Worker.
 ```ts
 // packages/shared/src/admin/ops.ts — contracts only; the SPA and engine both import this
 export interface AdminOpContract<In extends z.ZodType> {
-  name: `${string}.${string}`;            // 'wallet.credit'
-  title: string;                          // 'Credit wallet'
+  name: `${string}.${string}`; // 'wallet.credit'
+  title: string; // 'Credit wallet'
   kind: 'mutation' | 'read';
-  input: In;                              // FLAT Zod object (scalars, plus repeatable
-                                          //   groups of flat scalars); mutations always
-                                          //   include reason: z.string().min(1)
-  inverse: `${string}.${string}` | null;  // null only for kind:'read' and ephemeral ops
-  effectClass: 'durable' | 'ephemeral';   // §3 taxonomy
+  input: In; // FLAT Zod object (scalars, plus repeatable
+  //   groups of flat scalars); mutations always
+  //   include reason: z.string().min(1)
+  inverse: `${string}.${string}` | null; // null only for kind:'read' and ephemeral ops
+  effectClass: 'durable' | 'ephemeral'; // §3 taxonomy
   guardrails?: {
     maxAmountNanoUsd?: bigint;
     maxTargets?: number;
-    rateLimitKey?: string;                // typed rate-limit registry entry
+    rateLimitKey?: string; // typed rate-limit registry entry
   };
 }
 ```
@@ -306,7 +306,9 @@ export const walletCredit = defineAdminOp(walletCreditContract, {
     // idempotencyKey derived from ctx.opKey) → updateWalletBalanceWithinTx →
     // writeThroughSnapshot. No fetch, no adapters, no raw Drizzle — arch-rule-enforced.
     return {
-      effects: [/* typed descriptions rendered by preview: balance before/after, legs */],
+      effects: [
+        /* typed descriptions rendered by preview: balance before/after, legs */
+      ],
       inverseInput: { transactionId, walletId, amountNanoUsd, reason: `undo of ${ctx.auditId}` },
     };
   },
@@ -358,14 +360,14 @@ run(op, input, actor, mode: 'preview' | 'execute', idempotencyKey)
 One search box → one page, assembled by `domain/customer-360.ts`. Index audit (verified
 against `packages/db/src/schema/`):
 
-| Panel | Source | Index | Inline ops |
-|---|---|---|---|
-| Identity & sessions | `users` (lockedAt/lockReason exist) | PK | `user.lock`/`user.unlock`, `sessions.revokeAll` |
-| Money | `wallets` ✅ · `payments` ✅ · `ledger_entries` (per-wallet index → join through wallets) | ✅ | `wallet.credit`/`wallet.clawback` |
-| Usage | `usage_records` ✅ (partial) | ✅ | — |
-| Conversations (metadata) | `conversations` ✅ · `conversation_members` ✅ · `shared_links` (per-conversation → join) | ✅/join | `share.revoke` |
-| Devices | `device_tokens` ✅ | ✅ | — |
-| Admin history | `admin_audit` | **needs the §10 index** | undo buttons |
+| Panel                    | Source                                                                                    | Index                   | Inline ops                                      |
+| ------------------------ | ----------------------------------------------------------------------------------------- | ----------------------- | ----------------------------------------------- |
+| Identity & sessions      | `users` (lockedAt/lockReason exist)                                                       | PK                      | `user.lock`/`user.unlock`, `sessions.revokeAll` |
+| Money                    | `wallets` ✅ · `payments` ✅ · `ledger_entries` (per-wallet index → join through wallets) | ✅                      | `wallet.credit`/`wallet.clawback`               |
+| Usage                    | `usage_records` ✅ (partial)                                                              | ✅                      | —                                               |
+| Conversations (metadata) | `conversations` ✅ · `conversation_members` ✅ · `shared_links` (per-conversation → join) | ✅/join                 | `share.revoke`                                  |
+| Devices                  | `device_tokens` ✅                                                                        | ✅                      | —                                               |
+| Admin history            | `admin_audit`                                                                             | **needs the §10 index** | undo buttons                                    |
 
 Global surfaces: **Dashboard** (job backlog + dead-row counts — net-new read queries over
 `jobs`; conservation / snapshot-drift / payment-reconciliation auditor results — already
@@ -389,18 +391,18 @@ deferred; v1 dashboard metrics come from Postgres.
 
 ## 9. v1 op inventory
 
-| Op | Inverse | Class | Composes |
-|---|---|---|---|
-| `wallet.credit` | `wallet.clawback` | durable | billing barrel: `lockWalletWithinTx` + `insertLedgerLegsIfAbsentWithinTx` (promo/clawback kinds, zero-sum pairs) + snapshot write-through |
-| `wallet.clawback` | `wallet.credit` | durable | same primitives |
-| `user.lock` | `user.unlock` | durable | new identity barrel helpers `lockUserWithinTx`/`unlockUserWithinTx` over `users.lockedAt` + `lockReason` (columns exist; the `user_lock_reason` enum already carries `'admin'`; `users` is identity's table — single-writer). Unlock's `inverseInput` snapshots the original `lockReason` so undo restores `chargeback`, never a default. **Lock auto-revokes sessions, durably** (founder rulings 2026-07-12 / 2026-07-14): the live-session cutoff must never degrade to best-effort. The op **enqueues the must-happen session-revocation job inside its settlement transaction** (atomic with the audit row; rolls back in preview) — the same durable job the chargeback flow uses, generalized from `chargeback.revoke.v1` to a trigger-neutral `session.revoke.v1` so both callers share one mechanism; its handler bumps the `passwordChangedAt` watermark (the sole cutoff for already-live sessions) and evicts sockets, retried until it succeeds. A post-commit best-effort socket eviction still fires for promptness, but correctness no longer rests on it — matching the "auth never degrades" principle. One op is full containment; a locked user must not keep a working session |
-| `user.unlock` | `user.lock` | durable | same. Unlock does not restore sessions (session loss is ephemeral-class — the user logs in again); the Iron Law holds on the effective-state projection |
-| `sessions.revokeAll` | — | ephemeral | new identity barrel helper `revokeAllSessions(userId)`: bump the `passwordChangedAt` watermark (the existing in-mechanism primitive) |
-| `job.redrive` | — | ephemeral (resumes an existing system obligation — the job's effect is the system's at-least-once work, not an admin-originated state change) | dead→pending status flip, attempts reset |
-| `job.discard` | `job.restore` | durable | restorable `discardedAt` marker; discarded rows prune on retention (2026-07-03 amendment semantics) |
-| `model.disable` | `model.enable` | durable | **needs `model_catalog.admin_disabled_at`** (§10) — no exposure flag exists today. Enforced at **both** `listDescriptors` exposure and turn-time model resolution (typed refusal) — hiding alone leaves direct API selection open. Verified 2026-07-12: the catalog refresh upsert touches only the `descriptor` column, so the flag survives refresh |
-| `share.revoke` | `share.unrevoke` | durable | `shared_links.revokedAt` (column exists). **Authorization-only revocation** (founder ruling 2026-07-12): flips `revokedAt` (read paths enforce lazily), marks the guest member left, evicts sockets — **no epoch rotation** (admins hold no key material; member-initiated revoke remains the cryptographic path). Deliberate v1 limitation — record it as a load-bearing comment and a line in the admin slice `CLAUDE.md`. Needs a new conversations barrel write: the existing `revokeSharedLink` is not barrel-exported and demands member privilege + a client rotation body |
-| `banner.set` | `banner.set` (self-inverse) | durable | announcements barrel: `readForUpdateWithinTx` (FOR UPDATE prior-state snapshot → `inverseInput`, salvage→strict narrowing: text/variant/linkText always restored, strict-invalid legacy hrefs dropped, `id` dropped) + `setWithinTx` (update-newest-else-insert). `enabled ⇒ ≥1 message` enforced in the op body; zero messages legal (disabled state and undo-of-first-set) |
+| Op                   | Inverse                     | Class                                                                                                                                         | Composes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wallet.credit`      | `wallet.clawback`           | durable                                                                                                                                       | billing barrel: `lockWalletWithinTx` + `insertLedgerLegsIfAbsentWithinTx` (promo/clawback kinds, zero-sum pairs) + snapshot write-through                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `wallet.clawback`    | `wallet.credit`             | durable                                                                                                                                       | same primitives                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `user.lock`          | `user.unlock`               | durable                                                                                                                                       | new identity barrel helpers `lockUserWithinTx`/`unlockUserWithinTx` over `users.lockedAt` + `lockReason` (columns exist; the `user_lock_reason` enum already carries `'admin'`; `users` is identity's table — single-writer). Unlock's `inverseInput` snapshots the original `lockReason` so undo restores `chargeback`, never a default. **Lock auto-revokes sessions, durably** (founder rulings 2026-07-12 / 2026-07-14): the live-session cutoff must never degrade to best-effort. The op **enqueues the must-happen session-revocation job inside its settlement transaction** (atomic with the audit row; rolls back in preview) — the same durable job the chargeback flow uses, generalized from `chargeback.revoke.v1` to a trigger-neutral `session.revoke.v1` so both callers share one mechanism; its handler bumps the `passwordChangedAt` watermark (the sole cutoff for already-live sessions) and evicts sockets, retried until it succeeds. A post-commit best-effort socket eviction still fires for promptness, but correctness no longer rests on it — matching the "auth never degrades" principle. One op is full containment; a locked user must not keep a working session |
+| `user.unlock`        | `user.lock`                 | durable                                                                                                                                       | same. Unlock does not restore sessions (session loss is ephemeral-class — the user logs in again); the Iron Law holds on the effective-state projection                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `sessions.revokeAll` | —                           | ephemeral                                                                                                                                     | new identity barrel helper `revokeAllSessions(userId)`: bump the `passwordChangedAt` watermark (the existing in-mechanism primitive)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `job.redrive`        | —                           | ephemeral (resumes an existing system obligation — the job's effect is the system's at-least-once work, not an admin-originated state change) | dead→pending status flip, attempts reset                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `job.discard`        | `job.restore`               | durable                                                                                                                                       | restorable `discardedAt` marker; discarded rows prune on retention (2026-07-03 amendment semantics)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `model.disable`      | `model.enable`              | durable                                                                                                                                       | **needs `model_catalog.admin_disabled_at`** (§10) — no exposure flag exists today. Enforced at **both** `listDescriptors` exposure and turn-time model resolution (typed refusal) — hiding alone leaves direct API selection open. the flag survives refresh because `admin_disabled_at` appears in no refresh set clause at all — the refresh writes the descriptor and the derived exclusion columns, never the asserted one                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `share.revoke`       | `share.unrevoke`            | durable                                                                                                                                       | `shared_links.revokedAt` (column exists). **Authorization-only revocation** (founder ruling 2026-07-12): flips `revokedAt` (read paths enforce lazily), marks the guest member left, evicts sockets — **no epoch rotation** (admins hold no key material; member-initiated revoke remains the cryptographic path). Deliberate v1 limitation — record it as a load-bearing comment and a line in the admin slice `CLAUDE.md`. Needs a new conversations barrel write: the existing `revokeSharedLink` is not barrel-exported and demands member privilege + a client rotation body                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `banner.set`         | `banner.set` (self-inverse) | durable                                                                                                                                       | announcements barrel: `readForUpdateWithinTx` (FOR UPDATE prior-state snapshot → `inverseInput`, salvage→strict narrowing: text/variant/linkText always restored, strict-invalid legacy hrefs dropped, `id` dropped) + `setWithinTx` (update-newest-else-insert). `enabled ⇒ ≥1 message` enforced in the op body; zero messages legal (disabled state and undo-of-first-set)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 The two catches the Iron Law forces, recorded so nobody "fixes" them: **card refunds**
 (irreversible external money movement) and **account deletion** (irreversible by
@@ -416,7 +418,7 @@ erasure request arriving by email has no admin lever; the answer is "log in and 
    a nullable **`undoes uuid UNIQUE`** column (the undo's own audit insert is the
    exactly-once claim — a second undo of the same row fails the unique constraint,
    race-safe and append-only-compatible); add the append-only hardening — `BEFORE
-   UPDATE OR DELETE` **and `BEFORE TRUNCATE`** triggers that raise. **Amended
+UPDATE OR DELETE` **and `BEFORE TRUNCATE`** triggers that raise. **Amended
    2026-07-13 (build-time ruling): the separate INSERT-only audit-writing role is not
    built.** The audit row commits inside the same settlement transaction that writes
    the op's other tables (wallets, jobs, …), so an audit-only connection role can never
@@ -442,17 +444,17 @@ immutability, or the first non-founder admin.
 
 ## 11. Threat model
 
-| Threat | Defense |
-|---|---|
-| Random attacker | Access edge wall (allowlist + OTP + hardware key); JWT re-verified in-Worker |
-| Compromised admin inbox | OTP alone cannot pass MFA and cannot enroll a key (device changes require an existing device); enrollment events alerted |
-| Stolen YubiKey | Useless without the inbox factor — and vice versa |
-| Phishing | WebAuthn is origin-bound — phishing-resistant at the protocol level |
-| Compromised live admin session | Guardrail caps + rate limits bound blast radius; every act is audited **and reversible** — the Iron Law doubles as incident response: any malicious sequence can be exactly undone from the audit trail |
-| GitHub / deploy compromise | Nothing deployable can mint access (§6); residual product-wide deploy risk is its own hardening track |
-| DB-credentialed attacker | Audit history not silently rewritable below owner level (UPDATE/DELETE/TRUNCATE-raising triggers; the separate INSERT-only role was ruled out at build time — §10); owner-level bypass accepted; off-vendor daily copy via Kopia→B2 |
-| Bulk metadata exfiltration | 360 reads audited + volume-capped; exports reason-gated; SQL panel read-only + query-audited |
-| Access / Cloudflare outage | Break-glass rungs 2–3, physically staged, drilled |
+| Threat                         | Defense                                                                                                                                                                                                                             |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Random attacker                | Access edge wall (allowlist + OTP + hardware key); JWT re-verified in-Worker                                                                                                                                                        |
+| Compromised admin inbox        | OTP alone cannot pass MFA and cannot enroll a key (device changes require an existing device); enrollment events alerted                                                                                                            |
+| Stolen YubiKey                 | Useless without the inbox factor — and vice versa                                                                                                                                                                                   |
+| Phishing                       | WebAuthn is origin-bound — phishing-resistant at the protocol level                                                                                                                                                                 |
+| Compromised live admin session | Guardrail caps + rate limits bound blast radius; every act is audited **and reversible** — the Iron Law doubles as incident response: any malicious sequence can be exactly undone from the audit trail                             |
+| GitHub / deploy compromise     | Nothing deployable can mint access (§6); residual product-wide deploy risk is its own hardening track                                                                                                                               |
+| DB-credentialed attacker       | Audit history not silently rewritable below owner level (UPDATE/DELETE/TRUNCATE-raising triggers; the separate INSERT-only role was ruled out at build time — §10); owner-level bypass accepted; off-vendor daily copy via Kopia→B2 |
+| Bulk metadata exfiltration     | 360 reads audited + volume-capped; exports reason-gated; SQL panel read-only + query-audited                                                                                                                                        |
+| Access / Cloudflare outage     | Break-glass rungs 2–3, physically staged, drilled                                                                                                                                                                                   |
 
 ---
 
@@ -589,43 +591,43 @@ non-GUI lever.
   carve-outs** — `verification_tokens` unreadable, `users.opaque_registration`
   column-revoked); the **first non-legacy fishery
   factories** in `packages/db/src/factories/` (all current factories are `legacy_` —
-  the battery needs user/wallet/job/shared-link at minimum). *Acc:* migrations
+  the battery needs user/wallet/job/shared-link at minimum). _Acc:_ migrations
   shape-tested; UPDATE/DELETE/TRUNCATE on `admin_audit` raise (test); a write attempt
   through the SQL-panel role is refused and the credential carve-outs hold (test);
   factories build valid rows; contracts
-  typecheck with the exhaustiveness test ready to consume them. *Owns:*
+  typecheck with the exhaustiveness test ready to consume them. _Owns:_
   `packages/shared/src/admin/**`, `packages/db/**`.
 - **A2a identity barrel helpers** ⚠️ — `lockUserWithinTx`/`unlockUserWithinTx`
   (reason-parameterized; the only existing lock write is chargeback-specific and
   unexported, and **no unlock exists anywhere**), barrel-exported for the admin slice
   (`users` is identity's table — single-writer; `revokeAllSessions` +
-  `evictUserBestEffort` are already exported). *Acc:* lock/unlock round-trip tests incl.
-  the paired-null check constraint; barrel exports typed. *Owns:* `slices/identity/**`.
+  `evictUserBestEffort` are already exported). _Acc:_ lock/unlock round-trip tests incl.
+  the paired-null check constraint; barrel exports typed. _Owns:_ `slices/identity/**`.
 - **A2b conversations admin share revoke/unrevoke** ⚠️ — a published
   authorization-only revoke/unrevoke write per the §9 ruling (flip `revokedAt`, mark the
   guest member left, expose the eviction hook; no rotation, no member-privilege gate) —
   the existing `revokeSharedLink` is unexported and demands member privilege + a client
-  rotation body. *Acc:* revoked link refused at the public read (lazy enforcement
+  rotation body. _Acc:_ revoked link refused at the public read (lazy enforcement
   verified); unrevoke restores; the deviation documented as a load-bearing comment.
-  *Owns:* `slices/conversations/**`.
+  _Owns:_ `slices/conversations/**`.
 - **A2c jobs redrive/discard/restore** — `lib/jobs` helpers implementing the documented
   redrive contract (dead→pending **with** `claims`/`failures`/`nextAttemptAt` reset
   together — `claim.ts` documents this; no helper exists), discard/restore over the new
   `discardedAt` marker, and the discarded-rows retention-prune entry (2026-07-03
-  amendment semantics). *Acc:* redrive of a dead row re-executes exactly once;
+  amendment semantics). _Acc:_ redrive of a dead row re-executes exactly once;
   status-only redrive is impossible through the helper; discarded rows prune on
-  retention, undischarged dead rows never do. *Owns:* `lib/jobs/**`,
+  retention, undischarged dead rows never do. _Owns:_ `lib/jobs/**`,
   `apps/api/src/jobs/retention-entries*`. (dep A1)
 - **A2d models disable gating** — `admin_disabled_at` honored by `listDescriptors`
   **and at turn-time model resolution** (typed refusal — hiding alone leaves direct API
-  selection open); a refresh non-clobber test (verified: the upsert touches only
-  `descriptor`). *Acc:* a disabled model is invisible in listings AND refused at turn
-  admission with a typed error; refresh preserves the flag. *Owns:* `slices/models/**`.
+  selection open); a refresh non-clobber test (the refresh writes the descriptor and the derived
+  exclusion columns; `admin_disabled_at` is in no refresh set clause). _Acc:_ a disabled model is invisible in listings AND refused at turn
+  admission with a typed error; refresh preserves the flag. _Owns:_ `slices/models/**`.
   (dep A1)
 - **A2e notifications templates** — the admin op-notification email template + the
   daily-digest template (compose-with-`EmailSender.send` pattern; no one-shot sender
-  exists). *Acc:* templates render; send path is best-effort (a failed Result is logged,
-  never thrown). *Owns:* `slices/notifications/**`.
+  exists). _Acc:_ templates render; send path is best-effort (a failed Result is logged,
+  never thrown). _Owns:_ `slices/notifications/**`.
 - **A3 Ops engine + registry + harness** ⚠️ — the registry (the Iron Law gate: a durable
   mutation without a registered inverse is rejected at registration), the engine
   (engine-owned `SettlementTx` via the shared `lib/idempotency` helper, audit-in-tx,
@@ -634,24 +636,24 @@ non-GUI lever.
   watermark bumps and best-effort socket eviction run after commit, per the §9
   `user.lock` ruling), the `describeAdminOp` harness + registry exhaustiveness test, the
   arch rule + lint extension (no external calls and no raw Drizzle in op bodies; ops
-  imported only by the registry). *Acc:* registry rejects an inverse-less durable
+  imported only by the registry). _Acc:_ registry rejects an inverse-less durable
   mutation (test); preview≡execute and audit-atomicity hold for a fixture op under
   injected failure; a second undo of the same audit row fails the `undoes` unique claim
   (test); ephemeral effects demonstrably run only after commit (test); the harness runs
-  the full §12 battery against the fixture op. *Owns:* `slices/admin/**` (minus
+  the full §12 battery against the fixture op. _Owns:_ `slices/admin/**` (minus
   `domain/operations/`), `packages/config` extension + arch-rule files. (dep A1)
 - **A4a Money ops** ⚠️ — `wallet.credit`/`wallet.clawback` composing the `BillingStores`
   within-tx methods (they are port methods, not free exports: `lockWalletWithinTx`,
   `insertLedgerLegsIfAbsentWithinTx` — promo/clawback kinds and the `promo` house
-  account already exist) + `writeThroughSnapshot`. *Acc:* full §12 battery incl.
+  account already exist) + `writeThroughSnapshot`. _Acc:_ full §12 battery incl.
   interleaving invariance; conservation clean after execute+undo
-  (`runConservationAudit`); snapshot write-through verified. *Owns:*
+  (`runConservationAudit`); snapshot write-through verified. _Owns:_
   `slices/admin/domain/operations/**`. (dep A3)
 - **A4b Remaining ops** ⚠️ — `user.lock`/`user.unlock` (auto-revoke per §9),
   `sessions.revokeAll`, `job.redrive`, `job.discard`/`job.restore`,
   `model.disable`/`model.enable`, `share.revoke`/`share.unrevoke`, each on the A2
-  helpers. *Acc:* full §12 battery green for every op; a locked user's live session is
-  dead at the next request (watermark verified). *Owns:*
+  helpers. _Acc:_ full §12 battery green for every op; a locked user's live session is
+  dead at the next request (watermark verified). _Owns:_
   `slices/admin/domain/operations/**` (serialized after A4a — shared registry wiring).
   (dep A4a, A2a–e)
 - **A5 HTTP surface** ⚠️ — the `'admin'` route class (the exhaustive `match` in
@@ -661,10 +663,10 @@ non-GUI lever.
   `CF_ACCESS_AUD`, the dev JWKS key — production carries no dev signing key), the §18
   dev-admin mint route (`dev-only` class), the generic ops routes (`GET /ops`,
   `POST /ops/:name/preview|execute`), the `app.ts` mount + wrangler hostname route, and
-  the `jose` dependency. *Acc:* §12 authz-denial battery (no/invalid/wrong-AUD/
+  the `jose` dependency. _Acc:_ §12 authz-denial battery (no/invalid/wrong-AUD/
   non-allowlisted JWT ⇒ 401, zero effect); the fixture op reachable end-to-end over HTTP
   with real jose validation in the loop; dev mint works in dev and 404s in production.
-  *Owns:* `slices/admin/routes.ts`, `lib/context/route-class.ts` + `principal*`,
+  _Owns:_ `slices/admin/routes.ts`, `lib/context/route-class.ts` + `principal*`,
   `middleware/pipeline-admin*`, `app.ts`, `apps/api/wrangler.toml`,
   `packages/shared/src/env.config.ts`, `apps/api/package.json` (jose). (dep A3)
 - **A6 Reads: Customer-360 + dashboard + jobs queue + audit search + SQL panel** ⚠️ —
@@ -672,9 +674,9 @@ non-GUI lever.
   jobs-queue read, audit search (`undoes`/`undone-by` threading), read-audit rows (one
   coarse row per 360 view), read rate-limit entries + volume caps, and the SQL-panel
   backend on the SELECT-only role (second connection string; every query text audited;
-  counts toward the same read-volume caps). *Acc:* a 360 view writes a read-audit row;
+  counts toward the same read-volume caps). _Acc:_ a 360 view writes a read-audit row;
   the read rate limit trips (test); a write through the SQL panel is refused (test);
-  panel queries hit the §10 indexes. *Owns:* `slices/admin/domain/customer-360*`,
+  panel queries hit the §10 indexes. _Owns:_ `slices/admin/domain/customer-360*`,
   `slices/admin/routes.ts` (read routes; serialized after A5), the admin rate-limit
   adapter. (dep A5)
 - **A7 Seed + notify + Access-log cron** — the single-seed op-target states (dead job,
@@ -683,37 +685,37 @@ non-GUI lever.
   best-effort mutation notification + daily digest wiring (A2e templates); the
   **Access-log pull cron** (~6-hourly per §5; behind a port with a fake adapter — the
   real Cloudflare API client is not locally exercisable, per §18's honest boundary; adds
-  a Cloudflare API token env entry). *Acc:* every op's target state exists after
+  a Cloudflare API token env entry). _Acc:_ every op's target state exists after
   `db:seed`; digest renders from seeded audit rows; the cron entry registers on its
-  cadence with the fake adapter covered by tests. *Owns:* `scripts/seed*`, root
+  cadence with the fake adapter covered by tests. _Owns:_ `scripts/seed*`, root
   `package.json` scripts, `apps/api/src/jobs/**` + `scheduled.ts`. (dep A5)
-- **A8 SPA shell + op surfaces** *(follow-up run)* — scaffold `apps/admin` (Vite,
+- **A8 SPA shell + op surfaces** _(follow-up run)_ — scaffold `apps/admin` (Vite,
   TanStack Router/Query, `hc<AppType>` client, `TEST_IDS`, the dev fetch wrapper
   attaching the dev-mint JWT, **joins `pnpm dev`** — §18); the assets-only Worker +
   route config (`workers_dev = false`); the OpModal (form → preview → execute / undo),
   generic `<OpForm>`, `<DiffList>`, the ⌘K palette, the auto-generated ops catalog.
-  *Acc:* every §9 op executable end-to-end with preview and undo from the UI; in-modal
+  _Acc:_ every §9 op executable end-to-end with preview and undo from the UI; in-modal
   retry reuses the minted `Idempotency-Key` (test); palette reaches any op and screen.
-  *Owns:* `apps/admin/**`, the admin assets wrangler config. (dep A5, A6)
-- **A9 SPA screens** *(follow-up run)* — Dashboard (health strip + recent-actions feed
+  _Owns:_ `apps/admin/**`, the admin assets wrangler config. (dep A5, A6)
+- **A9 SPA screens** _(follow-up run)_ — Dashboard (health strip + recent-actions feed
   with undo), Customer 360 (independent panels per §8), jobs queue, audit trail
   (`undoes`/`undone-by` threading), models, read-only SQL panel; `docs/DESIGN.md`
-  §Admin-app compliance pass via the frontend-design / design-review loop. *Acc:*
+  §Admin-app compliance pass via the frontend-design / design-review loop. _Acc:_
   per-panel failure isolation (test); palette reaches any user by email/id; audit trail
-  filters by actor/action/target/date. *Owns:* `apps/admin/**` (screens; serialized
+  filters by actor/action/target/date. _Owns:_ `apps/admin/**` (screens; serialized
   after A8). (dep A8)
-- **A10 Admin e2e** *(follow-up run)* — own Playwright project: Access faked at the real
+- **A10 Admin e2e** _(follow-up run)_ — own Playwright project: Access faked at the real
   JWKS seam (the suite mints JWTs so the actual validation code runs); preview →
   execute → audit-row → undo → audit-thread assertions; denied-op and guardrail-trip
-  specs; the accessibility checks the existing suite applies. *Acc:* suite green in CI.
-  *Owns:* the admin e2e project under `e2e/**`. (dep A9)
+  specs; the accessibility checks the existing suite applies. _Acc:_ suite green in CI.
+  _Owns:_ the admin e2e project under `e2e/**`. (dep A9)
 - **A11 Founder runbook + ceremony checklist** (docs) — the enrollment-ceremony
   writeup, break-glass runbook, drill schedule, and the founder-physical checklist:
   create the Access app + AAGUID restriction with a policy carrying **only** the
   email-allowlist + hardware-key rule and **no Service-Auth rule** (the config side of
   the Single Auth Path Law — §6), enroll 2× YubiKeys, mint the Neon SQL-panel role
   password + Cloudflare secrets. The physical performance of the ceremony and drills is
-  the founder's, never an agent's. *Owns:* runbook artifacts under `docs/plans/`.
+  the founder's, never an agent's. _Owns:_ runbook artifacts under `docs/plans/`.
 
 Wave order: **A1 → (A2a–e ∥ A3) → (A4a → A4b ∥ A5) → (A6 ∥ A7)**, then in a follow-up
 run **A8 → A9 → A10**; A11 anytime. Runs after T4.5, ∥ T4.9 (no glob collision — legacy
@@ -726,19 +728,19 @@ deletion, T4.7, runs last as Phase 6, after Phase 5). Tasks sharing a dir serial
 
 The why-it-changed record. Original text in git history (tombstoned 2026-07-05).
 
-| Dimension | Superseded §14 / Phase 5 | This design | Why |
-|---|---|---|---|
-| Workers | Separate `apps/admin-api` + service-binding RPC | One product Worker, admin slice + `'admin'` route class | The RPC isolated a near-empty doorman; creds/power lived product-side either way; Access-at-edge + JWT is the same wall minus a deploy target and a net-new RPC pattern |
-| Step-up auth | Bespoke in-app WebAuthn (separate registration) | Access Independent MFA (YubiKey, AAGUID-pinned, every login) | Deletes the largest zero-basis build; hardware-bound beats synced platform passkeys; enrollment locked after ceremony |
-| Safety model | Four tiers of delay-and-notify (2 m/10 m/30 m/24 h) + cancellable jobs + notify-all | **Reversibility Iron Law**: instant execute + preview + perfect undo; no irreversible ops exist | Founder ruling. Deletes `admin.executeAction.v1`/`admin.notify.v1` and the pending-queue machinery; fixes the 30-minute support-credit UX; undo > delay for everything reversible |
-| Irreversible actions | 24 h-delayed deletion; step-up refunds | None. Deletion stays user-initiated; card refunds via the Helcim dashboard + a ledger op | Iron Law consequence; GDPR-coherent |
-| Audit | `admin_audit` + daily WORM R2 export + per-batch SHA-256 | `admin_audit` + update/delete/truncate-raising triggers (INSERT-only role ruled out at build time — §10); off-vendor copy = existing Kopia→B2 | The WORM export was a second delivery path for what backups already cover; re-entry: SOC 2 or first non-founder admin |
-| Break-glass | `BREAK_GLASS` deploy-flag auth mode | Physical ladder (backup key → dashboard → offline creds) + drills | A deploy-flag break-glass is exactly what a GitHub attacker can trigger |
-| Action shape | Hand-enumerated RPC methods, tiers keyed by method name | Typed op registry: define once → UI + API + audit + tests | Keeps §14's best idea (server-side-keyed authority), generalizes it; the DevEx keystone |
-| Reads | Scoped SELECT + audit only | + volume caps, reason-gated exports, audited read-only SQL panel | The privacy crown jewel got §14's weakest treatment |
-| UI scope | Panels incl. `modelOverrides` CRUD + ZDR aging | Customer-360-centric; those panels are dead (OpenRouter migration deleted the tables) | §14 predates the OpenRouter amendment |
-| Notification | Blocking control (a Resend outage froze mutations) | Best-effort email + daily digest, never a control | Controls cannot hang on email delivery |
-| Unchanged | Access-gated · in-Worker jose JWT · audit written by the credential-holder on execution · authority keyed server-side · admins are not product users · no impersonation · no content access · the T5.1→T5.2 launch gate | — | §14's right ideas all survive |
+| Dimension            | Superseded §14 / Phase 5                                                                                                                                                                                                | This design                                                                                                                                   | Why                                                                                                                                                                               |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workers              | Separate `apps/admin-api` + service-binding RPC                                                                                                                                                                         | One product Worker, admin slice + `'admin'` route class                                                                                       | The RPC isolated a near-empty doorman; creds/power lived product-side either way; Access-at-edge + JWT is the same wall minus a deploy target and a net-new RPC pattern           |
+| Step-up auth         | Bespoke in-app WebAuthn (separate registration)                                                                                                                                                                         | Access Independent MFA (YubiKey, AAGUID-pinned, every login)                                                                                  | Deletes the largest zero-basis build; hardware-bound beats synced platform passkeys; enrollment locked after ceremony                                                             |
+| Safety model         | Four tiers of delay-and-notify (2 m/10 m/30 m/24 h) + cancellable jobs + notify-all                                                                                                                                     | **Reversibility Iron Law**: instant execute + preview + perfect undo; no irreversible ops exist                                               | Founder ruling. Deletes `admin.executeAction.v1`/`admin.notify.v1` and the pending-queue machinery; fixes the 30-minute support-credit UX; undo > delay for everything reversible |
+| Irreversible actions | 24 h-delayed deletion; step-up refunds                                                                                                                                                                                  | None. Deletion stays user-initiated; card refunds via the Helcim dashboard + a ledger op                                                      | Iron Law consequence; GDPR-coherent                                                                                                                                               |
+| Audit                | `admin_audit` + daily WORM R2 export + per-batch SHA-256                                                                                                                                                                | `admin_audit` + update/delete/truncate-raising triggers (INSERT-only role ruled out at build time — §10); off-vendor copy = existing Kopia→B2 | The WORM export was a second delivery path for what backups already cover; re-entry: SOC 2 or first non-founder admin                                                             |
+| Break-glass          | `BREAK_GLASS` deploy-flag auth mode                                                                                                                                                                                     | Physical ladder (backup key → dashboard → offline creds) + drills                                                                             | A deploy-flag break-glass is exactly what a GitHub attacker can trigger                                                                                                           |
+| Action shape         | Hand-enumerated RPC methods, tiers keyed by method name                                                                                                                                                                 | Typed op registry: define once → UI + API + audit + tests                                                                                     | Keeps §14's best idea (server-side-keyed authority), generalizes it; the DevEx keystone                                                                                           |
+| Reads                | Scoped SELECT + audit only                                                                                                                                                                                              | + volume caps, reason-gated exports, audited read-only SQL panel                                                                              | The privacy crown jewel got §14's weakest treatment                                                                                                                               |
+| UI scope             | Panels incl. `modelOverrides` CRUD + ZDR aging                                                                                                                                                                          | Customer-360-centric; those panels are dead (OpenRouter migration deleted the tables)                                                         | §14 predates the OpenRouter amendment                                                                                                                                             |
+| Notification         | Blocking control (a Resend outage froze mutations)                                                                                                                                                                      | Best-effort email + daily digest, never a control                                                                                             | Controls cannot hang on email delivery                                                                                                                                            |
+| Unchanged            | Access-gated · in-Worker jose JWT · audit written by the credential-holder on execution · authority keyed server-side · admins are not product users · no impersonation · no content access · the T5.1→T5.2 launch gate | —                                                                                                                                             | §14's right ideas all survive                                                                                                                                                     |
 
 ---
 
@@ -881,8 +883,8 @@ Confirmed missing — each now owned by a named task:
   **`BillingStores` port methods, not free barrel exports** — the ops compose a stores
   instance + `SettlementTx`, no billing changes needed — **A4a**.
 - `model.disable` needs enforcement at **turn-time model resolution**, not only
-  `listDescriptors` (hiding alone leaves direct API selection open); the catalog-refresh
-  upsert touches only the `descriptor` column, so the new flag survives refresh —
+  `listDescriptors` (hiding alone leaves direct API selection open); `admin_disabled_at`
+  appears in no refresh set clause, so the new flag survives refresh —
   **A2d**.
 - Notifications has templates + `EmailSender.send` but no admin templates — **A2e**.
 - The seed contains none of the op-target states (no dead job, locked user,
@@ -966,11 +968,12 @@ runs; unowned by this build, worth its own diagnose-and-fix pass).
 
 **Outstanding before launch:** A8–A9 (the SPA), A10 (admin e2e), and the A11
 founder-physical checklist — the Access app + AAGUID-restricted policy (email allowlist
-+ hardware key only, no Service-Auth rule), the two-YubiKey enrollment ceremony and
-drills, the Neon `admin_sql_panel` LOGIN password, and the production secrets
-(`ADMIN_SQL_PANEL_DATABASE_URL`, `CLOUDFLARE_ACCESS_LOG_API_TOKEN`,
-`CLOUDFLARE_ACCOUNT_ID`). Until those secrets exist the production Access-log cron
-fail-fasts with a named, Sentry-visible error — deliberate, not a defect.
+
+- hardware key only, no Service-Auth rule), the two-YubiKey enrollment ceremony and
+  drills, the Neon `admin_sql_panel` LOGIN password, and the production secrets
+  (`ADMIN_SQL_PANEL_DATABASE_URL`, `CLOUDFLARE_ACCESS_LOG_API_TOKEN`,
+  `CLOUDFLARE_ACCOUNT_ID`). Until those secrets exist the production Access-log cron
+  fail-fasts with a named, Sentry-visible error — deliberate, not a defect.
 
 ## Amendment — 2026-07-16: SPA build complete (A8–A9) + design gate closed
 

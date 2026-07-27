@@ -103,12 +103,14 @@ export function listDescriptors(
     (latest): Result<ModelDescriptor[], DomainError> => {
       const exposed: ModelDescriptor[] = [];
       for (const [modelId, stored] of latest) {
-        // The admin kill switch: a disabled row is deliberately hidden — no
-        // alert (an operator decision, not data corruption). Every exposure and
-        // turn-time resolution surface derives from this read (`listModels`,
+        // The two unsellable authorities, both deliberately silent — an
+        // operator decision and a derived admission verdict, neither data
+        // corruption (BILLING.md §Catalog Admission 4: exposure filters on
+        // `excludedReason IS NULL AND adminDisabledAt IS NULL`). Every exposure
+        // and turn-time resolution surface derives from this read (`listModels`,
         // `createModelPricingResolver`/`snapshotResolver` snapshots), so the
         // gate holds everywhere at once.
-        if (stored.adminDisabledAt !== null) continue;
+        if (stored.adminDisabledAt !== null || stored.excludedReason !== null) continue;
         const outcome = rowOutcome(modelId, stored, deps.telemetry);
         if (outcome.kind === 'refused') return err(outcome.error);
         if (outcome.kind === 'exposed') exposed.push(outcome.descriptor);

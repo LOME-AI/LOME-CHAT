@@ -1,9 +1,14 @@
 /**
- * Build-time guards on the merged web bundle (`apps/web/dist`), run by
- * `buildWebBundle` right after the marketing merge so prod, e2e, and the
- * preview build all pay them.
+ * Build-time guards on a built app bundle, run by each app's build script right
+ * after its dist is final, so prod, e2e, and the preview build all pay them.
  *
- * Four classes of problem it turns into a build failure:
+ * Five classes of problem it turns into a build failure:
+ *   - TTS shipped by an app that never asked for it: whether an app carries the
+ *     on-device speech engine is a declaration here (`APPS_SHIPPING_TTS`), not
+ *     whatever the module graph happened to drag in. The bundler emits the TTS
+ *     worker and its ORT runtime at transform time, before tree-shaking, and
+ *     emitted assets are never collected again — so an accidental import costs
+ *     tens of megabytes with no other symptom.
  *   - onnxruntime-web bloat: the TTS worker must reference only the
  *     self-hosted `/ort/` runtime. A bundler-emitted copy (or a built chunk
  *     still pointing at one) means the wasm ships two or three times — tens of
@@ -28,6 +33,31 @@ import { ORT_DIR, resolveOrtAssets, type OrtAsset } from './lib/ort-assets-plugi
 // Cloudflare Pages hard limits: 25 MiB per file, 20,000 files per deployment.
 export const PAGES_MAX_FILE_BYTES = 26_214_400;
 export const PAGES_MAX_FILE_COUNT = 20_000;
+
+/**
+ * Which apps ship the on-device TTS engine, keyed by workspace-relative app
+ * directory. The single place the answer is written down: every verified build
+ * reads it through `appBundleOptions`, so no call site can disagree with
+ * another. `apps/crawler-view` has no build script yet and is listed anyway, so
+ * the guard is already in force the day it gets one.
+ */
+const APPS_SHIPPING_TTS = new Map<string, boolean>([
+  // The merged web + marketing bundle: blog read-aloud and chat read-aloud.
+  ['apps/web', true],
+  ['apps/admin', false],
+  ['apps/crawler-view', false],
+]);
+
+export function appBundleOptions(rootDir: string, appDir: string): VerifyWebBundleOptions {
+  const shipsTts = APPS_SHIPPING_TTS.get(appDir);
+  if (shipsTts === undefined) {
+    throw new Error(
+      `${appDir} has no declared TTS expectation — an app whose bundle is verified must ` +
+        `declare whether it ships the on-device TTS engine`
+    );
+  }
+  return { distributionDir: path.join(rootDir, appDir, 'dist'), shipsTts };
+}
 
 /**
  * `packages/ui` declares onnxruntime-common purely to decide which copy pnpm
@@ -87,12 +117,21 @@ export interface BundleFile {
 export interface VerifyWebBundleOptions {
   readonly distributionDir: string;
   /**
+   * Whether this bundle is expected to carry the TTS engine. Required rather
+   * than defaulted: a default would be a second declaration of the answer that
+   * `APPS_SHIPPING_TTS` already holds.
+   */
+  readonly shipsTts: boolean;
+  /**
    * Defaults to the ORT runtime of the installed transformers — the same
    * resolution `ortAssetsPlugin` emits from, so the check compares the bundle
    * against exactly what the build was supposed to copy.
    */
   readonly ortAssets?: readonly OrtAsset[];
 }
+
+/** The seam each build script injects, so its own tests need no real dist. */
+export type VerifyBundle = (options: VerifyWebBundleOptions) => Promise<void>;
 
 async function listBundleFiles(directory: string, prefix = ''): Promise<BundleFile[]> {
   const entries = await fs.readdir(directory, { withFileTypes: true });
@@ -325,6 +364,27 @@ async function checkWorkerMetaProperty(files: readonly BundleFile[]): Promise<st
   return violations;
 }
 
+/**
+ * The whole expectation for a bundle declared TTS-free: neither the worker
+ * chunk nor any ORT runtime file exists. The engine is unreachable from the
+ * app's module graph or it is not — there is no partial state, because the
+ * worker is emitted from the `new Worker(new URL(…))` site at transform time
+ * and pulls its runtime with it.
+ */
+function checkNoTtsArtifacts(files: readonly BundleFile[]): string[] {
+  return files
+    .filter((file) => {
+      const name = path.posix.basename(file.relativePath);
+      return WORKER_CHUNK.test(name) || ORT_RUNTIME_FILE.test(name);
+    })
+    .map(
+      (file) =>
+        `TTS artifact in a bundle declared TTS-free: ${file.relativePath} ` +
+        `(${String(file.bytes)} B) — something in this app's module graph reaches ` +
+        `the TTS engine, and the bundler emits the worker before tree-shaking`
+    );
+}
+
 export function checkPagesLimits(files: readonly BundleFile[]): string[] {
   const violations = files
     .filter((file) => file.bytes > PAGES_MAX_FILE_BYTES)
@@ -345,8 +405,17 @@ export function checkPagesLimits(files: readonly BundleFile[]): string[] {
 export async function collectWebBundleViolations(
   options: VerifyWebBundleOptions
 ): Promise<string[]> {
-  const assets = options.ortAssets ?? resolveOrtAssets();
   const files = await listBundleFiles(options.distributionDir);
+  if (!options.shipsTts) {
+    // Every ORT and worker check below presupposes the engine is present: the
+    // self-hosted check requires a `dist/ort/` tree, and two others fail
+    // deliberately on an empty match set so they cannot pass vacuously. The
+    // zero-artifact assertion replaces all four and is strictly stronger — a
+    // bundle with no ORT file can carry neither a stray copy of one nor a
+    // chunk referencing one, since the reference is what emits the asset.
+    return [...checkNoTtsArtifacts(files), ...checkPagesLimits(files)];
+  }
+  const assets = options.ortAssets ?? resolveOrtAssets();
   return [
     ...(await checkSelfHostedRuntime(options.distributionDir, assets)),
     ...checkStrayRuntimeCopies(files),

@@ -11,6 +11,7 @@ import {
   modelEntryFixture,
   videoModelFixture,
 } from './gateway-fixtures.js';
+import { createCatalogSightingRecorder } from '../adapters/catalog-lifecycle.js';
 import { refreshCatalog } from './refresh.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { SafeLogFields } from '../../../lib/telemetry/index.js';
@@ -105,6 +106,7 @@ function depsFor(
     gatewayBaseUrl: TEST_GATEWAY_BASE_URL,
     telemetry: recordingTelemetry().telemetry,
     now: () => NOW,
+    recordSighting: createCatalogSightingRecorder(overrides.db ?? db),
     ...overrides,
   };
 }
@@ -127,6 +129,26 @@ async function descriptorsFor(modelId: string): Promise<unknown[]> {
     .from(modelCatalog)
     .where(inArray(modelCatalog.modelId, [modelId]));
   return rows.map((row) => row.descriptor);
+}
+
+interface LifecycleRow {
+  readonly excludedReason: string | null;
+  readonly excludedAt: Date | null;
+  readonly lastSeenAt: Date;
+  readonly adminDisabledAt: Date | null;
+}
+
+async function lifecycleFor(modelId: string): Promise<LifecycleRow | undefined> {
+  const rows = await db
+    .select({
+      excludedReason: modelCatalog.excludedReason,
+      excludedAt: modelCatalog.excludedAt,
+      lastSeenAt: modelCatalog.lastSeenAt,
+      adminDisabledAt: modelCatalog.adminDisabledAt,
+    })
+    .from(modelCatalog)
+    .where(inArray(modelCatalog.modelId, [modelId]));
+  return rows[0];
 }
 
 async function rankFor(modelId: string): Promise<number | null | undefined> {
@@ -164,7 +186,7 @@ describe('refreshCatalog', () => {
     expect(await descriptorsFor(modelId)).toHaveLength(1);
   });
 
-  it('writes nothing when a second refresh sees identical metadata', async () => {
+  it('rewrites no descriptor when a second refresh sees identical metadata', async () => {
     const modelId = freshModelId('unchanged');
     expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
     const second = await unwrap(refreshCatalog(depsFor(languageFetch(modelId))));
@@ -570,5 +592,175 @@ describe('refreshCatalog', () => {
     await closed.$client.end();
     const result = await refreshCatalog(depsFor(languageFetch(modelId), { db: closed }));
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+});
+
+/**
+ * A zero combined rate — the one commercial exclusion with no exemption
+ * (BILLING.md §Catalog Admission 1). The price floor and the age cutoff both
+ * yield to the top-context exemption, and a single-model fixture IS its own top
+ * context percentile, so only an unconditional reason is reachable here.
+ */
+const UNSELLABLE = { prompt: '0', completion: '0' };
+
+/** A handle whose UPDATE rejects, so the sighting write's error channel is real. */
+const failingUpdateDb = new Proxy(db, {
+  get(target, property, receiver): unknown {
+    if (property === 'update') {
+      return () => ({ set: () => ({ where: () => Promise.reject(new Error('update failed')) }) });
+    }
+    const value: unknown = Reflect.get(target, property, receiver);
+    return typeof value === 'function'
+      ? (value as (...inner: unknown[]) => unknown).bind(target)
+      : value;
+  },
+});
+const LATER = new Date('2026-06-12T01:00:00.000Z');
+
+describe('refreshCatalog exclusion lifecycle', () => {
+  it('marks an already-persisted model that becomes inadmissible', async () => {
+    const modelId = freshModelId('becomes-excluded');
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
+    const summary = await unwrap(
+      refreshCatalog(depsFor(languageFetch(modelId, UNSELLABLE), { now: () => LATER }))
+    );
+    expect(summary.excludedByReason['zero-priced']).toBe(1);
+    expect(await lifecycleFor(modelId)).toMatchObject({
+      excludedReason: 'zero-priced',
+      excludedAt: LATER,
+      lastSeenAt: LATER,
+    });
+  });
+
+  it('keeps the marked row rather than deleting it', async () => {
+    const modelId = freshModelId('mark-keeps-row');
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId, UNSELLABLE))))).toBe(true);
+    expect(await descriptorsFor(modelId)).toHaveLength(1);
+  });
+
+  it('clears the mark when a marked model becomes admissible again', async () => {
+    const modelId = freshModelId('returns');
+    await db.insert(modelCatalog).values({
+      modelId,
+      descriptor: 'stale',
+      excludedReason: 'zero-priced',
+      excludedAt: NOW,
+    });
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId), { now: () => LATER })))).toBe(
+      true
+    );
+    expect(await lifecycleFor(modelId)).toMatchObject({
+      excludedReason: null,
+      excludedAt: null,
+      lastSeenAt: LATER,
+    });
+  });
+
+  it('leaves admin_disabled_at untouched when it clears the mark', async () => {
+    const modelId = freshModelId('clear-keeps-kill-switch');
+    const disabledAt = new Date('2026-05-01T00:00:00.000Z');
+    await db.insert(modelCatalog).values({
+      modelId,
+      descriptor: 'stale',
+      excludedReason: 'zero-priced',
+      excludedAt: NOW,
+      adminDisabledAt: disabledAt,
+    });
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
+    expect(await lifecycleFor(modelId)).toMatchObject({
+      excludedReason: null,
+      adminDisabledAt: disabledAt,
+    });
+  });
+
+  it('leaves admin_disabled_at untouched when it marks a row excluded', async () => {
+    const modelId = freshModelId('mark-keeps-kill-switch');
+    const disabledAt = new Date('2026-05-01T00:00:00.000Z');
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
+    await db
+      .update(modelCatalog)
+      .set({ adminDisabledAt: disabledAt })
+      .where(inArray(modelCatalog.modelId, [modelId]));
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId, UNSELLABLE))))).toBe(true);
+    expect(await lifecycleFor(modelId)).toMatchObject({
+      excludedReason: 'zero-priced',
+      adminDisabledAt: disabledAt,
+    });
+  });
+
+  it('writes no row for a model that was never admissible', async () => {
+    const modelId = freshModelId('never-admitted');
+    const summary = await unwrap(refreshCatalog(depsFor(languageFetch(modelId, UNSELLABLE))));
+    expect(summary.excludedByReason['zero-priced']).toBe(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(0);
+  });
+
+  it('writes no row for a model whose descriptor is unbuildable', async () => {
+    const modelId = freshModelId('unbuildable');
+    const fetch = catalogFetch({
+      models: [modelEntryFixture({ id: modelId, created: 0 })],
+      zdrModelIds: [modelId],
+    });
+    const summary = await unwrap(refreshCatalog(depsFor(fetch)));
+    expect(summary.excludedByReason['missing-release-date']).toBe(1);
+    expect(await descriptorsFor(modelId)).toHaveLength(0);
+  });
+
+  it('keeps the first excluded_at across repeat refreshes', async () => {
+    const modelId = freshModelId('excluded-since');
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId, UNSELLABLE))))).toBe(true);
+    expect(
+      await isOk(refreshCatalog(depsFor(languageFetch(modelId, UNSELLABLE), { now: () => LATER })))
+    ).toBe(true);
+    expect(await lifecycleFor(modelId)).toMatchObject({ excludedAt: NOW, lastSeenAt: LATER });
+  });
+
+  it('clears the mark on a row whose descriptor is unchanged', async () => {
+    const modelId = freshModelId('returns-unchanged');
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
+    await db
+      .update(modelCatalog)
+      .set({ excludedReason: 'non-conversational', excludedAt: NOW })
+      .where(inArray(modelCatalog.modelId, [modelId]));
+    const summary = await unwrap(refreshCatalog(depsFor(languageFetch(modelId))));
+    expect(summary.unchanged).toBe(1);
+    expect(await lifecycleFor(modelId)).toMatchObject({
+      excludedReason: null,
+      excludedAt: null,
+    });
+  });
+
+  it('fails unavailable when marking an excluded row fails', async () => {
+    const modelId = freshModelId('mark-fails');
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
+    const result = await refreshCatalog(
+      depsFor(languageFetch(modelId, UNSELLABLE), {
+        recordSighting: createCatalogSightingRecorder(failingUpdateDb),
+      })
+    );
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+
+  it('fails unavailable when re-sighting an unchanged row fails', async () => {
+    const modelId = freshModelId('sighting-fails');
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
+    const result = await refreshCatalog(
+      depsFor(languageFetch(modelId), {
+        recordSighting: createCatalogSightingRecorder(failingUpdateDb),
+      })
+    );
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+
+  it('advances last_seen_at for a model whose descriptor is unchanged', async () => {
+    const modelId = freshModelId('seen-unchanged');
+    expect(await isOk(refreshCatalog(depsFor(languageFetch(modelId))))).toBe(true);
+    const summary = await unwrap(
+      refreshCatalog(depsFor(languageFetch(modelId), { now: () => LATER }))
+    );
+    expect(summary.unchanged).toBe(1);
+    expect(await lifecycleFor(modelId)).toMatchObject({ lastSeenAt: LATER });
   });
 });

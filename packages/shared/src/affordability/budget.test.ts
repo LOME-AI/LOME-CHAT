@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeSafeMaxTokens, generateNotifications, type NotificationInput } from './budget.js';
+import { generateNotifications, type NotificationInput } from './budget.js';
 import { CAPACITY_RED_THRESHOLD, LOW_BALANCE_OUTPUT_TOKEN_THRESHOLD } from './constants.js';
 
 function notifInput(overrides: Partial<NotificationInput> = {}): NotificationInput {
@@ -970,88 +970,6 @@ describe('generateNotifications — comprehensive state audit', () => {
         { text: 'Top up', link: '/billing' },
         { text: ' or try a shorter conversation.' },
       ]);
-    });
-  });
-});
-
-describe('computeSafeMaxTokens', () => {
-  it('returns the budget max when it is below the remaining context', () => {
-    expect(
-      computeSafeMaxTokens({
-        budgetMaxTokens: 5000,
-        modelContextLength: 128_000,
-        estimatedInputTokens: 1000,
-      })
-    ).toBe(5000);
-  });
-
-  it('returns undefined when the budget max meets or exceeds the remaining context', () => {
-    // remainingContext = 10_000 - 1_000 = 9_000; budget 9_000 >= 9_000 -> omit.
-    expect(
-      computeSafeMaxTokens({
-        budgetMaxTokens: 9000,
-        modelContextLength: 10_000,
-        estimatedInputTokens: 1000,
-      })
-    ).toBeUndefined();
-  });
-
-  it('returns undefined when the budget max exceeds the remaining context', () => {
-    expect(
-      computeSafeMaxTokens({
-        budgetMaxTokens: 50_000,
-        modelContextLength: 8000,
-        estimatedInputTokens: 2000,
-      })
-    ).toBeUndefined();
-  });
-
-  describe('provider completion cap (modelMaxOutputTokens)', () => {
-    it('returns the budget max when it is below both the cap and the remaining context', () => {
-      expect(
-        computeSafeMaxTokens({
-          budgetMaxTokens: 5000,
-          modelContextLength: 128_000,
-          estimatedInputTokens: 1000,
-          modelMaxOutputTokens: 8192,
-        })
-      ).toBe(5000);
-    });
-
-    it('returns undefined when the budget max meets the cap and the cap is the tighter ceiling', () => {
-      // The provider enforces its own completion ceiling, so no explicit
-      // param is needed — admission bounds the hold at the cap regardless.
-      expect(
-        computeSafeMaxTokens({
-          budgetMaxTokens: 50_000,
-          modelContextLength: 128_000,
-          estimatedInputTokens: 1000,
-          modelMaxOutputTokens: 8192,
-        })
-      ).toBeUndefined();
-    });
-
-    it('never returns a value exceeding the cap (seeded sweep)', () => {
-      for (let budget = 1; budget <= 20_000; budget += 977) {
-        const result = computeSafeMaxTokens({
-          budgetMaxTokens: budget,
-          modelContextLength: 128_000,
-          estimatedInputTokens: 1000,
-          modelMaxOutputTokens: 8192,
-        });
-        if (result !== undefined) expect(result).toBeLessThanOrEqual(8192);
-      }
-    });
-
-    it('keeps the remaining-context ceiling when it is tighter than the cap', () => {
-      expect(
-        computeSafeMaxTokens({
-          budgetMaxTokens: 9000,
-          modelContextLength: 10_000,
-          estimatedInputTokens: 1000,
-          modelMaxOutputTokens: 50_000,
-        })
-      ).toBeUndefined();
     });
   });
 });

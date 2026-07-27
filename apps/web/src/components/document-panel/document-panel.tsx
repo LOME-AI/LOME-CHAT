@@ -1,12 +1,11 @@
 import * as React from 'react';
 import { X, Code, Eye, Copy, Check, Download, Maximize2, Minimize2 } from 'lucide-react';
-import { Streamdown } from 'streamdown';
-import { code } from '@streamdown/code';
 import { TEST_IDS } from '@hushbox/shared';
 import { Button, cn, useIsMobile } from '@hushbox/ui';
 import { MermaidDiagram } from '@/components/chat/message/mermaid-diagram';
 import { useDocumentStore } from '../../stores/document';
 import { DocumentSandbox } from './document-sandbox';
+import { HighlightedSource } from './highlighted-source';
 import { DocumentRenderStatus, PENDING_PREVIEW_TEXT } from './document-render-status';
 import { getFileExtension, isRunnableDocument } from '../../lib/document-parser';
 import type { Document } from '../../lib/document-parser';
@@ -148,36 +147,6 @@ function PanelHeader({
 interface DocumentContentProps {
   document: Document;
   showRaw: boolean;
-}
-
-/** Build a fenced code block string, using a fence longer than any backtick run in content */
-function buildFencedCodeBlock(content: string, language?: string): string {
-  let maxRun = 0;
-  let current = 0;
-  for (const char of content) {
-    if (char === '`') {
-      current++;
-      if (current > maxRun) maxRun = current;
-    } else {
-      current = 0;
-    }
-  }
-  const fence = '`'.repeat(Math.max(3, maxRun + 1));
-  /* v8 ignore next -- buildFencedCodeBlock is always called with a string language (a document language or the 'mermaid' literal), so the ?? '' fallback never fires */
-  return `${fence}${language ?? ''}\n${content}\n${fence}`;
-}
-
-function HighlightedSource({
-  content,
-  language,
-}: Readonly<{ content: string; language: string | undefined }>): React.JSX.Element {
-  return (
-    <div data-testid={TEST_IDS.highlightedCode} className="document-panel-code">
-      <Streamdown plugins={{ code }} controls={{ code: false }} animated={false}>
-        {buildFencedCodeBlock(content, language)}
-      </Streamdown>
-    </div>
-  );
 }
 
 /** Whether this document type has a preview to switch to at all. */
@@ -368,7 +337,12 @@ export function DocumentPanel({
       />
 
       <div data-testid={TEST_IDS.documentPanelScroll} className="flex-1 overflow-auto">
-        <div>
+        {/* `h-full` is what a rendered document sizes against: the percentage
+            heights below it — the sandbox view and its iframe — resolve against
+            this box, and an `auto` height here resolves them to nothing. Source
+            taller than the panel overflows it visibly and scrolls in the box
+            above, which is why nothing here clips. */}
+        <div className="h-full">
           {/* Keyed by the selection, not the document id: opening another
               document remounts the content, tearing the sandbox iframe down and
               killing anything running in it, while a streaming document — whose

@@ -30,6 +30,7 @@ import { createConversationRuntime } from './runtime.js';
 import { buildMediaTurnDefinition } from './turn-definition.js';
 import { CHAT_TURN_INPUT } from './constants.js';
 import { createChatStores } from '../adapters/stores.js';
+import { createCatalogSightingRecorder } from '../../models/index.js';
 import type { EpochPublicKeyReader } from './settlement.js';
 import type { Storage } from '../../media/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
@@ -166,6 +167,7 @@ beforeAll(async () => {
     gatewayBaseUrl: TEST_GATEWAY_BASE_URL,
     telemetry: telemetry(),
     now: () => new Date('2026-07-19T00:00:00.000Z'),
+    recordSighting: createCatalogSightingRecorder(db),
   });
   result._unsafeUnwrap();
 });

@@ -703,7 +703,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   (openai/gpt-5 cap=2812, lowest rung 4096, mandatory ⇒ Min resolves UP to 4096,
   4096+1000 > 2812). So classifier picks gpt-5, repair walks down to Min, Min is
   STILL infeasible, dimension exhausted — my termination proof was FALSE
-  (admission proved cap≥1000, not cap≥B_min(m)+1000). (4) DETERMINISM
+  (admission proved cap≥1000, not cap≥B\*min(m)+1000). (4) DETERMINISM
   UNACHIEVABLE TODAY: catalog-store.ts:95 selects with NO ORDER BY, folds into a
   Map by row order, ascendingByPrice returns 0 on ties, 119/212 models in tie
   buckets ⇒ the classifier engine pick and prompt candidate order are functions
@@ -736,14 +736,14 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   shrinks gpt-5's delivered cap 2,812 → 179 tokens even if the classifier picks
   depth 1. No policy knob needed — hold-at-worst-presented ≡ hold-at-worst-
   feasible once ∃-culling exists.
-  **_ BLOCKER FOR THE RULING (live money defect, independent of the design):
+  \*\*\* BLOCKER FOR THE RULING (live money defect, independent of the design):
   the classifier-storage reserve is 11,981,400 nano = 24.0% of a free user's
   DAILY allowance PER TURN, and 97.9% of it prices the classifier prompt + its
   2048-token output as PERSISTED text that is never persisted
   (classifier-line-item.ts:78-84 vs ARCHITECTURE "mid-flow content never rests
   anywhere"; the 4,000-char history excerpt was already charged at its own
   persist). It is subtracted BEFORE culling, so it shrinks every presented set.
-  Founder call: over-reserve defect, or deliberate? _**
+  Founder call: over-reserve defect, or deliberate? \_\*\*
   4 MANDATORY PRE-FIXES regardless of option: deterministic total order on the
   catalog read; eligibility graded on the RESOLVED cheapest corner (culls the
   29/205); ONE effort resolver; classifier's effort set derived from
@@ -1327,7 +1327,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   payload and content stream are independent channels), so the client cannot count it; and a
   client-side estimate would use the deliberately user-adverse tier ratio, putting a number on
   screen that contradicts the provider-reported output tokens beside it.
-- 2026-07-25: docs/BILLING.md now 1343 lines, 24 sections, prettier-clean. Two explorers
+- 2026-07-25: docs/BILLING.md now 24 sections, prettier-clean. Two explorers
   dispatched to map current client and server state for the re-plan; both killed by a session
   limit mid-run and RESUMED FROM TRANSCRIPT per the restart skill (not respawned).
 - 2026-07-25: BILLING.md gained a "Mechanisms rejected, and why" subsection (9 entries with the
@@ -1381,8 +1381,8 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
 - 2026-07-25: Two adversarial plan reviewers returned (omission + insufficiency). Plan AMENDED in
   one pass; 22 -> 24 tasks. ORCHESTRATOR ERRORS CORRECTED:
   (a) B1 was self-contradictory -- "no behaviour change whatsoever" AND "a barrel exporting only the
-  named surface" cannot both hold, because consumers import MINIMUM_OUTPUT_TOKENS, evaluateManifest,
-  planReasoning, priceRequest and turnEffortOptions from the ROOT BARREL today (index.ts export _).
+  named surface" cannot both hold, because consumers import MINIMUM*OUTPUT_TOKENS, evaluateManifest,
+  planReasoning, priceRequest and turnEffortOptions from the ROOT BARREL today (index.ts export *).
   Split into B1 (move, behaviour identity) + NEW B1b (close the export wall, consumer breakage IS
   the work). Also killed a vacuous criterion: "deep paths do not resolve from outside" is ALREADY
   TRUE (no wildcard subpath in the exports map), so it proved nothing.
@@ -1415,10 +1415,10 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   re-partition invariant had no pin AND B6 was deleting its live enforcement (pickClassifiedEffortPlan
   guarantees maxTokens == the held cap, so deleting the upward-resolution bug also deleted the spend
   bound -- B6 now re-establishes B + H == ceiling); the arithmetic vocabulary was unowned
-  (variableRate, fixedCosts, inputStorage-once, e_min, resolved-corner eligibility, inverted
+  (variableRate, fixedCosts, inputStorage-once, e*min, resolved-corner eligibility, inverted
   output-storage ratios, cache-read pricing, web-search worst case, per-unit maxCallCost -- all now
   pinned BY AMOUNT); E1's rule said "component" while the second verdict engine is a HOOK (now
-  deletion + grep-clean, and E1 owns hooks/models/_ where premium access is derived from the balance
+  deletion + grep-clean, and E1 owns hooks/models/* where premium access is derived from the balance
   endpoint and premium rows are REMOVED rather than marked); unowned leaf clauses (trial remaining
   count, deficit-at-payment, Notices 6/7 and two clauses of 9, Smart Model 5/7/8, Multi-Model 4/6,
   Affordability 11) all assigned; B3's brute-force fixture was vacuity-prone (now >=3 models, >=2
@@ -1506,7 +1506,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   admissible.sendable); removed from OptionSet entirely. An affordable-side hold is now
   unrepresentable rather than merely meaningless. Verified: one occurrence in the doc.
   (4) All eight mechanical fixes APPLIED. BILLING.md: invariant renamed `presented ⟺
-  feasible` and scoped to the admissible set at all three sites (:187 block, the notion-3
+feasible` and scoped to the admissible set at all three sites (:187 block, the notion-3
   table cell, the §Scope heading); §What is enforced bullets 2 and 5 rewritten to match
   G1 (code-under-apps/web not "component"; enumerated pinned allowlist, since "nothing
   imports into it" is unimplementable when the barrel is imported by design); "top context
@@ -1523,8 +1523,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   mismatch rather than silently change either side. B3 gained the ruled call pattern, the
   one-call-two-evaluations pin, and the hold-on-the-pair shape; ownership table gained
   shared/src/index.ts (B1b removes, B8 lands); Lane E header corrected to B5/B6/B7/B8.
-  STATE: BILLING.md 1403 lines, plan.md 1063 lines / 25 tasks in 8 lanes, both
-  prettier-clean. Implementer freeze still in force; nothing dispatched.
+  STATE: 25 tasks in 8 lanes; BILLING.md and plan.md both prettier-clean. Implementer freeze still in force; nothing dispatched.
 - 2026-07-25: IMPLEMENTER FREEZE LIFTED (founder: "execute"). Phase 3 begins.
   B1 dispatched → implementing (impl-report-1.md). Sole task in flight by design — Lane B
   is a strict spine and B1b/A1/F1/G1 all gate on its clean, so nothing runs beside it.
@@ -1612,7 +1611,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   node:fs, node:url, the root barrel and the non-money constants half; the report's prose lists all
   six correctly, so the IN-CODE docblock — the artifact G1 reads — is the inconsistent one.
   AUDITOR CORRECTED MY AMENDMENT'S REASONING, and it is right: a stale fee-seam allowlist would NOT
-  have silently unhooked fee protection from money.ts. money.ts DEFINES applyMarkup* and imports no
+  have silently unhooked fee protection from money.ts. money.ts DEFINES applyMarkup\* and imports no
   fee helper, so its allowlist entry is never exercised; the real consequence is a LOUD lint error at
   affordability/estimate/search-reservation.ts:15, and a stale entry over-restricts rather than
   under-protects. Deviation still accepted (forced + verifiably path-only) but on correct grounds.
@@ -1647,7 +1646,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   that") + 2 Minors, both CONVERGENT with auditor B.
   IDENTITY ATTACKED FROM THREE ANGLES, all held — the strongest evidence of its kind this run:
   (1) SYMBOL level, stronger than any count: built a TS program over index.ts at HEAD (git archive
-  into a scratch tree, real node_modules symlinked) and on the worktree, compared 839 vs 839
+  into a scratch tree, real node*modules symlinked) and on the worktree, compared 839 vs 839
   exported symbols by name, symbol flags, AND a hash of each declaration's source text — 0 only-in-HEAD,
   0 only-in-NOW, 0 flag diffs, 0 DECLARATION-TEXT HASH DIFFS, with 92 symbols' declaring paths moved.
   (2) RUNTIME level: both barrels in one process, 543→543 empty both ways, zero typeof mismatches and
@@ -1657,17 +1656,16 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   FEE-SEAM RULE PROVEN LIVE BY POSITIVE CONTROLS (eslint --stdin, no repo writes): fires at a
   relocated non-seam path (estimate/format.ts importing applyMarkupCeil); EXEMPTS the relocated seam
   (same content at affordability/money.ts); and the star-launder guard fires at affordability/index.ts
-  for `export * from './money.js'` — which independently confirms the named-re-export decision B1
-  recorded for B8. Auditor A INDEPENDENTLY REACHED B's correction of my amendment: money.ts has ZERO
-  import statements and the rule only reports on import/re-export specifiers and imported-module
-  member access (rules/fee-seams.mjs:104-152), so a stale allowlist could not have unhooked anything
-  there. Both auditors, separately, told me my stated reason was false. Explicit instruction recorded:
-  "the reasoning should not be reused as precedent."
-  ALLOWLIST INDEPENDENTLY RE-ENUMERATED and confirmed COMPLETE: production non-relative imports are
-  `zod` in exactly 6 files (estimate/reasoning-plan, modality, model-descriptor, nano-usd, param-spec,
+  for `export * from './money.js'`— which independently confirms the named-re-export decision B1
+recorded for B8. Auditor A INDEPENDENTLY REACHED B's correction of my amendment: money.ts has ZERO
+import statements and the rule only reports on import/re-export specifiers and imported-module
+member access (rules/fee-seams.mjs:104-152), so a stale allowlist could not have unhooked anything
+there. Both auditors, separately, told me my stated reason was false. Explicit instruction recorded:
+"the reasoning should not be reused as precedent."
+ALLOWLIST INDEPENDENTLY RE-ENUMERATED and confirmed COMPLETE: production non-relative imports are`zod` in exactly 6 files (estimate/reasoning-plan, modality, model-descriptor, nano-usd, param-spec,
   reasoning-effort); no production file has a relative import leaving the directory; test-only
   additions exactly vitest, node:fs, node:url, seeded-prng, ../constants.js, ../index.js.
-  CONSTANTS SPLIT: no constant crosses at runtime. The CAPACITY_* pair is in the money half because
+  CONSTANTS SPLIT: no constant crosses at runtime. The CAPACITY\*\* pair is in the money half because
   affordability/budget.ts:10,144 genuinely consumes CAPACITY_RED_THRESHOLD — rule (a) forces it,
   rule (d) keeps the pair together, both stay on the root barrel so nothing breaks. NEW G1 INPUT
   recorded in the plan: G1 rule 2 WILL TRIP on apps/web/.../capacity-bar.tsx, whose only affordability
@@ -1744,7 +1742,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   and the new content-free move. One NEEDS_CONTEXT trigger: if finding 7's consumers span both
   apps/api and apps/web, the narrowest covering home would be shared AND it would mean the client
   calls the classifier — which contradicts the design and must be surfaced, not accommodated.
-- 2026-07-25: B1 fix cycle 1 DONE_WITH_CONCERNS (impl-report-2.md). All six corrections landed;
+- 2026-07-25: B1 fix cycle 1 DONE\*WITH_CONCERNS (impl-report-2.md). All six corrections landed;
   shared 109 files/2425 tests green, api 464/466 (only §Known Breakage template-html), repo typecheck
   16/16, arch:check 11 rules/1990 files, eslint exit-0 post-final-edit in both edited packages.
   MY BRIEF'S PREMISE WAS HALF-WRONG, and the fixer's correction is better than the ruling.
@@ -1769,7 +1767,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   classifier-prompt assertions that became TAUTOLOGIES once the overhead helper reduced to
   render(...).length — flagged for the auditor to verify the ANTI-DRIFT PROPERTY survives structurally
   plus in a real identity test, not merely that it was relocated.
-  *** HEAD MOVED MID-RUN — investigated before dispatching anything. New commit 39a07db0 ("a whole
+  \*\*\* HEAD MOVED MID-RUN — investigated before dispatching anything. New commit 39a07db0 ("a whole
   lot", ctf05, 13:06) absorbed 578 files / 69,692 insertions of the concurrent workstream, and IT
   TOUCHED SIX FILES OF B1's MONEY SET (money.ts, estimate/search-reservation.{ts,test.ts},
   billing/client-billing.{ts,test.ts}, index.ts). Potential dropped-content hazard: B1 moved those
@@ -1781,7 +1779,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   need re-verification now that their files are committed — template-html CONFIRMED still failing
   post-commit (466 files, only it red), but scripts/generate-env.test.ts is UNVERIFIED post-commit
   since both env.config.ts and generate-env.ts are now in HEAD and it may be fixed. A stale
-  known-breakage entry turns a real failure into an ignored one, which is the dangerous direction. ***
+  known-breakage entry turns a real failure into an ignored one, which is the dangerous direction. \_\*\*
   METHOD WARNING recorded in §Known Breakage: `npx turbo test --filter=@hushbox/api` SKIPS ensure-stack
   ⇒ ~176/466 phantom ECONNREFUSED with the stack down. Use pnpm test:api. Cycle 1 used the bare form.
   STANDING-RULE INCIDENT, verified and closed: the fixer typed `git mv` once; it errored (untracked
@@ -1914,7 +1912,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   what-opens-when table listing both as ready on B1's clean. Reason: B1b's acceptance criteria include
   "every consumer the closure breaks", and that set is NOT KNOWABLE IN ADVANCE — it spans apps/web
   hooks and at least one apps/api module that re-exports a tier ratio. A1 owns
-  apps/api/.../normalize.ts plus affordability/constants.ts; F1 owns apps/web/src/hooks/billing/*.
+  apps/api/.../normalize.ts plus affordability/constants.ts; F1 owns apps/web/src/hooks/billing/\*.
   Either could collide with B1b's repair set, and the skill's readiness rule is dependency-clean AND
   no in-flight task sharing files. Serializing costs one step; a mid-task collision on the money
   barrel costs a cheap-reset plus an ambiguous audit. B1b's reported consumer set is what releases
@@ -1928,20 +1926,20 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   prevent the predictable wrong turn: if closing an export needs a producer that does not exist yet,
   repoint internally and list it as B8's inbox — do not invent a producer, do not leave the export
   open, and only stop if even an internal repoint is impossible.
-- 2026-07-26: B1b implementer DONE_WITH_CONCERNS (impl-report-1.md). Red-first watched (210 failed /
+- 2026-07-26: B1b implementer DONE\*WITH_CONCERNS (impl-report-1.md). Red-first watched (210 failed /
   45 passed with positive controls green); shared/db/crypto/ui/realtime/config/admin green; api 464
   pass + 1 pre-existing (template-html); repo typecheck 16/16; arch:check green; eslint exit-0 after
   last edit across shared + 20 api + 8 web owned files.
-  *** THE CENTRAL FACT: B1b CLOSED BOTH BARRELS AND DID NOT CLOSE THE WALL. Those are different and
+  \*\*\* THE CENTRAL FACT: B1b CLOSED BOTH BARRELS AND DID NOT CLOSE THE WALL. Those are different and
   I am recording the difference rather than reporting a closed wall. 38 walled symbols are consumed
   OUTSIDE the module and producers exist for ZERO of them (the six-export surface is B3/B6/B7/C1
   work), so my own instruction — "repoint the consumer at an internal module path" — required those
   paths to RESOLVE from outside the package. They did not (probe: error TS2307). B1b therefore added
   14 INTERIM PER-UNIT SUBPATH ENTRIES to packages/shared/package.json. Orchestrator-verified present:
-  14 entries, all under ./affordability/*, per-unit not per-directory. Consequence: external
+  14 entries, all under ./affordability/\_, per-unit not per-directory. Consequence: external
   consumers still reach rates, manifests, reducers and ceiling solvers — through 14 named, enumerated,
   dated holes instead of an unbounded barrel — and BILLING.md §What is enforced's "deep imports do not
-  resolve" is TEMPORARILY FALSE for exactly those paths until B8 deletes them. ***
+  resolve" is TEMPORARILY FALSE for exactly those paths until B8 deletes them. \*\*\*
   ACCEPTED on three grounds: forced by this plan's own instruction; PER-UNIT rather than
   per-directory, the implementer's own unprompted judgment ("a ./affordability/estimate entry would
   have rebuilt the leak one entry point along") — which is right and is the difference between 14
@@ -2053,7 +2051,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   to a non-member caller — a privacy boundary and a founder question, not an implementation detail.
   F1 also told E3's guarantee is downstream of its key-shape choice and must state the consequence as a
   coordination fact E3 can act on.
-- 2026-07-26: A1 implementer DONE_WITH_CONCERNS (impl-report-1.md). shared 110 files/2674 green (new
+- 2026-07-26: A1 implementer DONE\*WITH_CONCERNS (impl-report-1.md). shared 110 files/2674 green (new
   unit 100% all four metrics); api 465/466 with only §Known Breakage template-html red; per-file
   coverage normalize.ts 99.64/97.42/97.95/99.57 and refresh.ts 100/97.22/100/100; typecheck+lint green;
   eslint exit-0 post-final-edit from each package dir; arch:check OK. Every rule pinned one nano / one
@@ -2062,7 +2060,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   excluded are 1 zero-priced + 12 below-floor + 12 too-old; 184+25=209 and 207−25=182 both close and no
   pre-existing reason's count moved. That is ~12% OF THE SELLABLE CATALOG REMOVED — the ruled intent
   (rationale = profit) but a product change worth stating as such, not a passing test.
-  *** ESCALATED, OUT OF A1's OWNERSHIP: NOTHING REMOVES A CATALOG ROW A NEW RULE NOW EXCLUDES.
+  \*\*\* ESCALATED, OUT OF A1's OWNERSHIP: NOTHING REMOVES A CATALOG ROW A NEW RULE NOW EXCLUDES.
   Ingestion only writes; catalog-store.ts has no prune path. So the 25 models keep their persisted rows
   and STAY EXPOSED, because exclusion happens at ingestion and previously-ingested rows carry no
   exclusion marker. The local dev DB is in that state now. A1 therefore satisfies its objective
@@ -2070,7 +2068,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   there. Pre-existing in mechanism (a model vanishing from OpenRouter also keeps its row) and invisible
   until a rule began excluding models that previously passed. The ruling must choose between deleting
   the rows, marking them unsellable, or an audited admin operation, and it interacts with whatever
-  references model ids historically — not a one-liner to bolt onto A1. ***
+  references model ids historically — not a one-liner to bolt onto A1. \_\*\*
   TWO DISCLOSURES ACCEPTED AS-IS, recorded so they are not rediscovered: (a) the top-context exemption
   is INERT on today's catalog (threshold ~1,050,000 tokens over a 218-model ZDR language pool, zero
   models rescued) — correct per spec, but green exemption tests are NOT evidence it fires in
@@ -2134,7 +2132,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   F1-owned, landed after A1 finished, correctly attributed away from A1. F1 is still in flight and may
   clear it; if not, it is a validated finding for F1's fix cycle.
   Integration lens still running; A1 not clean until both are in.
-- 2026-07-26: F1 implementer DONE_WITH_CONCERNS (impl-report-1.md). shared 110/2674 green; api 465/466
+- 2026-07-26: F1 implementer DONE\*WITH_CONCERNS (impl-report-1.md). shared 110/2674 green; api 465/466
   (only §Known Breakage template-html); web exit 0 (393 files/6410, no coverage failure this run —
   consistent with the entry being load-dependent); api+web typecheck green; arch:check green; eslint
   exit-0 on owned files post-final-edit. Both new money files 100% on all four metrics.
@@ -2174,14 +2172,14 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   here. And 3 pre-existing use-budget-calculation fixtures were "corrected to wire-truthful tier values
   with assertions untouched" — the auditor must verify the assertions really are unchanged AND that the
   corrected fixtures do not make a previously-discriminating test vacuous.
-  *** NEW VALIDATED FINDING AGAINST A1, surfaced by F1's attribution: A1 BROKE @hushbox/scripts
+  \*\*\* NEW VALIDATED FINDING AGAINST A1, surfaced by F1's attribution: A1 BROKE @hushbox/scripts
   TYPECHECK. scripts/refresh-catalog-run.test.ts carries an exhaustive reason map now missing
   below-price-floor / too-old / zero-priced. A1 edited the near-identically-named sibling
   scripts/refresh-catalog.test.ts but not this one, and its self-gate ran a SCOPED typecheck over
   @hushbox/api + @hushbox/shared only. Adding members to a closed set IS a contract change, so Global
   Constraint 10's repo-wide typecheck applied and would have caught it. The trap worth recording: this
   file is on §Known Breakage for a COLLECTION failure so its tests never run — but typecheck still reads
-  it, and "the tests don't run" is not "the file can be ignored". Queued for A1's fix cycle. ***
+  it, and "the tests don't run" is not "the file can be ignored". Queued for A1's fix cycle. \_\*\*
   ALSO F1's OWN: turbo lint red on billing/domain/spendable.integration.test.ts:282 — seedGroup
   complexity 12 > 10. F1-owned, in scope, told to both auditors as in-scope.
   → F1 auditing, 2 auditors (money), distinct lenses: (A) THE CONTRACT — verify BOTH halves independently
@@ -2207,13 +2205,13 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   being on the list makes failures unattributable to you BY DEFAULT, it does not make the file invisible;
   if your change touches a listed file's domain, verify no second cause appeared, and remember TYPECHECK
   READS FILES WHOSE TESTS NEVER EXECUTE.
-  *** §KNOWN BREAKAGE ENTRY HAD THE WRONG CAUSE — corrected. The plan attributed email-verification
+  **_ §KNOWN BREAKAGE ENTRY HAD THE WRONG CAUSE — corrected. The plan attributed email-verification
   failures to an orphan email='' row; the auditor OBSERVED identity/routes-email-verification.integration
   .test.ts failing at COLLECTION on the vitest deps_ssr/@hushbox_db.js URL — the stale-optimizer class,
   a different cause entirely. This is the second entry this run that carried a wrong or overstated cause
   (the markdown-renderer one was overstated as deterministic). Entry now tells the reader to identify
   which failure they actually have before attributing, because an entry with the wrong cause is how a
-  real failure gets excused. ***
+  real failure gets excused. _**
   EVERYTHING ELSE INDEPENDENTLY REPRODUCED, not taken on trust: the auditor fetched OpenRouter /models +
   /endpoints/zdr itself and re-implemented the rules OUTSIDE the repo — pool 218, threshold 1,050,000,
   25 newly excluded split 1/12/12, id set identical; coverage numbers reproduced exactly; the three
@@ -2252,7 +2250,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   resolution is deliberately hold-blind and reproduces the send path exactly — same shared
   resolveFundingDecision core, same members.activeByUser row, same conversations facts as
   turn-context.resolvePayerWallet — so endpoint and send path cannot name different payers.
-  *** THE MINOR IS A STANDING-RULING CONFLICT, not a bug. Three comments claim the served figure matches
+  **_ THE MINOR IS A STANDING-RULING CONFLICT, not a bug. Three comments claim the served figure matches
   the admission gate EXACTLY; true of the self arm, INEXACT for the owner arm — ownerSnapshot prices the
   owner dimension from the RAW purchased balance, applying neither the paid-tier cushion nor the owner
   wallet's own holds. When the owner dimension binds the figure understates by ≤50¢ (safe) AND OVERSTATES
@@ -2266,7 +2264,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   dimension raw (privacy holds; exposure is bounded to owner-dimension-binds AND owner concurrently
   running) and make the refusal graceful instead — a typed reason naming the cause without a number,
   which B7 already owns and which also satisfies §Notices 6. Added to B7 as a conditional item, to be
-  skipped if the founder rules the owner dimension hold-aware instead. ***
+  skipped if the founder rules the owner dimension hold-aware instead. _**
   CORRECTION TO WHAT I TOLD THE FOUNDER: the turbo lint failure on spendable.integration.test.ts:282
   (seedGroup complexity 12) DOES NOT REPRODUCE — the file now carries an extracted seedValues helper and
   eslint on it exits 0. F1 resolved it during its own run, after A1's auditor observed the transient
@@ -2338,7 +2336,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   the stale-optimizer class.
 - 2026-07-26: B2 dispatched → implementing. B1b's clean unblocked the spine; B2 is the critical path with
   B3–B8 and G1 all behind it. Dispatched concurrently with F1's pending audit/fix because B2's file set
-  (affordability/dimensions/**, reasoning-effort.ts, premium-check.ts + its consumers) does not intersect
+  (affordability/dimensions/\*\*, reasoning-effort.ts, premium-check.ts + its consumers) does not intersect
   F1's (billing routes/spendable, schemas/api/billing.ts, api-client, hooks/billing, the new
   conversation-funding adapter) — and F1's expected fix is comment-only on three of those. Bound stated
   explicitly in the brief.
@@ -2362,13 +2360,13 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   that was measured false and an unfailable pin would leave the spec's central claim unguarded.
 - 2026-07-26: F1 auditor, BOUNDARY lens: PASS, 3 Minors. Combined with the contract lens's PASS, F1 has
   2 validated findings to fix; dispatched below.
-  *** MY ESCALATION TO THE FOUNDER WAS UNNECESSARY AND IS RETRACTED. The auditor found that
+  **_ MY ESCALATION TO THE FOUNDER WAS UNNECESSARY AND IS RETRACTED. The auditor found that
   BILLING §Group Funding 6(b) ALREADY RULES the raw-owner divergence a hard refusal at admission. So the
   "two rulings in tension" I raised is resolved in the spec's own favour: the owner dimension stays raw,
   the served figure may exceed what admission admits, and admission refuses. Nothing for the founder to
   decide. What remains is only that the refusal deserve decent copy, which B7 already owns generically —
   so B7's item is downgraded from "pending ruling" to a notice-quality item. I escalated a question the
-  spec answers; the lesson is to grep the spec for the conflict before escalating it. ***
+  spec answers; the lesson is to grep the spec for the conflict before escalating it. _**
   PRIVACY CLAIM VERIFIED FIELD BY FIELD, with a table, rather than accepted: every field /spendable serves
   is already served to the SAME member by /conversations/:id/budgets. Two findings inside that are better
   than the claim itself — `tier` on the owner path CARRIES ZERO INFORMATION (payer:'owner' requires
@@ -2456,7 +2454,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
 - 2026-07-26: F1 fix re-audit PASS, 1 Minor. Both cycle-1 findings VERIFIED CLOSED at the end state.
   COUNTERFACTUAL PROVEN INDEPENDENTLY rather than trusting the claimed red: the auditor drove the shared
   core directly at the test's own inputs — paid-tier floor 30,600,000n; spendableNanoUsd 0n ⇒
-  {"fundingSource":"denied","reason":"insufficient_balance"} ⇒ isBelowFloor true ⇒ test fails;
+  {"fundingSource":"denied","reason":"insufficient\*balance"} ⇒ isBelowFloor true ⇒ test fails;
   1,000,000,000,000n ⇒ personal_balance ⇒ passes. And the load-window test is equally load-bearing: with
   no isOwnSpendablePending, isPending is false while ownSpendableData is undefined ⇒ 0n ⇒ denied ⇒ greyed,
   failing both assertions. Neither test tautological.
@@ -2492,11 +2490,11 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   HONEST LIMIT DISCLOSED BY THE AUDITOR: it could not byte-diff cycle 1 against cycle 2 (no commit boundary
   exists), so "comments only in api/shared" rests on convergent evidence — untouched mtimes on passing test
   files, ownerSnapshot's arithmetic reading as reported, clean lint — not on a diff. Correct posture.
-  *** NEW §KNOWN BREAKAGE ENTRY, from this audit: five apps/api integration files time out on
+  \*\*\* NEW §KNOWN BREAKAGE ENTRY, from this audit: five apps/api integration files time out on
   "model-catalog test lock: timed out acquiring" under full-suite load and ALL FIVE PASS IN ISOLATION
   (175 tests) — shared-Redis test-lock contention. Two traps recorded with it: it is LOAD-DEPENDENT so its
   absence proves nothing, and it includes models/domain/refresh.integration.test.ts, a CATALOG-ADMISSION
-  file, so a task working near the model catalog will be tempted to attribute a real failure to it. ***
+  file, so a task working near the model catalog will be tempted to attribute a real failure to it. \_\*\*
   B2 IS LIVE AND CURRENTLY RED: repo typecheck is 15/16 on
   affordability/dimensions/derive.ts(333,3) TS6133 'model' declared but never read — untracked B2 tree,
   mtimes moving during the audit. Expected mid-flight state, attributed away from F1, and F1's fix-2 brief
@@ -2524,11 +2522,11 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   three incidental claims (16/16 via B2 closing its own error; the single production caller at
   prompt-input.tsx:696; the no-test reasoning). Proportionality recorded deliberately: the standing rule is
   that every fix is re-audited, and this honours it without spending a full audit on one comment line.
-- 2026-07-26: B2 implementer DONE_WITH_CONCERNS (impl-report-1.md). shared 115 files/2789 tests with the
+- 2026-07-26: B2 implementer DONE\*WITH_CONCERNS (impl-report-1.md). shared 115 files/2789 tests with the
   coverage gate green; repo typecheck 16/16 UNCACHED (it broke this briefly mid-run and closed its own
   TS6133 unprompted); eslint exit-0 from all three package dirs post-final-edit; api 6391 pass with all 7
   failures in template-html (§Known Breakage, dir byte-identical to HEAD); web 393 files/6412 tests.
-  *** THE DISCOVERY THAT REFRAMES EARLIER WORK: premium-check.ts HAD NO PRODUCTION CONSUMER, and the live
+  \*\*\* THE DISCOVERY THAT REFRAMES EARLIER WORK: premium-check.ts HAD NO PRODUCTION CONSUMER, and the live
   premium classifier is apps/api/src/slices/models/domain/trial-eligibility.ts, which carries its OWN price
   quartile (:33), its OWN recency window (:42) and a trial-affordability leg. If true, the parseFloat fix I
   prioritised — and argued for on the grounds that float arithmetic was deciding a paid-access boundary —
@@ -2536,7 +2534,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   Routed to B5 (owns eligibility predicates) to decide whether trial-eligibility collapses onto the moved
   implementation or the moved one is deleted as redundant, and to report which — two premium classifiers is
   not an acceptable end state. Flagged to the audit as the single most consequential claim in the report and
-  told to derive it independently, since it currently rests on B2's word alone. ***
+  told to derive it independently, since it currently rests on B2's word alone. \_\*\*
   MY PLAN-SCOPING DEFECT, conceded: §B2's Files list could NOT satisfy its own criteria 6, 7 and 9, and its
   scoped checks (test:shared only) understated the blast radius. A vocabulary collapse over a union type
   necessarily reaches every consumer; moving a file necessarily reaches its importers. B2 was right to
@@ -2602,7 +2600,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   read the diff, so it never attributed them to F1 — the SendMessage coordination note cost nothing but
   would have if the timing had gone the other way.
 - 2026-07-26: F2 dispatched → implementing. Opened by F1's clean; no file conflict with B2 (which owns
-  dimensions/**, reasoning-effort.ts and the relocated premium module, while F2 owns
+  dimensions/\*\*, reasoning-effort.ts and the relocated premium module, while F2 owns
   affordability/billing/funding-decision.ts + client-billing.ts), and B2's in-flight work is audits, which
   are read-only.
   PLAN DEFECT FIXED BEFORE DISPATCH: F2's third criterion read "the payer-switch notice from B7 fires on
@@ -2656,14 +2654,14 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   either — an undisclosed sibling of the ReasoningMetadata defect, so `string` was the only option. Both are
   in the approved BILLING.md batch.
 - 2026-07-26: B2 auditor, REGISTRY lens: FAIL, 1 Important + 2 Minors + a design question I ruled.
-  *** IMPORTANT — A MONEY-UNIT DEFECT. reserveContribution(MODEL_DIMENSION, …) returns
+  **_ IMPORTANT — A MONEY-UNIT DEFECT. reserveContribution(MODEL_DIMENSION, …) returns
   { kind: 'money', nanoUsd: <combined per-TOKEN rate> }, but ReserveContribution's money arm is documented
   as "what an open dimension's worst option costs the hold" and §Cost classes defines resource:money as
   nano-USD out of spendable. A PER-TOKEN RATE IS NEITHER. The real hold term is MAX over candidates
   cost(m, ceiling(m)) = rate × ceiling, so the derivation understates by ROUGHLY THE CEILING IN TOKENS.
   Worse, derive.test.ts PINS the wrong-unit value (3000n) as expected, and the only protection is prose at
   model.ts:13-15 telling a future implementer not to read it — the "don't drift" comment class CODE-RULES
-  bans as a resolution. B3 is the consumer that will read this union. ***
+  bans as a resolution. B3 is the consumer that will read this union. _**
   MY RULING on the direction the auditor correctly said needed one: give a RATE-SHAPED requirement its own
   `kind`, carrying nano-USD PER TOKEN, distinct from money. Rejected the alternative (make `requirement`
   return real money) because it is impossible in principle, not merely awkward: the model dimension's cost
@@ -2678,7 +2676,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   a second ladder authority; and A PIN THAT CANNOT FAIL (re-partition.test.ts:80-91 — partitionPoolTokens
   takes no support argument so the loop recomputes one call, and the second assertion is filler). The pin
   list read one longer than it is. Exactly the vacuity class I briefed for.
-  *** THE REGISTRY LENS CORRECTED THE COLLAPSE LENS, AND MY PLAN AMENDMENT WITH IT. An hour ago I wrote into
+  **_ THE REGISTRY LENS CORRECTED THE COLLAPSE LENS, AND MY PLAN AMENDMENT WITH IT. An hour ago I wrote into
   §B6 that the two resolvers "diverge in the mandatory gate". That is WRONG — the divergence is UNREACHABLE
   because canDisable ⟺ reasoning defined ∧ ¬mandatory, so there is no live bug. The real hazard is
   arithmetic: THREE implementations now coexist (dimensions/derive resolveOption; estimate/effort-options
@@ -2686,7 +2684,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   pickClassifiedEffortPlan, the distance-sorting one), while B6's criterion names only "the distance-sorting
   implementation is deleted" — so SATISFYING THE CRITERION LEAVES #2 as a second nearest-below resolver with
   the same carve-out. B6 amended: exactly one survives, name it, say what happened to the other two.
-  When two auditors disagree I now take the one that traced reachability over the one that compared bodies. ***
+  When two auditors disagree I now take the one that traced reachability over the one that compared bodies. _**
   ALSO ROUTED TO B6: B2's protocol is LABELLED LINES while the live parser is POSITIONAL (line 1 model,
   line 2 effort) and resolveClassifiedEffort matches the hardcoded triple — adopting renderDimensionSection
   without replacing the parser in the same task leaves producer and parser on different protocols.
@@ -2715,7 +2713,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   green; repo typecheck 16/16 zero cached; eslint exit-0 post-final-edit; knip's NEW finding is gone with
   only the two pre-existing Known-Breakage ones left. Each fix watched red first — the unit fix against the
   exact wrong value {kind:'money', nanoUsd:3000n}, the replaced pin under a reverted mutant.
-  *** MY RULING WAS PARTLY WRONG AND THE FIXER CORRECTED IT. I said a consumer wanting money "must supply a
+  **_ MY RULING WAS PARTLY WRONG AND THE FIXER CORRECTED IT. I said a consumer wanting money "must supply a
   ceiling", implying rate × ceiling yields the hold term. IT DOES NOT: nanoUsdPerToken × ceiling ≠
   cost(m, ceiling), because THE INPUT LEG IS PROMPT-SIZED, NOT CEILING-SIZED. So no arithmetic converts the
   rate into money at all. A consumer must price cost(m, ceiling(m)) per candidate THROUGH THE ESTIMATOR and
@@ -2723,7 +2721,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   the balance- and prompt-independent candidate TOTAL ORDER. My framing was wrong in the same way the
   original comment was wrong — it named a mechanism that does not exist. Recorded as B3's contract with an
   explicit instruction that any expression multiplying a moneyPerToken by a token count is a defect. Routed
-  to the re-audit with licence to find BOTH the ruling and the fixer wrong. ***
+  to the re-audit with licence to find BOTH the ruling and the fixer wrong. _**
   FRAMEWORK EXTENSION, disclosed and needing a founder doc line: the distinct kind is derived from a NEW
   FOURTH DIMENSION_RESOURCES member, `moneyPerToken`, where §Cost classes documents three. The fixer's
   reasoning is sound — a resource defines a requirement's UNITS per §Data Structures, and a rate is a
@@ -2748,7 +2746,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   mutation; and does premium.ts's comment now name the true mechanism (the explicit provider-kind filter)
   rather than crediting a zeroing it does not do — B5 being the next task in that file and the one who
   would be misled.
-- 2026-07-26: F2 implementer DONE_WITH_CONCERNS (impl-report-1.md). Repo typecheck 16/16 uncached; shared
+- 2026-07-26: F2 implementer DONE\*WITH_CONCERNS (impl-report-1.md). Repo typecheck 16/16 uncached; shared
   115 files/2806; api 465 pass with only §Known Breakage template-html; web 393 files/6412 pass, exiting 1
   only on the documented load-flaky markdown-renderer gate (100% branch in isolation); eslint exit-0 on
   owned files from both package dirs post-final-edit; billing scope 100% on all four metrics. ~10 lines of
@@ -2763,7 +2761,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   ACCEPTED DEVIATION: chat/domain/turn-context.ts and billing/domain/spendable.ts each gained one line
   (turnEstimateNanoUsd: undefined) + a comment — a required-member contract change under Global Constraint
   10, without which repo typecheck ships red. No behaviour change in either.
-  *** THE SPEC GAP, ESCALATED — AND THIS TIME I GREPPED THE SPEC FIRST (the lesson from retracting the last
+  \*\*\* THE SPEC GAP, ESCALATED — AND THIS TIME I GREPPED THE SPEC FIRST (the lesson from retracting the last
   escalation). BILLING.md mandates priority 1's estimate comparison and says NOTHING about when the payer is
   frozen, so it genuinely does not resolve this. §Funding Decision Matrix priority 1 is now correct ON THE
   CLIENT and CANNOT BE IMPLEMENTED ON THE SERVER as the path is ordered: resolveTurnContext freezes the payer
@@ -2782,7 +2780,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   fixed, price fully. Same shape as eligible(m), which already grades on the corner a model can actually
   reach rather than an unreachable zero, so no new principle is introduced. PROVISIONALLY ROUTED TO C3
   (owns the turn-compile path) so it is not lost, with an explicit bar on starting it without the founder's
-  go, since it changes send-path ordering. ***
+  go, since it changes send-path ordering. \_\*\*
   F1 INTERACTION recorded, informational not a defect: the served payer/tier stay estimate-blind, so on a
   fall-through the client sizes at the OWNER's paid ratios while the MEMBER pays. The verdict itself is
   correct (useModelFloor compares the caller's own spendable); only the sizing ratio is the wrong tier.
@@ -2806,7 +2804,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   of my ruling END TO END — cost = Σfixed + ceiling × Σvariable with the fixed leg carrying
   inputTokens × inputRate + inputChars × storage, so combinedRate × ceiling is NOT cost(m, ceiling), and
   pricing per candidate with MAX over an open dimension / Σ over pinned siblings is exactly §The hold.
-  *** IMPORTANT — A WRONG DURABLE COMMENT THAT I PROPAGATED INTO THE PLAN. model.ts:10-14 (restated at
+  **_ IMPORTANT — A WRONG DURABLE COMMENT THAT I PROPAGATED INTO THE PLAN. model.ts:10-14 (restated at
   types.ts:171-172) asserts the combined per-token rate "is the balance-independent, prompt-independent total
   order §Smart Model 1 mandates". FALSE: §Smart Model 1 mandates an order on TURN COST with an IDENTIFIER
   TIEBREAK, reproducible from the catalog AND THE PROMPT SIZE, and §Predicates fixes the quantity as
@@ -2816,7 +2814,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   sentence is self-contradictory besides: a "prompt-independent" order cannot be why an order needs the
   prompt size. AND I PROMOTED IT VERBATIM INTO plan.md AS B3's CONTRACT, so it was about to be implemented
   against. Sixth plan defect of this run, same mechanism as the others: I transcribed a subagent's claim into
-  the plan without deriving it. Both the docblock (B2 fix cycle 2) and my contract (already corrected) fixed. ***
+  the plan without deriving it. Both the docblock (B2 fix cycle 2) and my contract (already corrected) fixed. _**
   MY OVERSTATEMENT TO THE FOUNDER CORRECTED: I said the distinct kind makes treating a rate as an amount
   "unrepresentable". The auditor refused that at face value and is right — a DELIBERATE
   hold += c.nanoUsdPerToken under the moneyPerToken arm STILL TYPECHECKS, because both arms carry raw bigint.
@@ -2883,7 +2881,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   directory is untracked so no baseline hash exists. One nitpick it deliberately did NOT raise (a slightly
   loose §Predicates pointer) — correct restraint.
 - 2026-07-26: F2 auditor, BOUNDARY lens: PASS, ZERO FINDINGS. Boundary pinned by amount at THREE levels
-  (core, client shell, cross-side contract matrix): headroom exactly 40_000_000n against a 40_000_000n
+  (core, client shell, cross-side contract matrix): headroom exactly 40\*000_000n against a 40_000_000n
   estimate funds the owner, 39_999_999n does not. It reproduced the claimed >= → > mutation VERBATIM on an
   out-of-repo copy — 1 failed / 17 passed, the failure exactly the equality test — so the inclusive edge is
   asserted, not incidental. And it traced the live path (use-prompt-budget → use-resolve-billing →
@@ -2895,12 +2893,12 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   owner and refuse union members, so a leak is not representable. And one reason value covering all three
   shapes is not merely acceptable but MANDATED: §Notices 5 requires one wording for all of them, "including
   when they were never allocated a budget at all".
-  *** IT CHECKED SOMETHING I DID NOT ASK FOR, AND IT BOUNDS MY ESCALATION: it verified the escalated server
+  \*\*\* IT CHECKED SOMETHING I DID NOT ASK FOR, AND IT BOUNDS MY ESCALATION: it verified the escalated server
   gap is not a MONEY LEAK. Admission's per-scope gate DOES compare the estimate against min(scope remaining)
   and returns budget-exceeded (budget-resolution.ts:82-117, admission.ts:54), so the outcome is a hard
   refusal exactly as §Group Funding 6(b) rules — the group budget CANNOT be silently overspent, which is the
   materially worse shape it went looking for. So the gap is a bad PRESENTATION outcome, not a lost-money one.
-  Recorded in the F2 amendment because it changes how urgent the founder's ruling is. ***
+  Recorded in the F2 amendment because it changes how urgent the founder's ruling is. \_\*\*
   Observation recorded for B7, explicitly not a finding: a group fall-through for a trial-tier caller would
   attach payerSwitch to trial_fixed where nothing is charged — unreachable today (trial means
   unauthenticated, so it can never hold group context), but B7 must not write copy assuming
@@ -2917,7 +2915,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   it so a prompt-dependent `affordable` is unobtainable rather than discouraged.
 - 2026-07-26: F2 auditor, PARITY + SWEEP lens: FAIL, 1 Important + 1 Minor — BOTH comment-accuracy defects
   F2's change created. Implementation and tests judged correct on every axis.
-  *** IMPORTANT — FOUR DOCBLOCKS NOW ASSERT SOMETHING F2 MADE FALSE, AND THE PIN THEY CITE CANNOT CATCH IT.
+  **_ IMPORTANT — FOUR DOCBLOCKS NOW ASSERT SOMETHING F2 MADE FALSE, AND THE PIN THEY CITE CANNOT CATCH IT.
   funding-decision.ts:8, client-billing.ts:5, funding-decision.contract.test.ts:9-10 and
   use-resolve-billing.ts:25 claim client and server "can never drift" on who-pays — one adding "(pinned by
   funding-decision.contract.test.ts)" and the contract test promising "a future divergence becomes a failure
@@ -2925,8 +2923,8 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   core returns self + payerSwitch while resolvePayerWallet returns owner. AND THE CONTRACT TEST'S SERVER LEG
   IS A HAND-WRITTEN LITERAL — the three new rows pass turnEstimateNanoUsd: ONE, so it pins a server behaviour
   production does not have. So the only in-code signal about a live divergence says the divergence is
-  impossible and already pinned; the truth is discoverable ONLY from this run's plan. ***
-  *** AND IT CAUGHT ME MIS-CITING THE SPEC, TWICE. The Minor is turn-context.ts:391-393 calling admission's
+  impossible and already pinned; the truth is discoverable ONLY from this run's plan. _**
+  **_ AND IT CAUGHT ME MIS-CITING THE SPEC, TWICE. The Minor is turn-context.ts:391-393 calling admission's
   refusal "the spec's hard stop (§Group Funding 6b)". §6(b) RULES THE RACE CASE — exhaustion discovered only
   at admission, where the client's retry re-resolves. THIS CASE IS DETERMINISTIC: the retry re-resolves to the
   same refusal forever, and priority 1 with §6(a) says a signed-in member FALLS THROUGH. So the server's
@@ -2935,7 +2933,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   halves ("but the matrix says a signed-in member should fall through") while the shipped comment stated only
   the half that made it look settled; I read the comment's half and propagated it. Plan amendment corrected:
   the gap is not a money leak AND not spec-sanctioned. Second time this run I have mis-stated which clause
-  governs — the fix is to read the cited clause rather than the citing comment. ***
+  governs — the fix is to read the cited clause rather than the citing comment. _**
   EVERYTHING ELSE VERIFIED AND STRONG: Global Constraint 10 consumer set DERIVED INDEPENDENTLY — zero
   consumers outside packages/shared, apps/api, apps/web — with all five producers judged on whether their
   value is RIGHT or merely type-satisfying: deriveClientFundingInputs (right), spendable.ts:337 undefined
@@ -2992,13 +2990,13 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   including the no-sixth-site completeness claim. The two close-batch items are explicitly barred.
 - 2026-07-26: F2 fix verification PASS, both findings resolved, no new findings ⇒ **F2 CLEAN**
   (6 of 25: B1, B1b, A1, F1, B2, F2 — LANE F COMPLETE).
-  *** IT FOUND A BETTER BASELINE THAN ANYONE THOUGHT EXISTED, and this is a method fix for the whole run:
+  **_ IT FOUND A BETTER BASELINE THAN ANYONE THOUGHT EXISTED, and this is a method fix for the whole run:
   the untracked affordability/ files have TRACKED PRE-MOVE TWINS at their old paths in 39a07db0. So
   "untracked directory ⇒ no git baseline" is FALSE — two agents (and I) had accepted it. Diffing
   baseline-old-path → current-new-path and filtering comments yielded EXACTLY the pass-1 executable set item
   for item, so the comment-only claim is PROVEN rather than inferred from mtimes and green tests; and
   use-resolve-billing.ts showed ZERO non-comment lines changed versus baseline. Written into §Known Breakage
-  as a method note so later audits of moved files stop settling for weaker evidence. ***
+  as a method note so later audits of moved files stop settling for weaker evidence. _**
   SPEC CITATIONS RE-DERIVED, and the restraint is as valuable as the check: it confirmed §6(b) is now cited
   for what it rules and correctly EXCLUDED (verifying determinism in code — turn-context.ts:406 passes
   turnEstimateNanoUsd: undefined UNCONDITIONALLY, so the retry escape 6(b) relies on does not exist here),
@@ -3024,7 +3022,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   B4 needs B3, B5 needs B4, B6 needs B5, and lane C needs B6 while lane E needs B5–B8. So B3 is the only
   dispatchable task and there is no parallelism to exploit until B6 lands. That is inherent to the spine
   design and was visible at planning time; recording it so the low agent count is not mistaken for a stall.
-- 2026-07-26: B3 implementer DONE_WITH_CONCERNS (impl-report-1.md) after ~103 min / 181 tool uses — the
+- 2026-07-26: B3 implementer DONE\*WITH_CONCERNS (impl-report-1.md) after ~103 min / 181 tool uses — the
   run's largest task. shared 123 files/2938 tests coverage-green; marketing 452; web 6410; api only the
   §Known Breakage template-html (empty git diff vs HEAD, no api file touched); repo typecheck 16/16;
   arch:check green; eslint exit-0 per package post-final-edit.
@@ -3035,14 +3033,14 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   at all, and FOR A PAID USER BOTH RATIOS ARE ALREADY 4 — I had conflated INPUT estimation (paid = 4
   chars/token) with OUTPUT-STORAGE estimation (the inverted paid = 2). Different terms. Plan corrected with
   the superseded wording kept so it is not re-derived.
-  *** B3 REFINED B5's ORDERING CRITERION AND IT MATTERS: the ENGINE choice must stay BASIS-INDEPENDENT.
+  \*\*\* B3 REFINED B5's ORDERING CRITERION AND IT MATTERS: the ENGINE choice must stay BASIS-INDEPENDENT.
   maxCallCost depends on contextHeadroom, hence on the prompt; affordable is evaluated at an EMPTY basis and
   admissible at the real one — so choosing the classifier ENGINE by a prompt-weighted quantity lets the two
   sets pick DIFFERENT ENGINES, hence different classifier reserves, and admissible ⊆ affordable CAN BREAK.
   B3 uses combined rate + id tiebreak for the engine precisely to stay basis-independent. So: POOL order on
   maxCallCost, ENGINE choice on a prompt-independent quantity with the id tiebreak. Two agents gave me
   partially conflicting ordering advice and this is the resolution — they were describing DIFFERENT
-  DECISIONS, and I had flattened them into one criterion. ***
+  DECISIONS, and I had flattened them into one criterion. \_\*\*
   MONEY SPEC VIOLATION STILL LIVE, routed to both owners: estimate/classifier-line-item.ts emits
   `classifier-storage` and estimate/smart-model-affordability.ts folds it into the LIVE reserve, contradicting
   §Cost, §Reasoning Effort 7 and the founder's ruling that a classifier call carries no storage. B3's producer
@@ -3096,12 +3094,12 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   produced in derive.ts and consumed by nothing on B3's path, and money comes only from priceRequest /
   evaluateManifest per candidate, MAX over the open dimension and Σ over pinned siblings.
   Also verified by amount: 600n/1200n inverted output-storage; 250 vs 500 input tokens at identical char
-  counts; rounding against the user; budgetBuys floored; MINIMUM_OUTPUT_TOKENS gating both entry and option
+  counts; rounding against the user; budgetBuys floored; MINIMUM\*OUTPUT_TOKENS gating both entry and option
   verdicts; trial carrying zero storage anywhere; smart-slot hold = MAX over arrangements + reserve
   (70,193,000n, where Σ would be 94,868,000n), with the classifier reserve provider-leg only.
   ILLEGAL STATES CONFIRMED TO BE COMPILE ERRORS with tsc: sendable:true with an empty runnable, and a
   Selection with no answer source, both fail to typecheck; holdNanoUsd exists only on the pair.
-  *** MINOR 1 IS A ONE-IMPLEMENTATION VIOLATION GUARDED BY THE BANNED ARTIFACT, and I ruled it.
+  \*\*\* MINOR 1 IS A ONE-IMPLEMENTATION VIOLATION GUARDED BY THE BANNED ARTIFACT, and I ruled it.
   turn-arithmetic.ts's costNanoUsd, feasible and eligible have NO PRODUCTION CALL SITE: turn-core re-derives
   cost(m, ceiling(m)) through the estimator fold and INLINES THE feasible FORMULA THREE TIMES, while
   turn-core.test.ts:224 exists to prove the two cost implementations AGREE — precisely the golden cross-check
@@ -3110,7 +3108,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   PRICING. turn-core CALLS feasible()/eligible() instead of inlining them (deleting three copies of one
   formula), costNanoUsd DELEGATES to the estimator instead of reimplementing it, and the agreement test is
   deleted because it then has nothing to compare. That resolves the two constraints that were pulling apart —
-  §Math's terms keep named homes (this task's criterion) and pricing keeps one implementation (CODE-RULES). ***
+  §Math's terms keep named homes (this task's criterion) and pricing keeps one implementation (CODE-RULES). \_\*\*
   MINOR 2: the web-search amount is expressed twice inside one function — a hand-rolled
   WEB_SEARCH_RESERVATION_NANO_PER_MODEL × siblings product for the total, and webSearchLineItem() for the
   manifest. Both correct today; the line-item builder is meant to be the one home, so derive the total from
@@ -3126,7 +3124,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   Contract/seams lens still running; B3's fix cycle held to batch both.
 - 2026-07-26: B3 auditor, CONTRACT + SEAMS lens: FAIL — **2 CRITICALS** + 2 Importants + 1 Minor. The most
   serious audit result of the run, and it lands on exactly the invariant the task exists to establish.
-  *** CRITICAL 1 — admissible ⊆ affordable IS FALSE AT OPTION LEVEL, and affordable gets WORSE as balance
+  **_ CRITICAL 1 — admissible ⊆ affordable IS FALSE AT OPTION LEVEL, and affordable gets WORSE as balance
   rises (contradicting §Affordability 6). turn-core.ts:555-560 reads a pinned sibling's ceilingTokens and
   every per-option verdict off worstOf(VIABLE candidates) — and the IDENTITY of the worst viable candidate is
   itself a function of funding and basis. So the affordable pass (larger funding, empty basis) can clear a
@@ -3136,15 +3134,15 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   offered a rung the picker greys. Because held=0n the funding legs are identical, so B3's "basis leg alone is
   monotone" property is false too. 162 violating samples on its own fixture; ~8% of a realistic 3-model grid.
   SET-level subset still holds (0 in 800k) — the breakage is per-model/per-option, which is why the existing
-  property missed it. ***
-  *** CRITICAL 2 — ANY EXPLICIT EFFORT PIN REFUSES THE WHOLE TURN when one selected model has an empty
+  property missed it. _**
+  **_ CRITICAL 2 — ANY EXPLICIT EFFORT PIN REFUSES THE WHOLE TURN when one selected model has an empty
   effort-support set. effortGate resolves `resolvable: pin === undefined`. Verified: a mandatory-single-rung
   model pinned at ITS OWN RUNG → refused; a non-reasoning model pinned off/Min → refused; a three-rung model
   beside either → refused AT EVERY RUNG, while the same call's turnDimensions marks all four rungs AVAILABLE.
   A flat presented ⇒ feasible violation at turn level, against §Reasoning Effort 3/4/9/10.
   reasoningBudgetTokens already returns 0 for such a model, so the arithmetic was ready for correct
   behaviour; the empty-options input is B2's and spec-consistent, so the refuse-on-pin decision is B3's. NO
-  TEST COVERED A PIN ON A HETEROGENEOUS SELECTION. ***
+  TEST COVERED A PIN ON A HETEROGENEOUS SELECTION. _**
   Important 3: the properties that should have caught Critical 1 are under-asserted — the basis-leg property
   checks only MODEL-level availability and never OPTION availability (exactly where the violation lands), and
   the combined sweep's generator never sampled the smart-slot/reference-arrangement shape. Fixing the bug
@@ -3155,13 +3153,13 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   Minor 5: RefusalCode and per-model Availability.reason cover only the FEASIBILITY axis — E1 needs a
   per-model premium-lock reason (its criterion is premium rows MARKED not removed) and B7 must collapse three
   live premium-locked phrasings. Bounded enum extension; cheap now, day-one rework for two tasks if left.
-  *** MY OWN APPROVED SHAPE WAS WRONG, and I ruled the correction: on the sendable:false arm an OptionSet
+  **_ MY OWN APPROVED SHAPE WAS WRONG, and I ruled the correction: on the sendable:false arm an OptionSet
   carries NO ENTRIES, so a zero-balance payer's picker has no rows to grey and no per-row reasons — though
   notion 1 exists precisely to grey them. B3 implemented the documented union faithfully. RULING: `all` and
   `turnDimensions` move to BOTH arms; only `runnable` stays exclusive to the sendable arm — which keeps
   "sendable with nothing runnable" unrepresentable (the property NonEmpty was added for) while making an
   unsendable set renderable as a fully-greyed picker. §Data Structures joins the doc batch. Seventh plan/spec
-  defect of mine this run, and the first that would have shipped a visibly wrong picker. ***
+  defect of mine this run, and the first that would have shipped a visibly wrong picker. _**
   JUDGED NECESSARY, not convenient: B3's 4th `catalog` parameter stays — Selection is identifier-shaped by
   §Data Structures, the smart-slot pool is catalog-minus-pinned, and pushing resolution to callers is the
   two-callers-resolve-differently hazard. §The public surface owes the correction; added to the doc batch.
@@ -3182,14 +3180,14 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   NEEDS_CONTEXT trigger: if no arrangement is monotone in both funding and basis without changing what the
   hold is taken over — trading a correct hold for a monotone presentation is the wrong trade and needs a
   ruling, not a choice.
-- 2026-07-26: B3 fix cycle 1 DONE_WITH_CONCERNS (impl-report-2.md). shared 123 files/2955 tests coverage-green
+- 2026-07-26: B3 fix cycle 1 DONE\*WITH_CONCERNS (impl-report-2.md). shared 123 files/2955 tests coverage-green
   with src/affordability at 100%; repo typecheck 16/16 zero cached; arch:check 11 rules/2016 files; eslint
   exit-0 post-final-edit; api only §Known Breakage's template-html.
-  *** IT MEASURED MY SUGGESTED FIX AND FOUND IT ALSO BROKEN. My brief offered two directions for Critical 1;
+  \*\*\* IT MEASURED MY SUGGESTED FIX AND FOUND IT ALSO BROKEN. My brief offered two directions for Critical 1;
   direction #2 ("worst over ALL candidates") is ALSO NON-MONOTONE — measured, 5/6 properties still red. It
   instead grades a pinned entry on THE PINNED SIBLINGS' OWN ARRANGEMENT, whose membership is fixed by the
   selection and therefore independent of funding and basis. Hold untouched. Testing both offered directions
-  rather than picking one is exactly right, and it caught an orchestrator error I would not have. ***
+  rather than picking one is exactly right, and it caught an orchestrator error I would not have. \_\*\*
   ACCEPTED TRADE, ESCALATED as an FYI: a pinned sibling's presented ceiling is now OPTIMISTIC while a smart
   slot is unresolved, because the conservative reading is provably non-monotone. I checked the spec before
   escalating (the lesson from two earlier mis-citations): BILLING.md DECLARES ceilingTokens at :825 but never
@@ -3231,16 +3229,16 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   discriminator stayed exercised); seven point holds identical TO THE NANO
   (242,775,000n · 70,275,000n · 254,450,000n · 81,950,000n · 21,350,000n · 9,999,000n · 28,003,400n ·
   smart 70,193,000n). affordability suite 47 files/1297 tests (was 1280 — the new pins).
-  *** THE GRADING/HOLD SPLIT VERIFIED AS REAL AND THE HOLD STILL CONSERVATIVE — the thing I most needed
+  **_ THE GRADING/HOLD SPLIT VERIFIED AS REAL AND THE HOLD STILL CONSERVATIVE — the thing I most needed
   checked. On the repro fixture the pinned entry's presented ceiling is now 64,000 on BOTH passes (its own
   arrangement, provider-cap bound) while holdNanoUsd = 92,995,650n = MAX over the VIABLE candidate
   arrangements {b-mid 92,995,650n, e-plain 58,287,950n}. So the ceiling a picker row shows and the arrangement
   the hold is priced on are now computed from DIFFERENT arrangements exactly as claimed, and the hold is still
   sized on the costliest viable one (a-cheap at 13,291 tokens there, not at its presented 64,000).
-  reserve ⊇ bill INTACT. That is what makes the optimistic-ceiling trade safe rather than merely monotone. ***
+  reserve ⊇ bill INTACT. That is what makes the optimistic-ceiling trade safe rather than merely monotone. _**
   AUDITOR SELF-CORRECTED A FALSE ALARM, and the correction is itself a useful pin: its first pass of that repro
   expected 92,999,550n (a 3,900n gap) because ITS OWN harness's viability test required only
-  ceiling ≥ MINIMUM_OUTPUT_TOKENS and omitted the reasoning term. Restoring B(m, e_min(m)) +
+  ceiling ≥ MINIMUM\*OUTPUT_TOKENS and omitted the reasoning term. Restoring B(m, e_min(m)) +
   MINIMUM_OUTPUT_TOKENS resolved it — c-mandatory's ceiling in its own arrangement is 4,991 < 4,096 + 1,000 so
   it is NOT eligible, and d-plateau's is 0. "The discrepancy was my harness, not the code", and the exclusion
   is eligible(m) behaving exactly as §Smart Model 2 requires, visible in the entries as c-mandatory greyed
@@ -3251,19 +3249,19 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   MINOR 1 CONFIRMED FIXED: costNanoUsd now folds siblingLineItems through evaluateManifest and IS the live
   per-sibling pricing call at turn-core.ts:303; feasible/requiredCeilingTokens are called at :305, :343, :344,
   :364, :367 instead of inlined; the agreement test is gone. My ruling landed as intended.
-  *** MY INCIDENTAL WAS WRONG — MINOR 2 IS NOT FIXED. I told the auditor the web-search total now derives from
+  \*\** MY INCIDENTAL WAS WRONG — MINOR 2 IS NOT FIXED. I told the auditor the web-search total now derives from
   webSearchLineItem; the code contradicts me. turn-core.ts:269-270 still hand-computes
-  additiveNanoUsd = WEB_SEARCH_RESERVATION_NANO_PER_MODEL × siblings.length while :293 separately pushes
+  additiveNanoUsd = WEB*SEARCH_RESERVATION_NANO_PER_MODEL × siblings.length while :293 separately pushes
   webSearchLineItem(siblings.length) — the amount is still expressed twice in one function. The fixer's own
   Files-changed table never claimed it, so I crossed it with finding 4 and asserted it without checking. Same
   pattern as my earlier errors: stating a fact I had not verified. Queued for B3's next cycle, still correct by
-  amount (172,500,000n on three models, re-verified), same one-line direction. ***
+  amount (172,500,000n on three models, re-verified), same one-line direction. \*\*\*
   Contract lens still running on the six findings; B3's second fix cycle held to batch Minor 2 with whatever it
   returns. That will be cycle 2 of the three-cycle cap.
 - 2026-07-26: B3 fix re-audit, CONTRACT lens: FAIL — all six cycle-1 findings DISCHARGED and independently
   verified, but ONE NEW CRITICAL found while probing the accepted trade. Present in cycle 1 too, so not a
   regression from the fix; the auditor states plainly that it missed it in audit 1.
-  *** NEW CRITICAL — A reserve ⊇ bill VIOLATION, THE RUN'S CORE INVARIANT. turn-core.ts:333-345 (siblingBlock ⇒
+  **_ NEW CRITICAL — A reserve ⊇ bill VIOLATION, THE RUN'S CORE INVARIANT. turn-core.ts:333-345 (siblingBlock ⇒
   runnable) versus :605-609 (holdArrangement): THE SET THE CLASSIFIER IS PRESENTED AND THE SET THE HOLD'S MAX IS
   TAKEN OVER ARE DIFFERENT SETS, AND NEITHER CONTAINS THE OTHER. A candidate's entry is graded on the CANDIDATE
   ALONE, while viableCandidates requires EVERY SIBLING OF ITS ARRANGEMENT to fit — so a candidate whose
@@ -3272,7 +3270,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   ≥ 119,934,700n — 30,671,015n, ≈34% MORE THAN ADMISSION RESERVED. Reproduced 599 times under an explicit pin
   and 75 TIMES ON AUTO with a mandatory-reasoning pinned model, so it needs no pin to occur. §Affordability
   names this exact failure: "the hold … must cover the worst option the classifier can pick … This is the one
-  place where using the wrong set is a money defect." ***
+  place where using the wrong set is a money defect." _**
   CYCLE-1 VERIFICATION WAS EXCEPTIONAL AND WORTH RECORDING AS THE BAR: the monotonicity argument was JUDGED,
   not trusted — every premise checked against code properties, INCLUDING TWO THE REPORT NEVER STATED that the
   argument silently depends on (sendability's "∃ viable candidate" is monotone ONLY because each candidate
@@ -3313,7 +3311,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   Brief requires the OWED PROPERTY shown failing against current code before the fix, and re-confirmation of the
   two unstated monotonicity premises, since changing what enters `runnable` touches both. Cycle 2 of the
   three-cycle cap; if cycle 3 does not clear it I escalate rather than loop.
-- 2026-07-26: B3 fix cycle 2 DONE (impl-report-3.md). shared 123 files/2957 tests coverage-green with turn-*
+- 2026-07-26: B3 fix cycle 2 DONE (impl-report-3.md). shared 123 files/2957 tests coverage-green with turn-\*
   all 100/100/100; repo typecheck 16/16 zero cached AFTER the final edit; arch:check 11 rules/2016 files;
   eslint exit-0; api only §Known Breakage's template-html.
   CRITICAL FIXED IN THE PREFERRED DIRECTION AND STRUCTURALLY: a candidate is presented **iff its whole
@@ -3332,11 +3330,11 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   ASSERTED ANYWHERE at turn level; it is now pinned inside expectSubset with a watched control — inverting
   mergeTurnOption turns 3 of 6 property tests red at that line. An implementer converting an auditor's verbal
   premise into an executable pin is the best possible response to that finding.
-  *** THIRD INSTANCE OF ONE FAMILY, found by the fixer unprompted while fixing the second: mergeTurnOption ORs
+  **_ THIRD INSTANCE OF ONE FAMILY, found by the fixer unprompted while fixing the second: mergeTurnOption ORs
   the turn-level effort union over PINNED siblings where §Turn Stories 2.1 requires an AND. Measured — two
   pinned siblings with effort open: the menu marks `high` available at EVERY balance while pinned:{effort:'high'}
   is unsendable (model_output_cap_too_low). A menu enabling a level the send gate refuses, which §Reasoning
-  Effort 3 forbids outright. Correct rule as the fixer states it: AND over pinned, OR over runnable candidates. ***
+  Effort 3 forbids outright. Correct rule as the fixer states it: AND over pinned, OR over runnable candidates. _**
   MY RESPONSE IS A CRITERIA CHANGE, NOT A THIRD PATCH — "fix the process, not the code", applied to myself.
   Three consecutive audits found three defects in ONE FAMILY, and the family is the finding: B3's producer
   computes FOUR views of "what is presented or possible" — per-row availability, the turn-level dimension
@@ -3353,15 +3351,15 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   since the hold is now verified across 83,520 turns and trading it for structural tidiness is the wrong trade.
   Last cycle's deviation (candidate rows regraded, pinned rows keep their own-fit verdict) accepted and carried
   forward, with permission to revisit only if the single-derivation requirement forces it.
-- 2026-07-26: B3 fix cycle 3 DONE_WITH_CONCERNS (impl-report-4.md) — and the criteria change paid for itself.
+- 2026-07-26: B3 fix cycle 3 DONE\*WITH_CONCERNS (impl-report-4.md) — and the criteria change paid for itself.
   shared 124 files/2,965 tests coverage-green with src/affordability 100 on all four axes; typecheck 16/16;
   arch:check 11 rules/2,017 files; eslint exit-0 post-final-edit; api identical to both prior cycles.
-  *** IT FOUND AND FIXED TWO MORE FAMILY MEMBERS, which is exactly why the criterion beat a third patch.
+  \*\*\* IT FOUND AND FIXED TWO MORE FAMILY MEMBERS, which is exactly why the criterion beat a third patch.
   INSTANCE 4 (live, and the fixer calls it the COMMONEST SHAPE): the menu GREYED rungs the send gate ACCEPTS —
   a single model pinned above its cap greys off/low while pinning low sends. That is the founder's standing rule
   broken in the OTHER direction from everything found so far: hiding an option the user can actually use.
   INSTANCE 5 (structural): a candidate row's rungs stood above what its arrangement honours, against §Story
-  2.2's "capped by the tightest pinned sibling". ***
+  2.2's "capped by the tightest pinned sibling". \_\*\*
   THE FIX DELETES THREE COMPETING DERIVATIONS rather than adding a rule — the shape I wanted, since a new rule
   would have been a fourth thing to keep in agreement.
   FAMILY CLOSED BY ARGUMENT, NOT JUST DIFF: every decision-driving reading is now a query over ONE LEAF
@@ -3458,7 +3456,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   divergence the new docblock publishes was pinned NOWHERE in the divergent case. Right instinct — publishing a
   rule and pinning it belong together — test-only, watched red under a control, turn-core.ts restored
   byte-identically, and deleting ten lines restores a strictly comment-only diff.
-  *** NEW SCOPE RULED, NOT A FIX CYCLE: A PINNED ROW CARRIES NO `dimensions` LIST. The fixer answered the
+  **_ NEW SCOPE RULED, NOT A FIX CYCLE: A PINNED ROW CARRIES NO `dimensions` LIST. The fixer answered the
   question I had not asked — whether a type-level distinction is WANTED, having established one is not NEEDED.
   Its answer: a `kind` discriminator would NOT make the rule structural, because a consumer can still read a
   pinned row's dimensions; the change that WOULD is a pinned row carrying its blocking reason and no dimensions
@@ -3468,7 +3466,7 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   structural impossibility over convention; and TIMING IS THE REASON IT IS NOT DEFERRED — ModelEntry is consumed
   by B6, B7, E1 and E4, NONE of them built yet, and the fixer flagged it as "decide before E1 builds against the
   current shape, not after". Every cycle of delay adds a consumer to retrofit. Sequenced ahead of B4 because a
-  later type change would force rework on whatever consumes it first. ***
+  later type change would force rework on whatever consumes it first. _**
   Dispatched to B3 rather than E1 (the first consumer) deliberately: B6 and B7 both consume rungs and both come
   BEFORE E1, so routing the implementation downstream would leave two tasks building against a shape already
   ruled wrong. Brief demands proof the mistake is now a COMPILE ERROR (the previously-compiling read shown
@@ -3479,3 +3477,976 @@ compact` is DEAD in ESLint 9 — prints an install message and NO diagnostics fo
   carried — the point is to make the mistake impossible, not the diagnosis unavailable.
   docs/BILLING.md:826's false sentence remains in the founder's doc batch; the fixer verified it is the only
   other occurrence anywhere, and the batch must not close without it.
+- 2026-07-26: B3 new-scope type change DONE (impl-report-6.md). shared 124 files/2,970 tests coverage-green with
+  turn-types.ts and turn-core.ts at 100 on all four axes; typecheck 16/16 zero cached; arch:check 11 rules/2,017
+  files; eslint exit-0 over all 8 changed files post-final-edit. Both temporary probe files deleted.
+  GUARANTEE PROVED IN BOTH DIRECTIONS, and the technique is worth recording: the old read was shown to HAVE
+  COMPILED by placing an unused @ts-expect-error over it and observing TS2578 (an unused suppression is itself an
+  error), then the deleted cycle-4 code was shown failing verbatim. That is a genuine two-sided proof rather than
+  "it does not compile now", which would be consistent with the code never having existed.
+  BEHAVIOUR UNMOVED: zero movement over a 15,288-turn differential CONTROLLED TO FAIL.
+  DEVIATION ACCEPTED, and it improves on my ruling: it added a `kind` discriminator ALONGSIDE removing
+  `dimensions`, on the reasoning that the discriminator is the NARROWING MECHANISM while the removal is the
+  GUARANTEE — and that without it consumers would narrow on `'dimensions' in entry`. I had ruled a discriminator
+  alone insufficient, which was right; the combination is better than either. It also deletes the
+  classify-by-Selection prose the earlier docblock relied on.
+  IT PROTECTED THE INVARIANT IT NARROWED: the per-option half of admissible ⊆ affordable and rung-completeness
+  now bind on CANDIDATE rows only, since pinned rows carry no per-option data — so it added a
+  `rowsWithRungs > 100` control to prove the sweep still inspects rows. Narrowing a property's domain without a
+  control is how a property becomes vacuous, and it saw that unprompted.
+  CYCLE-4's CHARACTERISATION PIN retired to the type AND replaced one level coarser ("names the pinned sibling
+  that blocks the turn"), because otherwise nothing local would fail if pinned rows were switched back to
+  arrangement grading; watched red under that exact control, turn-core.ts restored byte-identically.
+  STOP-AND-ASK evaluated and correctly not triggered: no BILLING.md clause and no surface needs a pinned
+  sibling's PER-RUNG diagnosis — availability + turnDimensions carry everything asked for — and it named where a
+  per-rung blocking sibling would belong if ever wanted (on the turn-level option, not on a pinned row).
+  CONSUMER SWEEP: ModelEntry/dimensions had NO consumer outside packages/shared/src/affordability/ — six sites,
+  producer plus five test files — and turn-types/turn-options sit on NO barrel. So B6/B7/E1/E4 inherit a clean
+  surface: turnDimensions for what the turn can run, a CANDIDATE row for what may fill the slot and its ceiling,
+  a PINNED row's availability for which sibling blocks — classified by `kind`, never re-derived from Selection.
+  DOC BATCH GREW AND IS NOW LOAD-BEARING: BILLING.md §Data Structures is DOUBLY stale — line 826's sentence is
+  false AND ModelEntry is no longer one record — so "a consumer reading the spec will write the read the compiler
+  rejects". That moves the doc batch from tidying to correctness for anyone building E1 from the spec.
+  → Final audit dispatched to the auditor that carried B3 through four passes, resumed with its harnesses and
+  oracle. Five scoped judgments (is the mistake truly a compile error and is the TS2578 technique sound; did
+  behaviour move; is the property still non-vacuous after narrowing to candidate rows; is the kind+removal
+  combination right where I ruled kind alone insufficient; does the replacement pin fail under its control) plus
+  the consumer-sweep confirmation. Brief states plainly that I am closing the run out, will take any finding to
+  the founder rather than open another cycle, and that a clean verdict and a defect are equally useful — but a
+  hedged one is not. NO further implementation tasks will be dispatched per founder instruction.
+- 2026-07-26: B3 ruled-narrowing audit: **PASS, NO FINDINGS** ⇒ B3 fully clean, cycle 6 closed, and the
+  cycle-4 Minor discharged in code rather than in prose.
+  THE TS2578 TECHNIQUE VALIDATED, not accepted: TS2578 fires only when the line under an @ts-expect-error has
+  NO error, so it is TypeScript's own statement that the read compiled. The auditor reproduced it by copying
+  the shipped test into its pre-change mirror and observing the exact diagnostic, then re-added cycle-4's
+  deleted reader verbatim against the current tree and observed TS2339. Two-sided proof.
+  NO RESIDUAL PATH: every `.dimensions` occurrence is either narrowed on kind === 'candidate', on a value
+  already typed CandidateModelEntry, or the expect-error pin itself. Zero `'dimensions' in entry` probes, zero
+  casts, zero any, zero ts-ignore — and runnable/all remain the UNION, so the failure holds however a consumer
+  reaches the row. Data agrees: 460 of 460 pinned rows carried dimensions === undefined across 150 draws × 2 arms.
+  BEHAVIOUR UNMOVED ON 45,864 INDEPENDENTLY MEASURED RECORDS (22,932 turns × 2 arms, 10,978 sendable), against
+  the ACTUAL pre-change tree it still had mirrored: sendable + refusal 0, holdNanoUsd 0, every row's
+  availability/reason/ceilingTokens 0, runnable membership AND order 0, turnDimensions 0, candidate rows' option
+  lists 0 — and pinned rows' option lists 42,336, ALL to absent and nothing else. It also stated its own scope
+  limit unprompted: getTurnOptions publishes the hold but not the line-item manifest, so its differential covers
+  the hold, not the manifest.
+  THE NARROWED PROPERTY IS NOT VACUOUS, measured: of 1,500 rows, 1,040 are candidate rows carrying 2,826 rung
+  cells — 938 available and 1,888 greyed — so the sweep inspects ~69% of rows with both polarities heavily
+  represented. And the invariant is not weakened for three checked reasons: pinned rows remain constrained at ROW
+  level in expectSubset (availability AND ceilingTokens, the quantity both availability halves derive from); the
+  turn-level union is still asserted at OPTION level, which is what an effort control actually reads for a pinned
+  sibling; and the removed check HAD NOTHING TO CATCH — the same harness with pinned-row rung comparisons ran
+  against the PRE-change tree at 0 violations over 96,000 entry-checks. The subject was deleted, not the constraint.
+  MY RULING WAS RIGHT AND THE IMPLEMENTATION IMPROVED ON IT: a discriminator alone is insufficient (with
+  dimensions on both arms the mistake still compiles), so what shipped is the other order — the field is ABSENT
+  from the pinned arm (the guarantee) and `kind` is the sanctioned route to the arm that has it (the mechanism).
+  Without kind, a consumer's only routes are `'dimensions' in entry` — encoding the rule as "has the field"
+  rather than "is the kind" — or a cast. It also deleted something worse: the old docblock told consumers to
+  classify a row by cross-referencing Selection.answerSources.models, a SECOND DERIVATION OF A CLASSIFICATION
+  repeated in every consumer, which is precisely the family this run spent four cycles closing. kind is assigned
+  at exactly three sites, all from the plan the selection fixes.
+  THE REPLACEMENT PIN GUARDS ITS REGRESSION: applying the exact control (pinned grader siblingBlock →
+  arrangementBlock) reddens EXACTLY ONE test of 50 — "names the pinned sibling that blocks the turn" — which both
+  confirms it is the sole local guard and vindicates adding it rather than letting the type-level pin stand alone.
+  CONSUMER SWEEP CONFIRMED: no file outside affordability/ imports turn-types, turn-options, turn-core,
+  turn-arithmetic or getTurnOptions; every same-suffix name elsewhere is unrelated; neither barrel nor package.json
+  publishes any turn-\* path. B6/B7/E1/E4 inherit a surface reachable only through B8 — and the timing argument
+  holds: six sites had to narrow when the type landed, ALL inside the module; after E1 the same change would have
+  crossed into apps/web.
+  ONE NON-FINDING RECORDED FOR E1: a selection naming the same model twice yields TWO pinned rows for one modelId
+  (and correctly prices two siblings, since two picks are two calls). Pre-existing in every cycle, not a money
+  defect — but a list keyed on modelId will collide, so E1 must key on POSITION.
+- 2026-07-26: **RUN PAUSED AT FOUNDER INSTRUCTION. Nothing in flight, nothing half-finished, no task mid-cycle.**
+  Founder: dispatch nothing further, take in-flight work to a clean audit, then record state. Done — the one
+  in-flight task (B3's ruled narrowing) reached PASS with no findings.
+  CLEAN, 7 of 25 lettered tasks: B1, B1b, A1, F1, B2, F2, B3. NOT STARTED, 18: B4, B5, B6, B7, B8 · C1, C2, C3 ·
+  D1, D2 · E1, E2, E3, E4 · G1, G2, G3 · H1. Nothing committed; baseline 39a07db0.
+  plan.md updated with (a) a RUN STATE block naming what is clean, what is unstarted, what a resuming orchestrator
+  must not re-derive, and the fact that B1b left the wall OPEN behind 14 interim subpaths; (b) the full fourteen-item
+  BILLING.md batch consolidated in one place, ordered by consequence, with the five already-applied edits listed so
+  they are not re-proposed; (c) a six-item open-questions section. ledger.md carries the full audit trail.
+  THE RUN'S OWN SCORECARD, recorded because it is the useful artefact: 7 tasks clean cost 14 fix cycles and 20
+  audits, and the audits found 2 Criticals plus 5 family members that no self-gate caught. SEVEN defects were in
+  MY plan or my own assertions rather than in implementer work — wrong reach-in figures, a false fee-seam
+  mechanism, criteria that depended on unbuilt producers (twice), items routed to a task's amendment instead of its
+  criteria, a spec clause mis-cited twice, a contract sentence promoted into the plan without deriving it, an
+  `OptionSet` union that hid rows a payer needed greyed, and two suggested fix directions that were both
+  measurably non-monotone. The pattern in every case was the same: asserting a mechanism I had not derived.
+- 2026-07-26: **FOUNDER RULED ALL SIX OPEN QUESTIONS. DOC BATCH APPLIED. PLAN CONSOLIDATED.**
+  BILLING.md: prettier-clean. The fourteen errata plus FIVE NEW NORMATIVE
+  STATEMENTS from the rulings. Verified no stale string survived (the "every combination inside is feasible"
+  sentence, the three-member resource union, FEE\*RATE, the old MIN_PRICE constant name, ReasoningMetadata, the
+  "held exactly when" reserve clause, the three-arg getTurnOptions signature, and the fee-applications-as-barrel-
+  seams line are all gone).
+  RULING 1 — EXCLUSION IS A SOFT DELETE WITH A REASON. NEW TASK A2 (26 tasks now, and it is independently
+  dispatchable). Founder asked for the exact schema, so: pgEnum `model_exclude_reason` over A1's existing
+  EXCLUDE_REASONS (sourced, never retyped — one authority), plus excluded_reason (nullable), excluded_at, and
+  last_seen_at NOT NULL DEFAULT now(); exposure filters excluded_reason IS NULL AND admin_disabled_at IS NULL;
+  NO INDEX at a few hundred rows. THE DECIDING ARGUMENT, recorded because it is what rules out the cheap option:
+  excluded_reason is DERIVED (the hourly refresh recomputes it, so a model whose price clears the floor returns
+  with no human action) while adminDisabledAt is ASSERTED by a person — sharing one column would force the refresh
+  either to overwrite a human's decision or to trap a model out permanently, and neither is acceptable. Also
+  corrected my own earlier framing: rows are MARKED, NEVER CREATED, because several exclusion reasons exist
+  precisely because the descriptor is unbuildable (unknown pricing unit, unclassifiable modality) — there are no
+  values to write. Every reason nonetheless stays REACHABLE on the column, since any can newly apply to a model
+  that already has a row. Read-time filtering was rejected on a hard constraint: the floor tests the PRE-FEE rate
+  while rows store billable, so recovering it means inverting markup — lossy at integer boundaries and fee math
+  outside its two seams. last_seen_at buys the vanished-upstream case for one column.
+  RULING 2 — THE PAYER IS DECIDED ON minTurnCost; C3's BAR IS LIFTED. The payer decision and the price are
+  mutually dependent, so iteration has no guaranteed fixed point; the resolution is ASYMMETRY, not iteration —
+  compute the least the turn could cost IF THE CANDIDATE PAYER PAID, at that payer's tier, and fall through when
+  group headroom cannot cover even that. One pass, because the result never feeds the input. Cost is lower than it
+  looked: the minimum needs rates for the selected models, which the send path reads anyway to compile the
+  definition, so it is a REORDERED read rather than a new one. Same reordering fixes the estimate-blind premium
+  tier gate. GENERALISED INTO BILLING.md: "a decision that gates pricing may consume only bounds, never prices",
+  with eligible(m) named as the existing instance of the same rule.
+  RULING 3 — THE OPTIMISTIC CEILING IS ACCEPTED AND NOW DEFINED. ceilingTokens on a row of a turn with unresolved
+  slots is a BEST CASE. Founder asked whether the hold is still bounded at the top by what a model could ever
+  output: YES — ceiling(m) = min(providerCap ?? contextLength, contextHeadroom, budgetBuys), so the token basis is
+  capped by capability, context AND money; across siblings it is a MAX over arrangements, not a sum; and the
+  optimistic presented number never enters the hold (measured: presented 64,000 against a hold priced on 13,291).
+  Recorded honestly that the guard keeping it display-only is B6's B + H == ceiling bound, which is NOT YET BUILT,
+  and that whole-run SPEND is bounded by hold × K + concurrent width × max step cost (K=5), not by the hold.
+  BILLING.md now states the asymmetry itself — presented ceilings best-case, hold worst-case, which is what makes
+  BOTH monotone — because that is the sentence that stops a future reader "fixing" one of them.
+  RULING 4 — G1 RULE 7 REJECTS A BARE `string` PARAMETER; branded and refined string types stay legal. The
+  principle written into BILLING.md is the durable part: PHRASE THE RULE OVER WHAT A TYPE PERMITS, NOT WHAT IT IS
+  NAMED — a content-type-name list is a sync contract in rule form that a new content type silently escapes.
+  Dependency recorded in B8: ModelId must become a BRANDED string, since model ids are bare strings today and
+  §Data Structures already named ModelId as though it existed — one change closes both items.
+  RULING 5 — ONE PREMIUM CLASSIFIER, AND TRIAL DROPS STORAGE. B5 collapses onto affordability/premium.ts and
+  deletes trial-eligibility.ts's duplicated price percentile and recency window; the module can host it because
+  both the clock and the pool percentile are INPUTS, which preserves purity. And the trial gate stops pricing
+  storage — §Trial Usage's "trial never persists" is unconditional. PRODUCT CONSEQUENCE B5 must MEASURE rather
+  than ship quietly: storage was INFLATING trial cost, so the 1¢ cap now buys more and MORE MODELS BECOME
+  TRIAL-ELIGIBLE. Eligibility before and after is a required report item.
+  RULING 6 — BATCH APPLIED, and the process lesson is mine: batching doc corrections to avoid churn produced a
+  fourteen-item backlog whose first item became a correctness problem. Durable rule: a task invalidating a
+  normative statement corrects it IN THAT TASK, because a batch's cost grows with every reader who arrives before
+  it lands.
+  \*\*\* STANDING RULE ADDED FOR THE REST OF THE RUN, from the pattern under rulings 4, 5 and 6: A TASK THAT
+  SUPERSEDES A LIVE PATH DELETES IT IN THE SAME TASK, OR THE PLAN NAMES THE DELETING TASK IN THAT TASK'S CRITERIA
+  BEFORE THE REPLACEMENT LANDS. Not "records that it should be deleted" — names the owner, in criteria. This run
+  built a correct thing beside an incorrect one four times (premium classifier, vocabulary functions, classifier
+  storage, doc text) and every instance became a defect or an open item. Three of the six questions would not have
+  existed under this rule. \_\*\*
+  PLAN STATE, final for this session: 7 of 26 clean (B1, B1b, A1, F1, B2, F2, B3); 19 not started, of which A2 and
+  B4 are dispatchable immediately and the rest sit behind the B-spine. plan.md carries a RUN STATE
+  block, the full six rulings with their rejected alternatives, the applied-doc-batch record, and every routed item
+  in its OWNING task's criteria rather than in the routing task's amendment. Nothing in flight. Nothing committed
+  by me; HEAD is ada0341c and the founder's own commits absorbed the run's code.
+- 2026-07-26: VERIFICATION SWEEP of the six rulings against both docs, run because the founder asked whether the
+  answers are actually IN the docs rather than only in the conversation. All six present in both files, split by
+  design: BILLING.md carries each decision as SYSTEM BEHAVIOUR, plan.md carries the REASONING, the rejected
+  alternatives and the task assignment. The two spec-absent items are absent correctly — C3's dispatch state and
+  the batch-applied record are run bookkeeping, not spec content.
+  **_ ONE REAL GAP FOUND AND CLOSED, and it is the exact class this run kept getting bitten by: the spec USED
+  `ModelId` five times and NEVER SAID IT IS BRANDED, while ruling 4's arch rule depends on precisely that. A reader
+  defining `type ModelId = string` would have broken the wall by accident — or, worse, added an allowlist entry to
+  the rule to accommodate it. §Data Structures now states that identifiers are branded and WHY it is load-bearing
+  rather than stylistic, naming the bare-`string` rule as the dependency. Found by checking the claim instead of
+  asserting it; the grep showed 5 uses and 0 statements. _**
+- 2026-07-26: **DOC CORRECTIONS APPLIED, founder-approved, then RUN RESUMED.** A pre-dispatch read of all three
+  documents found four problems; the founder authorised fixing the first three in the correct direction, recording
+  only final durable state, and DELETING rather than correcting the fourth.
+  (1) `BILLING.md` carried NINE stale path citations, so the doc contradicted itself on five files — the applied
+  batch had updated the Configuration Reference table and missed the inline prose, and missed two table rows
+  (Money math, Canonical estimator) besides. All nine repointed into `affordability/`. The worst was the fee-constants
+  citation, which named a path that STILL RESOLVES while holding no fee constant — a reader finds an innocent file
+  rather than an error. Verified by sweeping EVERY file path in the doc, not just the nine: all shared paths plus
+  every `apps/`, `packages/db`, `scripts/` and `e2e/` citation now resolve on disk. The single remaining
+  non-`affordability` shared path is `MAX_SELECTED_MODELS` in root `constants.ts`, correctly unchanged as the
+  non-money half — the trap B1's auditor named.
+  (2) plan.md contradicted itself on whether the doc batch was applied: RUN STATE and ruling 6 said applied while
+  §Close phase still opened "the FULL BILLING.md BATCH … unapplied" and re-listed all fourteen items. That was
+  hiding the real residual in (1) rather than being cosmetic. §Close phase item 5 now states the spec is current,
+  points at ruling 6's correct-it-in-the-task rule, and carries only the two genuinely owed docs
+  (`ARCHITECTURE.md`'s missing Smart Model node type and its commercial-vs-representability exclusion distinction;
+  `DEVELOPMENT.md`'s index).
+  **_ (3) THE GIT FACTS WERE STALE IN THE DANGEROUS DIRECTION, and this one changes what every later audit can
+  prove. plan.md said "Nothing is committed; the baseline is 39a07db0". FALSE: HEAD is ada0341c ("billing refactor",
+  11:13), it tracks 95 `affordability/` files, and every old money path is gone from it — the run's code is
+  committed and the money module is a TRACKED directory. So the workarounds this run invented for an untracked
+  directory (the pre-move-twin method note, "byte-identity impossible while uncommitted", "no baseline hash
+  exists") are obsolete AND prove strictly less than what is now available. RUN STATE gained a git-baseline
+  subsection with the three facts a subagent needs: baseline identity claims with a plain `git diff HEAD -- <path>`
+  and never settle for mtimes or green tests; NAME the commit in any reported comparison, since a bare HEAD moves;
+  and the working tree holds only doc files plus one two-line comment in `turn-core.ts`, so a red suite is yours or
+  on §Known Breakage rather than uncommitted run state. The two obsolete §Known Breakage entries were deleted,
+  keeping their one durable residue (`scripts/generate-env.test.ts` fails on three VAPID/notification secrets ⇒
+  push workstream). Three provenance citations naming the old SHA now state the durable fact instead, verified
+  rather than assumed: the `search-reservation.ts` relocation is a pure rename, so its markup baking is
+  content-unchanged by this run. _**
+  (4) Line-count figures REMOVED from both files rather than corrected, per founder instruction — they are
+  ephemeral values CODE-RULES bans from documentation and they had already drifted three times.
+  A SELF-CORRECTION worth recording because it is the same class the run keeps hitting: my first draft of the
+  git-baseline instructions shipped a `grep -v` recipe for proving a comment-only diff that only matches JSDoc
+  continuation lines — it would have silently passed a changed `//` comment or a changed line of CODE. Replaced with
+  "read the diff and account for every hunk". A half-right recipe inside a plan is worse than none, because it
+  licenses weaker evidence while looking rigorous. Both commands in the final text were executed before shipping.
+  §B4 CRITERION ADDED before dispatch, a gap visible only now that B3 is clean: **B3's existing money pins stay
+  green exactly as written.** B3 pins holds BY AMOUNT (three-sibling inputStorage-once, heterogeneous money-bound
+  pair, smart-slot MAX), and B4 is verification-and-deletion on top of a solve that already exists, so no hold
+  should move. A red pin is a finding for the orchestrator, never an expectation to rewrite — without this the
+  cheapest way to satisfy B4 is to update a money pin to match whatever the code now does.
+  → **A2 and B4 DISPATCHED CONCURRENTLY** — the run's first parallelism, and the reason it exists now is that the
+  B-spine foundation is clean while A2 is independent of it. File sets verified disjoint: A2 owns
+  `packages/db/src/schema/**` + migration, `models/domain/{refresh,normalize}.ts`, `models/adapters/catalog-store.ts`;
+  B4 owns `affordability/**`, `chat/domain/turn-definition.ts`, `models/domain/estimate-run.ts`. Both money-flagged
+  ⇒ 2 independent auditors each.
+  A2's brief carries four facts absent from the plan: B4's ownership list; that the pgEnum is SOURCED from A1's
+  `EXCLUDE_REASONS` and never retyped; that the local dev catalog holds only about a dozen rows because concurrent
+  test runs wipe it, so a small local table proves nothing about reachability; and that it is the first schema task
+  since the resume, so the migration and the `packages/db` shape-test registry ship in the same task. Two
+  NEEDS_CONTEXT triggers, each shaped to catch a predictable wrong turn rather than a general difficulty: an
+  exposure path that cannot filter without breaching single-writer-per-table, and Drizzle's tuple-literal
+  requirement blocking the sourced enum — where the tempting workaround is exactly the second list the criterion
+  forbids.
+  B4's brief front-loads the two inversions that would cost a cycle: B3 ALREADY built the shared-token solve so it
+  must not be rebuilt, and `fitAnswerCapToCeiling` SURVIVES because it calls the canonical estimator precisely to
+  avoid a second one — an earlier plan revision had that delete target inverted, and deleting the fit is the known
+  wrong move. It is also told A2's concurrent enum work can redden `@hushbox/scripts` and `packages/db` typecheck
+  mid-flight, so it re-checks before attributing.
+- 2026-07-26: A2 implementer DONE\*WITH_CONCERNS (impl-report-1.md) → auditing, 2 independent auditors
+  (schema+lifecycle / exposure+boundaries). test:db 531, test:shared 2962, owned api scope 800, typecheck 16/16
+  uncached, migration drift gate clean (0060 present), arch:check green, eslint exit-0 over owned dirs in four
+  packages post-final-edit. LIVE MEASUREMENT, not fixtures: 389 discovered / 182 admitted / 207 excluded; two
+  consecutive live refreshes advanced last_seen_at on 182 of 182 rows; 207 exclusions created 0 rows. No index —
+  stated as a decision at 182 rows with whole-table reads only.
+  TWO DEVIATIONS, both plausibly forced, both routed to audit rather than accepted by me: EXCLUDE_REASONS moved to
+  packages/shared/src/models/exclude-reasons.ts (NOT the tuple-literal blocker my brief anticipated — the real
+  cause is that packages/db cannot import apps/api, with 11 existing pgEnums deriving from shared closed sets as
+  precedent, and the models-barrel re-export chain deleted so one import path remains); and a new
+  port+adapter pair with a REQUIRED recordSighting on RefreshCatalogDeps threaded through scheduled.ts,
+  seed-toolkit.ts, a script and six test files, forced because an UPDATE…WHERE needs operators the domain may not
+  import. The operator-free upsert alternative would rewrite every descriptor jsonb hourly, so the deviation is the
+  cheaper correctness. Neither was in the plan's Files list; the boundary auditor judges whether each was forced or
+  chosen, and specifically whether recordSighting became required by typecheck rather than by preference.
+  \*\*\* COVERAGE-GATE TRAP RAISED, AND IT AFFECTS EVERY REMAINING TASK IN THIS RUN. `pnpm test:api` prints NO
+  threshold table when any test fails — vitest never reaches the coverage report — so a red suite SILENTLY HIDES
+  the per-file 95% gate, and a red run is not evidence that coverage was fine. The implementer found this the
+  useful way: a scoped --coverage.include run caught a real 66%/75% shortfall in its OWN new adapter that the
+  suite-level run said nothing about. An earlier F1 audit noticed the same mechanism in passing and it never became
+  an instruction; it is now a §Known Breakage standing rule — gate on scoped coverage, never on test:api's exit
+  code. That earlier near-miss is the lesson: an observation that does not become an instruction protects nobody. \_\*\*
+  SECOND §KNOWN BREAKAGE ADDITION: adding a file to packages/shared invalidates the api vitest pre-bundle, so
+  unrelated apps/api files fail at COLLECTION on deps_ssr/@hushbox_shared.js. Distinct from the existing
+  stale-optimizer entry — this one a `rm -rf apps/api/node_modules/.vite` genuinely cures, where that one is a
+  URL-mangling bug a valid cache cannot fix. Recorded with the distinction so neither excuses the other.
+  TWO OUT-OF-SCOPE NEEDS surfaced, both to be dispositioned once the audits are in: the admin Models screen shows
+  a soft-deleted model as ENABLED (listAdminCatalog carries adminDisabledAt but not excludedReason), and
+  scripts/lib/e2e-models.ts asserts row PRESENCE rather than sellability, so an E2E model that becomes
+  inadmissible keeps its row, passes the guard, and is invisible to the product. The exposure auditor is asked to
+  confirm or refute both AND to say whether either is in fact inside A2's criteria rather than outside them —
+  since "out of scope" is the implementer's reading of my criteria, not a fact.
+  A2 also attributed two api chat failures to B4's turn-definition.ts. B4 independently reported the same two as
+  its own; two routes to one attribution, which is the corroboration neither alone would give.
+- 2026-07-26: **_ B4 NEEDS_CONTEXT — CORRECTLY BLOCKED, and the criterion I added before dispatch is what
+  produced the useful outcome. B4 reports that deleting the summed-rate guess leaves the TRIAL answer cap
+  UNGATED: POST /chat/trial is quota-gated, its definition deliberately unstamped so reconcileAnswerCeiling
+  no-ops, and the wire cap moved 7,909 → 999,194 tokens. It offered two resolutions and CHOSE NEITHER. _**
+  THE ADDED CRITERION WORKED EXACTLY AS INTENDED: two pre-existing api money pins moved and B4 did NOT rewrite
+  either — the trial cap, and turn-definition.integration.test.ts's "omits the ceiling for a rich payer" going
+  {} → {maxOutputTokens: 127997}. Under the previous criteria the cheapest way to finish B4 was to update both
+  expectations to match the new behaviour, which would have shipped the trial exposure GREEN. Every shared money
+  pin stayed green and the paid-path 56,602 figure is unchanged, so the fit reproduces the deleted guess wherever
+  money binds — which localises the problem to the path where money does NOT bind. That is the whole finding.
+  ALSO RAISED: answerHeadroomTokens + turnCostBasis are a SECOND summed-rate derivation inside apps/api (rate
+  arithmetic against Global Constraint 4), unowned, and B4 argues it cannot follow the deletion because
+  trialReasoningSelection uses it as the trial money gate BEFORE any definition exists to price — the same
+  ordering shape as the blocker itself. A widened deviation from §Multi-Model 3 (one shared wire cap sized by the
+  tightest sibling; a rich payer previously got none, so the wide sibling ran to its own bound — pre-existing
+  where money binds, now universal). A latent hazard in fitAnswerCapToCeiling, which prices a capped definition
+  but returns the one as built, sound today only because every caller passes the same number to both. Plus three
+  scope additions (two orphan symbols deleted, the compile seam exported for the sweep, one param renamed).
+  MY DECISION: escalate to the founder rather than rule. The blocker indicts MY criterion 6 ("the summed-rate
+  guess is deleted; the fit survives"), and per the skill the plan's author does not grade its own work. It also
+  changes a documented contract and a live cap amount on a money path.
+  → But NOT escalating on the implementer's word alone: ONE VALIDATOR dispatched first, read-only, narrow, on six
+  numbered questions — confirm the mechanism and both amounts by observation; determine whether a single trial
+  turn can actually bill far beyond what the gate admitted or whether another clamp bounds it (the question the
+  founder's decision turns on); read §Math trialTurnCost and §Trial Usage DIRECTLY to judge resolution 1 rather
+  than accepting the report's citation of them; confirm the rich-payer hold moves DOWN not up; test both halves of
+  the second-derivation claim; and rule on the §Multi-Model 3 widening and the latent hazard. It is explicitly
+  invited to supply a THIRD resolution, since one would be worth more than adjudicating the two. The reason for
+  validating before escalating is this run's own record: two prior escalations rested on a mis-cited clause, and
+  seven defects came from my asserting a mechanism I had not derived.
+- 2026-07-26: B4 BLOCKER VALIDATED — verdict FAIL, the tree must not land as-is. Validator confirmed every claim
+  it could execute and CORRECTED the report in four places, all in the direction of more work, not less.
+  CONFIRMED: mechanism verified in code (quota-only trial admission; unstamped definition; reconcile's early
+  return on `stamped.storage === undefined`), both amounts reproduced verbatim (7,909 → 999,194 and
+  {} → {maxOutputTokens: 127997}), and the rich-payer hold confirmed moving DOWN three tokens against
+  declaredOutputCeiling with a no-markup estimator ⇒ not a reserve regression. I re-derived the 7,909 arithmetic
+  myself rather than taking it: 483,300 of 484,912 fixed nano and 1,200 of 1,203 variable are STORAGE.
+  ORCHESTRATOR-VERIFIED URGENCY, and it changes the framing: the exposure is WORKING-TREE ONLY. HEAD still
+  carries computeSafeMaxTokens (4 occurrences); B4's deletion is uncommitted. A must-not-land gate, not a live
+  incident. I checked this before escalating rather than letting the founder infer urgency from a Critical label.
+  **_ FOUR UNDERSTATEMENTS, each of which would have produced an incomplete fix. (1) A SECOND UNGATED DOOR: the
+  trial Smart Model arm is ungated by the identical mechanism and NO test pins its wire cap at all — a
+  single-arm fix lands open AND green. (2) The trial cost circuit is `estimate × 5` over the inflated estimate,
+  so it loosened by the same factor. (3) Resolution 1 does NOT change the failing pin's number at that fixture —
+  the spec-conformant cap there IS 999,194, because rates are 2–3 nano/token and the money term does not bind, so
+  the fixture cannot prove the fix. (4) The deleted 7,909 was ~99.8% storage, a cost §Trial Usage says trial never
+  pays — so it was non-conformant in the CONSERVATIVE direction. Neither number is the spec's. _**
+  SPEC READ DIRECTLY, not through the report's citation — the lesson from two earlier mis-citations, and it
+  paid: the mandate is §Model bounds + §Affordability 7 + §Smart Model 7, which REQUIRE a money term on the
+  trial ceiling. B4 cited ruling 5, which supports only the storage-free half. So the current state VIOLATES the
+  spec and resolution 1 restores conformance — this was never a preference between two designs.
+  VALIDATOR SUPPLIED A THIRD RESOLUTION neither B4 nor I had: resolution 1 and the answerHeadroomTokens deletion
+  are ONE change. Fit unstamped turns against payerSpendable (closing both doors) AND move the trial gate to
+  compile-then-price, which deletes turnCostBasis/summedTurnPricing/answerHeadroomTokens — retiring the last rate
+  arithmetic in apps/api and leaving createEstimateRun as the single numeric authority on every money path. It
+  also refuted B4's "cannot follow the deletion": the ordering claim is exact, but the restructuring that fixes
+  the blocker is the one that makes the deletion possible. Asking for a third option rather than only adjudicating
+  two is what produced the best answer available.
+- 2026-07-26: FOUNDER RULED ALL THREE. (1) Resolution 3. (2) §Multi-Model 3 fixed in B4 — per-sibling wire caps;
+  holds may only move down. (3) The fit returns the definition it priced, fixed in B4 rather than routed to Lane C,
+  because Lane C's classifier node is what arms it in the UNDER-RESERVING direction and it lands inside this run.
+  Eight ruled criteria written into plan.md as §B4 additions, so implementer and auditors read one source. Two
+  deserve recording as criteria rather than notes: the property sweep must cover the UNSTAMPED arm, because its
+  stamped-only grid is precisely why the regression was invisible to it and surfaced through a single route pin —
+  the guard that failed is the guard to fix; and the trial cost circuit's deflation must be SHOWN, not assumed to
+  follow, since "it should follow automatically" is the class of claim this run keeps finding false.
+  → B4 RESUMED FROM TRANSCRIPT rather than a fresh fixer: it holds the deletion, the mutation-demonstrated sweep
+  and the differential harnesses, all of which a new agent would rebuild. Given the ruling plus the five facts it
+  lacked, and told explicitly which of its findings were confirmed in its favour so it does not re-litigate them.
+  The money-pin standing rule still binds with exactly two named exceptions (the shared-sibling route pin and the
+  trial route pin), and both must move with the new amount DERIVED rather than copied from what the code emits —
+  otherwise the exception becomes the loophole the rule exists to close.
+- 2026-07-26: A2 audits both in ⇒ PASS + PASS. EXPOSURE/BOUNDARIES lens: ZERO findings. It enumerated twelve
+  exposure paths INDEPENDENTLY before opening the report and matched it path-for-path, and named the change's best
+  property better than the report did: the surface was collapsed to ONE chokepoint (listDescriptors) rather than N
+  filters, so "a path forgets the filter" is structurally hard to reintroduce rather than merely absent today. It
+  verified the domain-may-not-import-drizzle constraint by proving ZERO domain files import it repo-wide, and
+  confirmed the money wall untouched. SCHEMA/LIFECYCLE lens: 3 Minors, and it reproduced the live numbers itself
+  from an empty local DB — 389/182/207, 182 of 182 last\*seen_at advancing, 207 exclusions creating 0 rows — plus a
+  planted-probe test proving both directions on real rows: a marked row kept an operator's admin_disabled_at, and a
+  cleared row kept it while returning to sellable with zero human action. It stated the guarantee's honest limit
+  unprompted: distinct columns + writer discipline + two pins, with no trigger stopping a future writer from
+  touching both — which is the level ruling 1 asked for.
+  THREE VALIDATED MINORS → A2 fix cycle 1, resumed from transcript. (1) The no-index decision lives ONLY in the
+  impl report, which the doc-lifecycle rule says is never cited as current, while criterion 7's stated purpose is
+  that a later reader sees a decision rather than an omission — and that reader reads the schema. I arbitrated the
+  criterion's ambiguity toward the durable placement. (2) A WRONG COMMENT ON THE TASK'S MOST LOAD-BEARING LINE:
+  model-catalog.ts:22-23 still says the refresh upsert touches only `descriptor`, now false — it writes five
+  columns — and the true invariant (admin_disabled_at is never in ANY refresh set clause) is exactly what ruling 1
+  rests on. (3) The e2e guard asserts row PRESENCE not sellability, so a marked E2E model passes the guard and the
+  suite fails mid-test on a model /models hides.
+  \*\*\* THE TWO AUDITORS SPLIT ON FINDING 3 AND I RULED IT A FINDING. Lens A gave a concrete inputs→wrong-state
+  scenario; lens B called it a design question and refuted it as an A2 criteria failure while ALSO reporting that
+  the file's inlined predicate is a BANNED SYNC CONTRACT THAT HAS ALREADY DRIFTED (missing the isRunnableModelShape
+  leg). Both are right about different things, and the standing rule from ruling 6 decides it: a task that
+  supersedes a live path fixes it in the same task. A2 added an exposure condition the guard cannot see, so A2
+  fixes the guard — as a QUERY FILTER specifically, which touches no predicate. The predicate collapse is an
+  architecture decision and routes to the duplication task. Splitting the finding this way is what lets both
+  auditors be right without deepening the duplication. \_\*\*
+  DEFERRED ITEM SHARPENED, not re-escalated: ruling 1 put acting on staleness out of scope, and the exposure lens
+  established the consequence precisely — last_seen_at has ZERO readers repo-wide, so a model that vanished
+  upstream stays sellable and a user CAN select it and fail at the provider call. "Detectable" today means
+  detectable by a human who thinks to run SQL. Already ruled; recorded with its verified consequence so the
+  eventual auditor task inherits the facts rather than rediscovering them.
+  OPERATOR-BLINDNESS ITEM NEEDS AN OWNER (both lenses, converged): a soft-deleted model reads `Enabled` on the
+  admin Models screen, since AdminCatalogModel carries adminDisabledAt but not excludedReason. Not an A2 criteria
+  failure — that read never filtered admin_disabled_at either, so it was not an exposure path before A2 — but the
+  staleness auditor ruling 1 deferred would want the same wire fields, so the two belong to one follow-up.
+- 2026-07-26: A2 fix cycle 1 DONE (impl-report-2.md; the report's own heading says "cycle 2" — this is A2's first
+  fix cycle, correcting for the record). All three Minors landed. scripts guard tests 2 files/16 incl. a new
+  red-then-green filter pin; test:db 531 + 2 workers; drift gate clean (comment-only edits produce no SQL delta);
+  eslint exit-0 from both packages/db and scripts post-final-edit; scoped coverage on the edited guard green.
+  FINDING 1 — the implementer disclosed a placement error IT caught itself: its first attempt put the no-index
+  comment after `lastSeenAt`, where it read as annotating `createdAt`. It now heads the three-column block and
+  names the columns, and the measured figures (182 rows, 389 discovered) are in the SCHEMA rather than only in the
+  run record — which was the whole point of the finding, since the run record is never cited as current.
+  FINDING 2 swept repo-wide: the false "touches only `descriptor`" phrasing existed in exactly ONE place, and three
+  sibling comments were correctly LEFT ALONE because they assert the neighbouring fact accurately ("never touches
+  admin\*disabled_at"). Not widening a sweep to cosmetically similar-but-correct comments is the right restraint.
+  FINDING 3 forced one honest copy change the finding did not anticipate, and the implementer surfaced rather than
+  buried it: a soft-deleted id now hits the `raw === undefined` branch, whose message blamed a failed catalog
+  refresh — which would send a maintainer hunting a refresh failure for a routine `too-old` mark. The message now
+  names all three causes. `isExposed` untouched: not collapsed, not extended, the missing isRunnableModelShape leg
+  still absent exactly as instructed, so the duplication was neither deepened nor pre-empted from its owner.
+  \*\** THE ONE ITEM I SENT TO RE-AUDIT AS THE HARDEST JUDGMENT: finding 3's pin renders the WHERE condition through
+  PgDialect().sqlToQuery rather than exercising real rows. The stated reason is that a real-Postgres pin would have
+  to insert real E2E*MODELS ids into the SHARED dev model_catalog, poisoning the apps/api suites that read it —
+  which hold a Redis catalog lock `scripts` has none of. Plausible and specific, and the fake was tightened to
+  resolve only through `.where(...)` so deleting the filter reddens all 12 tests. But a SQL-rendering pin is a
+  weaker artifact than a behavioural one, and "the environment made the real pin impossible" is exactly the shape
+  of reasoning that should be checked rather than accepted — so the re-auditor is asked to delete the filter in a
+  scratch copy and confirm the claim, AND to test whether the stated impossibility is true. \*\*\*
+  ALSO ROUTED TO RE-AUDIT: two pre-existing assertions were updated to a longer substring. A fix cycle editing
+  existing assertions is where teeth are lost with no expect line disappearing, so each must be shown strictly
+  more specific rather than merely different.
+  ATTRIBUTION ACCEPTED PENDING CONFIRMATION: repo typecheck is 11/16, and the implementer's reasoning is sound —
+  the typecheck immediately before this cycle was 16/16 with all A2 code in place, and this cycle edited only two
+  packages/db comments plus the scripts guard, so the five red packages are B4's mid-flight deletion
+  (`answerHeadroomTokens` gone, `AnswerCapFit` mismatches). Recorded as reasoning rather than proof; the
+  re-auditor confirms.
+  A1-TRAP RE-CHECKED BY THE IMPLEMENTER UNPROMPTED, and this is the §Known Breakage lesson working as intended:
+  refresh-catalog-run.test.ts still never executes, so cycle-1's edit to scripts/refresh-catalog.ts is gated by
+  typecheck and lint ALONE. Both verified clean on it, its executing sibling passes, and its exhaustive
+  excludedByReason map needed no edit since A2 adds no reason. That is precisely the trap that broke the repo
+  during A1 — a file on the breakage list is unattributable by default, not invisible.
+  → A2 fix re-audit dispatched: ONE auditor, narrow, and the justification is IN the brief so the auditor can
+  push back on it — two lenses already passed on substance, no money arithmetic changed, diff is two comments plus
+  a test-infra filter. It is told that if the fix disturbed the schema, lifecycle or exposure surface, that IS a
+  finding, so narrowing cannot be used to wave one through.
+- 2026-07-26: A2 fix re-audit: FAIL — 1 Important + 1 Minor, and the Important is the sharpest self-referential
+  defect of the run. Auditor ran blind first, then reconciled.
+  **_ IMPORTANT — THE COMMENT WRITTEN TO FIX A WRONG-COMMENT FINDING IS ITSELF WRONG, AND ITS OWN CYCLE'S SIBLING
+  EDIT IS WHAT FALSIFIED IT. model-catalog.ts:33-39's no-index rationale asserts three checkable falsehoods:
+  (a) "every read is a whole-table select so no predicate exists for an index to serve" — there are three
+  production reads and only one is whole-table (catalog-store whole-table, catalog-admin keyed, and
+  scripts/lib/e2e-models FILTERED on excluded_reason + admin_disabled_at); (b) that filtered read is the one
+  FINDING 3's OWN EDIT ADDED IN THE SAME CYCLE, so the comment's revisit trigger ("revisit if a filtered query
+  over these columns appears") was tripped by its author's sibling change and the comment tells the next reader
+  the condition is unmet at the moment it was made met; (c) "the one keyed write" — there are three, or two
+  scoped to the lifecycle columns. The DECISION is sound and criterion 7 is literally met; what is broken is the
+  MECHANISM, which is how a future engineer decides whether to index — a tripped trigger stated as untripped
+  disables it. Same class as finding 2, inside the fix for finding 1. _**
+  MINOR — THE PIN CANNOT DISTINGUISH `and` FROM `or`, and the auditor proved it rather than reasoned it: two
+  `toContain` substrings both appear in either rendering, and a scratch copy using `or(...)` passes 12/12.
+  Concrete reachable state: a row with excluded\*reason='below_price_floor' and admin_disabled_at=NULL satisfies
+  the disjunction, is returned, the guard passes, and the suite fails mid-test on a model /models hides —
+  precisely the regression finding 3 exists to prevent. One-line fix, no row-level infrastructure.
+  TWO CLAIMS CONFIRMED BY EXECUTION, closing the judgment I most wanted tested: deleting the `.where(...)` in a
+  scratch tree reddens 12 of 12, so the tightened fake has genuine teeth; and the stated reason for avoiding real
+  rows is TRUE — the auditor found apps/api/.../model-catalog-lock.ts, used by 16 api suites, whose own docstring
+  states the shared-global-read mechanism verbatim, with no equivalent or legitimate import path from scripts. So
+  the SQL-rendering pin CLASS is defensible and the Minor is about precision within the class, not the class. That
+  is the difference between "the environment forced a weaker pin" being an excuse and being a fact — checked, and
+  it was a fact.
+  ALSO VERIFIED, so not re-litigated: the two lengthened assertions are strictly more specific (four distinct
+  messages exist; the substring binds the same branch and adds the discriminating word); the adminDisabledAt
+  comment is TRUE against BOTH refresh write paths column-by-column, with the union matching the five it lists;
+  the three sibling comments left alone all assert the neighbouring fact correctly; placement is now unambiguous
+  and the measured figures live in the schema; and the new filter provably cannot hide the seeded synthetic image
+  row, since upsertCatalog writes excludedReason null and the refresh marks only ids present in the live fetch.
+  ATTRIBUTION QUESTION DISSOLVED: repo typecheck is 16/16 with 0 cached — B4's mid-flight red packages have gone
+  green, so nothing needed attributing after all. Recording that the earlier 11/16 was correctly read as transient
+  rather than chased.
+  \*\** ORCHESTRATOR-OWNED DOC FIX, done by me because .md files are mine: the auditor found the SAME false
+  mechanism in docs/plans/ADMIN-PLANE.md at three sites, one stamped "Verified 2026-07-12". It judged this NOT a
+  finding on the reasoning that the doc is destined for docs/history/. I RULED OTHERWISE, and verified before
+  ruling: ARCHITECTURE.md:298 cites it as "Full design", which makes it on-demand and CURRENT under the doc
+  lifecycle, not history — so a date-stamped false mechanism there is a stale doc presented as current, which
+  CODE-RULES calls a wrong comment at file scale. A2's change is what falsified it, so ruling 6's standing rule
+  assigns it to this cycle. All three corrected to name the true invariant (admin*disabled_at appears in NO
+  refresh set clause) while keeping the still-true conclusion. Verified zero residual instances. \*\*\*
+  NEW STANDING RULE in §Known Breakage, earned by this being the THIRD instance of one class: a durable claim must
+  be checked against YOUR OWN CYCLE'S DIFF, not against the code you started from. Ruling 6 covers the cross-task
+  case; this is the intra-cycle one, and the no-index comment is its cleanest example — author and falsifier were
+  the same agent in the same cycle.
+  → A2 fix cycle 2 dispatched (of the three-cycle cap), resumed from transcript. Both findings verbatim, the
+  confirmations stated so the fixer does not re-defend settled ground, the doc half marked as already done and
+  off-limits, and the new standing rule pointed at the very comment it must now rewrite — since repeating that
+  mistake inside the fix for it would be an unusually poor outcome.
+- 2026-07-26: A2 fix cycle 2 DONE (impl-report-3.md; the report calls it cycle 3, following its report-file
+  numbering — this is A2's second fix cycle, so one remains under the cap). Both findings fixed and verified by
+  execution rather than argument. scripts guard 2 files/16; scoped coverage green; test:db 531 + 2 workers; drift
+  gate clean (comment-only); typecheck 16/16 zero cached; eslint exit-0 from both package dirs post-final-edit.
+  FINDING 1 accepted in full, and the fix is better than the finding asked for. It re-derived the query inventory
+  INDEPENDENTLY and matched the auditor's exactly (3 production reads, 4 keyed writes), then replaced the false
+  write count with a property true of ALL FOUR — every write rides `model_catalog_model_id_unique` — rather than
+  correcting the count to a number that a fifth write would falsify again. Same move on the read claim: scoped to
+  REQUEST-PATH queries and the dev-tooling filter NAMED as the one existing predicate with why it needs no index.
+  The revisit trigger now fires on a request-path filter, so it is untripped today and trips on exactly the change
+  that would make an index worth having — which is the difference between a working trigger and a sentence that
+  happens to be false. Routed to verification anyway, since "is this the right condition or merely a false one" is
+  precisely the judgment the original defect failed.
+  **_ THE NEW STANDING RULE PAID FOR ITSELF ON THE TASK THAT EARNED IT, BEFORE ANY GATE RAN. Applying it to its own
+  draft, the fixer caught two more false claims: (1) an absolute "every slice consumer reaches the table through
+  one whole-table select" that CONTRADICTED ITS OWN NEXT CLAUSE, since catalog-admin.ts is a slice consumer reading
+  one row by model_id — narrowed to the slice's DESCRIPTOR consumers; (2) "runs once per prepare", wrong because
+  the guard runs from TWO call sites during e2e:prepare (assertE2eModelsPresent after catalog:refresh,
+  assertSeededImageModelPresent after seed) — count dropped rather than corrected. It then swept its cycle-2 diff
+  for other durable claims it might have falsified and reports none outstanding. A rule that catches defects in the
+  fix for the defect that motivated it is the strongest evidence it belongs. _**
+  FINDING 2 verified the auditor's own way rather than argued: rendered both clauses through the same dialect to
+  confirm they differ only in the connective, replaced two toContain lines with one exact toBe, swapped the guard's
+  `and` for `or` IN PLACE (1 failed / 11 passed — red on the connective alone), then restored from a pre-swap copy
+  and re-verified green. The cycle-2 fake resolving only through `.where(...)` is untouched, so the file now
+  carries BOTH teeth: delete the filter and all twelve fail, weaken it to `or` and exactly one fails. Both
+  mutations routed to verification, because a connective fix that traded away the removal teeth would be a net loss
+  and only running both can tell.
+  LIMITATION DISCLOSED AND ROUTED, with my concern stated rather than the implementer's: the exact assertion is
+  coupled to drizzle's SQL renderer, so an upgrade changing quoting or spacing reddens it. The brittleness is
+  acceptable — it is the only assertion that can see the connective and the failure is loud. The RISK is different:
+  the next engineer hitting that upgrade will "fix" it by loosening back to substrings, silently restoring the gap.
+  The verifier is asked whether anything in the file tells that engineer why the exact form is load-bearing.
+  → Verification dispatched to the SAME auditor, resumed from transcript: it holds the query inventory, the scratch
+  tree and the mutation setup, all three of which a fresh auditor would rebuild to check a comment and one
+  assertion. Five scoped judgments, explicitly barred from re-deriving what it already settled, and told the
+  self-sweep claim is worth spot-checking rather than accepting since it is easy to state and easy to have done
+  incompletely.
+- 2026-07-26: A2 fix verification: FAIL — 1 Important, and it is the THIRD failure on ONE SENTENCE. Finding 2 is
+  CLOSED and well closed: three mutations with correct blast radius each (delete filter ⇒ 12/12 red; and→or ⇒
+  exactly the new assertion red; drop one leg ⇒ red), the cycle-2 removal teeth preserved, so the pin is a net
+  gain rather than a trade. Verifier also judged the rejected-alternative comment sufficient to stop a future
+  drizzle-upgrade engineer loosening back to substrings — the risk I raised rather than the brittleness the
+  implementer disclosed. Diff confirmed comment + one assertion, e2e-models.ts byte-identical to cycle 2, so the
+  in-place `or` swap left no residue.
+  THE RESIDUAL, both halves verified BY ME before acting: (a) "runs only during `e2e:prepare`" is FALSE — the
+  filtered read has two call sites and the second, assertSeededImageModelPresent, is called unconditionally from
+  runSeed, so it fires on every `pnpm dev` (verified: dev = ensure-stack && catalog:refresh && db:seed && turbo
+  dev), and the disproving fact sits in a COMMENT AT seed.ts:727-728 naming both contexts — in a file the same
+  cycle had open. (b) The trigger's own worked example, a cron staleness auditor, sits OUTSIDE the request-path
+  class the sentence had just defined, since CODE-RULES:148 puts auditors on cron. Orphaned by cycle 3's own
+  narrowing.
+  **_ CYCLE CAP REACHED, AND THE DIAGNOSIS IT EXISTS TO FORCE IS THAT MY CRITERION WAS WRONG. Three cycles, three
+  different falsehoods, every audit confirming the DECISION was sound and only the JUSTIFICATION failing. That is
+  not an implementer who cannot do the work. The comment was trying to be a standing proof about the whole
+  codebase's query surface — a class of claim that refers to code elsewhere, multiplies, and goes stale wherever it
+  is not currently being checked. CODE-RULES already rules it: a wrong comment is worse than none; if you cannot
+  state the durable fact precisely, leave it out. My arbitration is what generated the drift — criterion 7 asked
+  for the row count to be stated "so a later reader sees a decision rather than an omission", and I read that as
+  "justify the decision in the schema". A RECORD IS NOT A PROOF, and I asked for the wrong one. _**
+  CRITERION 7 AMENDED rather than patched a fourth time: the durable record is the DECISION and the SCALE and
+  nothing else — no index, row count in the low hundreds, stop. The query-shape enumeration is DELETED outright,
+  including the revisit trigger, because a trigger phrased over query shapes is itself the drift-prone artifact.
+  If the row-count ceiling stops holding, that alone is the signal, and noticing it needs no enumeration. This kills
+  the class instead of the instance — the same shape as B3's presented-set closure, where deleting three competing
+  derivations beat adding a fourth rule.
+  → A2 fix cycle 3 dispatched (the cap), scoped to one small edit and told explicitly not to widen it. The brief
+  states plainly that the fault is mine and why, so the fixer does not read three rejections as three failures of
+  its own care — it caught two of its own overreaches unprompted this cycle, which is the opposite of carelessness.
+  If cycle 3 does not clear it I escalate rather than loop again; but the amended criterion has nothing left in it
+  that can be false, which is the point of amending rather than patching.
+  NOTE FOR THE CLOSE PHASE: the run has now produced four instances of one class — a true conclusion propped on a
+  false stated mechanism (T13's docstring, A2's adminDisabledAt comment, the no-index rationale ×3 counted once,
+  and my own fee-seam amendment). The standing rule added mid-run (check a durable claim against your own diff)
+  catches the intra-cycle case and demonstrably fired twice in the fixer's own draft. It does NOT catch this one,
+  because the falsifying fact was one call-graph hop away rather than in the diff. Worth a doc proposal at close:
+  the rule should say "follow the call graph one hop", not merely "re-read your diff".
+- 2026-07-26: A2 fix cycle 3 DONE (impl-report-4.md) — twelve lines of enumeration replaced by two. Deleted per the
+  amendment: the read inventory, the keyed-write claim, the venue counts, the query-shape revisit trigger, and the
+  measured 182/389 pair (correctly dropped as well, since 389 is an UPSTREAM FETCH count, not this table's row
+  count, so it reached outside the file — a subtlety the amendment did not name and the fixer caught). eslint
+  exit-0, test:db 531 + 2 workers, drift gate clean, typecheck 16/16 zero cached. Comment-only; no test changed
+  because no behaviour changed.
+  IT DELIBERATELY ADDED NO REVISIT SENTENCE, with the right reason stated: a scale-phrased trigger was not
+  prohibited, but writing one is the exact reflex that produced three cycles of drift. Restraint chosen over the
+  latitude it was given.
+  **_ THE FIXER FORMULATED THE RULE BETTER THAN I DID, AND I HAVE ADOPTED ITS WORDING. Its lesson: cycle 3 applied
+  the new standing rule to the WORDING while leaving the SHAPE alone — it tightened sentences instead of asking
+  whether a comment can carry a standing proof about the codebase's query surface at all, and "verifying an
+  unbounded claim harder does not bound it." The operative test is therefore not "is this true today?" but "CAN
+  THIS BE FALSIFIED BY A CHANGE IN A FILE I AM NOT EDITING?" — if yes it belongs in a test, in a name, or nowhere.
+  That is strictly better than my own "follow the call graph one hop", which was still a prescription for
+  verifying harder rather than a test for whether the claim is bounded at all. §Known Breakage's first entry
+  rewritten around it, keeping both hard-won consequences: check against your own diff (the intra-cycle case
+  ruling 6 does not cover), and tightening the wording is not fixing the shape. _**
+  → Verification dispatched to the same auditor, resumed: three quick judgments, explicitly barred from
+  re-deriving the query inventory since the claim that depended on it no longer exists. It is asked to judge
+  whether the deletion OVERCORRECTED — whether two lines still satisfy criterion 7's "a decision rather than an
+  omission" — because I would rather hear that the amendment went too far now than discover it later, and an
+  orchestrator who amends a criterion should not also be the only judge of whether the amendment was right. It is
+  also asked to rule on my rewritten standing rule, on the grounds that it found all three instances and its read
+  on whether the rule would have caught them is worth more than mine. Told this is A2's last cycle under the cap:
+  a real finding goes to the founder rather than into a fifth cycle, so clean and defect are equally useful and a
+  hedged verdict is not.
+- 2026-07-26: B4 fix cycle 1 DONE\*WITH_CONCERNS (impl-report-2.md) — all eight ruled criteria reported met.
+  typecheck 16/16 zero cached; eslint exit-0 over 13 owned api files post-final-edit and over the shared dirs;
+  test:shared 124 files/2962 coverage-green; test:api 7 failed/6409 passed with all 7 the §Known Breakage
+  template-html snapshots on a file untouched by the diff, no coverage or pole failure.
+  SECOND DOOR MEASURED, the thing report 1 lacked: restoring the old condition prices the trial Smart Model arm at
+  1,499,900,000n against a 10,000,000n ceiling — 150× — and reddens 3 of its 4 new pins. The single-model arm's
+  door is pinned by the two route tests. Both doors now pinned SEPARATELY, which was the point of naming them
+  separately in the criteria.
+  SWEEP NOW CATCHES ITS OWN REGRESSION (criterion 6): 78 of 448 turns violate under the old
+  `stamped.storage === undefined` condition; grid is 704 points / 448 compiled / 256 typed refusals across BOTH
+  persistence arms. The guard that failed is now the guard that would have caught it.
+  \*\*\* THE VACUITY TRAP GENERALISED FURTHER THAN THE RULING ANTICIPATED, and the implementer found it unprompted.
+  Criterion 7 named ONE fixture whose rates were too low to make the money term bind; B4 found THREE MORE — the
+  unit trial gate and two trial reasoning route pins — where at 2–3 nano storage-free EVERY level fits a 1¢
+  ceiling, so those refusals pinned nothing at all. It gave each a binding rate with the split derived
+  arithmetically in the fixture comment (medium 19.9M vs low 7.6M against 10M). A criterion that named one
+  instance of a class is a criterion that found one instance of a class; the implementer generalising it is worth
+  more than the three fixtures. \_\*\*
+  DEVIATION ACCEPTED, AND I VERIFIED ITS CITATION MYSELF RATHER THAN TAKING IT — twice, because my first attempt
+  read the wrong numbered list. §Affordability item 6 genuinely backs it: "the minimum-viable-answer floor is THE
+  minimum … below the floor the server refuses." So the fit's floor moving from 1 token to MINIMUM_OUTPUT_TOKENS
+  makes the gate's threshold and the build's floor ONE number instead of two, which is the "one verdict, two
+  renderers" failure closed rather than a convenience. Six `B + 1` → `B + MINIMUM_OUTPUT_TOKENS` pins moved; the
+  claim that they pin wire-derivation only and are reachable ONLY in the floored case where admission refuses — so
+  no hold is ever placed at the larger figure — is routed to the money auditor as a potential Critical, since that
+  is the one way this deviation could be a reserve regression.
+  DOC CONCERN RESOLVED BY ME, no edit needed: B4 flagged that §Trial Usage's overshoot sentence might quantify a
+  per-message answer length. Checked — it says the burst is "bounded by the per-message cap — deliberate" and
+  quantifies nothing, so it becomes TRUE again the moment the cap is enforced again. Verified rather than
+  speculatively edited.
+  SELF-CAUGHT ERROR DISCLOSED, and I passed it to both auditors as a reason to distrust adjacent claims: B4
+  reported the rich-payer pin resolved before it was, and its own full test:api caught it. Now rewritten with a
+  DERIVED amount (`128_000 - Math.ceil('hello world'.length / 4)`) rather than the emitted number — which is the
+  form the criteria demanded for both expectations permitted to move.
+  CARRIED FORWARD, needs to reach the founder WITH ruling 5's item: the trial cap now buys much more answer
+  length, because storage was ~99.8% of the old figure. B5 owes the same measurement on trial ELIGIBILITY; this is
+  the same effect on ANSWER LENGTH. One product change with two surfaces — they should be presented together, not
+  a cycle apart.
+  RESIDUAL RECORDED, deliberately not fixed: `answerHeadroomTokens` survives as a FIELD on the shared
+  ReasoningPlan (H as an input), file byte-unchanged, and renaming it is a contract change in B6's area. `apps/`
+  greps zero for all six deleted names. Routed to the contract auditor as a GREP TRAP question — whether an
+  identical surviving name could mislead a future grep-driven sweep into thinking the deleted derivation is live.
+  → B4 auditing, 2 independent auditors (money-flagged and the run's highest-stakes task), distinct lenses.
+  (A) MONEY: build an independent from-spec oracle rather than reading the differential; reproduce the 150× second
+  door by mutation; verify no hold can be placed at the floored figure; price the trial cap independently and say
+  what it now is; and measure the cost circuit's deflation rather than accepting that it follows. (B) DELETION +
+  CONTRACT: search for the ARITHMETIC not the names, since a deletion that relocated the expression is not a
+  deletion; verify both byte-unchanged and zero-grep claims; confirm both moved pins carry DERIVED amounts;
+  verify the fit's early return for a definition carrying an uncapped modelCall (Lane C's shape); reproduce
+  78/448 by mutation; and confirm the three new binding-rate fixtures now discriminate and would have been vacuous
+  before. Both told the rich-payer slip is a reason to confirm adjacent "resolved" and "passes unchanged" claims
+  rather than trust them, and both barred from re-litigating the floor's spec basis since I verified it.
+- 2026-07-26: A2 closure verification: **PASS, ZERO FINDINGS ⇒ A2 CLEAN** (8 of 26: B1, B1b, A1, F1, B2, F2, B3, A2).
+  Both surviving claims verified IN PLACE and independently of each other: the no-index fact against the table-extras
+  array (one entry, the unique constraint) AND against 0060\*snapshot.json (`indexes: {}`, no index ever created in
+  the migration history); one-row-per-model against the same UNIQUE(model_id). The third phrase — row count in the
+  low hundreds — is a property of upstream reality that NO code change in any file can falsify, which is exactly the
+  bounding test, and the only thing that can falsify it is the intended revisit signal. Both pin mutations re-run
+  clean at the shipped state; comment-only confirmed by filtering the diff to non-comment lines.
+  IT JUDGED THE OVERCORRECTION QUESTION I ASKED, and answered it properly rather than agreeing: criterion 7 is met
+  because a reader hitting those columns sees "NO index, deliberately" plus the reason in one breath, and nothing was
+  lost with the enumeration since the columns' purpose is still carried by the soft-delete paragraph and the
+  staleness note. It also endorsed the no-revisit-sentence call on a stronger ground than the fixer's: the scale
+  clause IS the trigger, a reader who finds 50,000 rows has watched the premise die, and every revisit sentence this
+  comment ever carried was a falsehood generator.
+  \*\** THE AUDITOR PROVED MY STANDING RULE WRONG WITH A COUNTEREXAMPLE FROM THE SAME FILE, AND I HAVE ADOPTED ITS
+  CORRECTION. As I wrote it ("if unbounded, it belongs in a test, in a name, or nowhere"), the rule INDICTS a comment
+  this very task correctly ships: model-catalog.ts:21-26 asserts that no refresh write names admin*disabled_at in any
+  set clause — unbounded by my own test, falsifiable by editing either of two other files. It earns its place anyway
+  because it is PINNED: I verified refresh.integration.test.ts:660 and :677 hold both directions, so an edit
+  falsifying the comment reddens a gate before any reader is misled. The real discriminator is therefore not whether
+  a claim crosses files but WHETHER A GATE WOULD GO RED FIRST — admissible when a test pins it, inadmissible when the
+  comment is the only enforcement. All four failures were UNPINNED. Stated that way the rule also tells an author
+  what to DO rather than only what to delete: pin it, then the comment may point at it. A literal application of my
+  version would have deleted the one cross-file comment in that file that is actually safe. \*\*\*
+  BLIND SPOT RECORDED with the rule: a claim that is a POLICY rather than a fact (a revisit trigger, a "should") is
+  not falsifiable at all, so the bounding test cannot flag it — only the tighten-the-wording-is-not-fixing-the-shape
+  consequence catches that case, which is what happened with cycle 3's cron-auditor example.
+  MY OWN POINTER WAS WRONG AGAIN, caught by the auditor: I told it the rule was §Known Breakage's FIRST entry; it
+  sits near the end. Same class as the reach-in figures and the fee-seam mechanism — asserting a location I had not
+  looked at. Harmless here because the auditor read the file rather than trusting me, which is the posture that keeps
+  making this survivable.
+  A2's SCORECARD, worth recording because the cost was almost entirely mine: 4 cycles for a task whose CODE was
+  never once wrong after cycle 1 — two audits passed its substance immediately, and every subsequent cycle was spent
+  on one comment that my own criteria arbitration had asked to be a proof.
+- 2026-07-26: B4 audits BOTH IN. MONEY lens: PASS, ZERO FINDINGS — and the strongest money verification of the run.
+  It transcribed HEAD's DELETED formula out of `git show ada0341c` and swept 4,000 randomized configurations
+  (1–3 siblings, mixed contexts and provider caps, rates over four orders of magnitude, both tiers, random
+  balances), pricing new and old through createEstimateRun: 0 HOLDS UP, 1,251 identical, 2,749 DOWN. Where money
+  binds the figures are byte-identical (26,373 == 26,373), because HEAD's guess WAS the estimator's formula in
+  longhand — which is the cleanest possible statement of why the deletion is safe. reserve ⊇ bill holds on every
+  path it constructed, and it named the paths it could not reach rather than implying coverage.
+  IT BEAT THE IMPLEMENTER ON TWO NUMBERS, both in B4's favour: the second-door mutation reddens 4 of 5 pins, not
+  3 of 4; and it independently priced the trial cap at 13,994 tokens / 0.99999¢, then swept 3,000 trial
+  configurations against the REAL 1,609-char system prompt finding ZERO cases where the live gate admits above 1¢.
+  Cost circuit measured not assumed (criterion 8): 49,997,500n fitted vs 7,499,500,000n under the mutation — the
+  150× deflation shown on its own numbers.
+  **_ THE FLOOR DEVIATION IS CLEARED, AND IT IS AN IMPROVEMENT RATHER THAN A NEUTRAL TRADE. All six moved pins sit
+  in the `!fits(floor)` branch where the definition prices above spendable by construction, and admission prices
+  the same definition through the same createEstimateRun — so it refuses. At HEAD the cap-1 definition could
+  instead have been ADMITTED, for a useless one-token answer. The floored branch is therefore strictly FEWER
+  admissions, not a larger reserve. My acceptance of the deviation was right for a weaker reason than the real
+  one. _**
+  ALSO ESTABLISHED: physicalAnswerCeiling provably carries NO rate — pinned by a test asserting a 1-nano payer and
+  a $10,000 payer receive the identical bound. The drift class that caused the live 402s is now impossible by
+  construction rather than by discipline, which is the durable win of this task.
+  CONTRACT lens: PASS, 3 Minors. GLOBAL CONSTRAINT 4 CONFIRMED SATISFIED for apps/api, and it searched by
+  ARITHMETIC rather than by name — the right method, since a deletion that relocated the expression is not a
+  deletion. The only surviving nano-rate multiplications are the canonical estimator itself, settlement's mandated
+  storage fee, and the ingestion parse; trial-eligibility still holds the duplicated percentile but computes
+  through the shared module and is B5's to delete. It also proved criterion 5 is NOT test-blind, which neither
+  report claimed: reverting the fit's return turns [127_900, 3900] into [127_900, 127_900] and reddens both the pin
+  and the sweep's own-bound check.
+  THREE VALIDATED MINORS → B4 fix cycle 2. (1) turn-ceiling.property.test.ts:350's comment still describes the
+  behaviour criterion 4 DELETED — B4's own criterion falsified B4's own test comment inside one cycle, the
+  intra-cycle case again. (2) Three added lines carry plan identifiers against Global Constraint 8. (3) THE ONE
+  THAT MATTERS: B4's three trial-reasoning pins seed through seedGateModel instead of the file's own
+  withDearTrialCatalog, which exists precisely because the trial premium gate ranks on a percentile of the SHARED
+  exposed catalog. Pool crowding pushes the threshold so a re-rated model reads premium and the send answers 403
+  PREMIUM\*REQUIRES_ACCOUNT instead of the pinned 402/201 — with no bug in the code under test. And B4's new
+  companion row is what produced the 403s the auditor saw IN THREE OF FOUR FULL RUNS, ON TESTS B4 NEVER TOUCHED.
+  Both auditors independently observed those load failures; only one diagnosed the cause. B4's green self-gate was
+  one draw of a noisy variable its own fixture made noisier.
+  \*\*\* I DERIVED THE PLAN-LABEL COUNT MYSELF BECAUSE THE TWO AUDITORS DISAGREED — money lens said 2 lines at
+  :767/:770, contract lens said 3 at :867/:870 plus a test line. Grepping the diff's ADDED lines gives exactly
+  THREE (turn-definition.ts:867, :870; routes.integration.test.ts:3830); the contract lens is right. This is the
+  same trap as the "four re-export sites" incident earlier in the run, where I embedded a reported count into
+  criteria and it was wrong — a disputed figure gets derived, never relayed. \_\*\*
+  TWO ITEMS SETTLED BY ME rather than left open: turn-core.ts's diff against ada0341c is exactly two comment lines
+  and ZERO non-comment lines, and I observed them BEFORE B4 was dispatched, so B4's "pre-existing, not mine" claim
+  is confirmed by evidence rather than recorded as unverifiable (the contract lens correctly declined to certify
+  it). And compileAutoEffortTurn's describe block is byte-identical with 12 `it()` green, not the 11 B4 reported —
+  a miscount in its own favour, no pin removed or weakened.
+  FORWARD-ROUTED ITEMS, both written into the OWNING task's criteria per the standing rule rather than noted here:
+  (a) §B5 — ruling 5's storage strip NARROWS A MARGIN B4 NOW RELIES ON. reconcileAnswerCeiling fits rather than
+  refuses, so on the reasoning-free trial path the only refusal is the trial eligibility gate, which is strictly
+  stricter TODAY only because it prices storage. After the strip the margin becomes 2000×outputRate against
+  ≈805×inputRate + 1000×outputRate; measured safe at 0/3,000 where outputRate ≥ 2×inputRate but 5/3,000 for
+  INVERTED rate shapes. B5's demonstration must include an inverted shape, because a sweep over realistic shapes
+  alone reports zero escapes and proves nothing about the failing case. (b) §B8 — the fit solves T with the
+  per-sibling clamp INSIDE the sum while §Sharing one budget across siblings clamps AFTER, so where a sibling
+  saturates its room the server's T exceeds the module's and the wide sibling gets a longer answer than the
+  producer would present. Safe today (≤ funds at three funding levels, both invariants intact) and unreachable
+  while getTurnOptions has zero production consumers — but B8 is the task that gives it one, so B8 must collapse
+  the orders or declare which is authoritative and pin it on a saturating-sibling case. Wiring the producer up
+  while two numbers answer one question is the family B3 spent four cycles removing.
+- 2026-07-26: B4 fix cycle 2 DONE (impl-report-3.md). All three Minors fixed. typecheck 16/16 uncached after the
+  final edit; eslint exit-0 on the three changed files; test:api ×2 both at 7 failed/6409 passed with only the
+  §Known Breakage template-html snapshots, and chat/routes.integration.test.ts 188/188 in BOTH runs plus isolation.
+  SCOPE EXPANSION ACCEPTED: it wrapped FOUR pins, not the three the finding named. The fourth is the physical-bound
+  cap pin, which expects 201 and flips to 403 by the identical mechanism; its seeding shape is pre-existing and only
+  its assertion was rewritten last cycle. Accepted because leaving one of four exposed to the same flake is exactly
+  the "fix three, leave the fourth for the next reader" pattern this run has been closing all day — and the
+  implementer offered to revert it rather than presenting it as done, which is the disclosure that makes accepting
+  it cheap. Routed to the re-auditor to confirm the mechanism is identical and that wrapping changed no assertion.
+  THE EVIDENCE IS STRUCTURAL, NOT A REPRODUCTION, AND THE IMPLEMENTER SAID SO PLAINLY: it did not build a
+  crowded-pool harness. Its claim is that withPinnedTrialCatalog opens with an unconditional `db.delete(modelCatalog)`
+  inside the cross-suite lock, so each wrapped test ranks against exactly the five rows it seeded and
+  floor(5 × 0.75) = 3 indexes the 2e9 decoy band — a 2,500-nano fixture therefore cannot read premium at ANY run
+  order. That is a stronger property than a reproduction would have been (draw-independent by construction rather
+  than green on one draw), which is why I accepted the substitution — but the arithmetic and the lock placement are
+  the whole fix, so both go to the re-auditor to derive rather than read.
+  GOOD REFACTOR, not scope creep: withDearTrialCatalog now DELEGATES to the generalised helper instead of repeating
+  the wipe-and-spread body, so there is one implementation rather than two similar ones. One Implementation Shared
+  applied unprompted, in the direction the rule wants.
+  IT RAISED A CONCERN AGAINST ITS OWN FIX: four more tests now issue a cross-suite catalog wipe, and a concurrent
+  test that seeds in beforeAll and reads later WITHOUT taking the lock is what those wipes would break. Recorded in
+  §Known Breakage as a coordination fact naming the concurrent model-catalog workstream and the two safe options
+  (take the lock, or seed per-test) — with the re-auditor asked whether that disposition is wrong and it should be a
+  finding instead. An implementer that names the blast radius of its own fix is doing the orchestrator's job for it.
+  **_ THE FIXER FOUND A GAP IN MY STANDING RULE, AND I HAVE ADOPTED IT. Its criterion 4 inverted physicalAnswerCeiling
+  from tightest-sibling to widest INSIDE THE SAME CYCLE, and the comment justifying the neighbouring assertion
+  survived because THE ASSERTION KEPT PASSING FOR A DIFFERENT REASON. Nothing went red. My rule said a pinned
+  cross-file claim is admissible — but a pin protects the BEHAVIOUR, not the EXPLANATION, so a comment's stated
+  reason can rot while its assertion stays green. Added: when a function's contract inverts, re-read every comment
+  that cites it, because a green suite is not evidence the explanations still hold. That is now the third refinement
+  this rule has taken from an agent rather than from me — the discriminator (a gate must hold it) came from the A2
+  auditor, the bounding test came from the A2 fixer, and this one from the B4 fixer. The rule is worth more than any
+  single fix in the run and none of its three sharpenings were mine. _**
+  → Verification dispatched to the contract-lens auditor, resumed from transcript: it diagnosed the percentile
+  mechanism AND is the only agent that actually observed the load-dependent 403s, so it is uniquely placed to say
+  whether they stopped or whether two green runs were lucky draws — a question a fresh auditor could not answer at
+  all. Six scoped judgments, barred from re-auditing what it already settled, and asked to rule on both the
+  §Known Breakage disposition and on whether the standing-rule refinement is still incomplete, since it has now
+  found this defect class three times across two tasks.
+- 2026-07-26: B4 fix verification: **PASS, all three closed, nothing previously settled disturbed, NO new findings
+  ⇒ B4 CLEAN** (9 of 26: B1, B1b, A1, F1, B2, F2, B3, A2, B4). Both of the auditor's own probes re-ran BIT-IDENTICAL
+  to their pre-fix-cycle values (704/448/256, mutation 80 of 160; per-sibling [127900,3900]/[62088,3900]/[48881,3900]
+  all ≤ spendable), so criteria 4/5/6 and Global Constraint 4 are provably undisturbed — turn-definition.ts changed
+  by two comment-label deletions and no code line.
+  THE STRUCTURAL CLAIM HOLDS WITH MORE MARGIN THAN CLAIMED, derived against the real percentile expression rather
+  than the report's restatement: the delete is unconditional (unlike six other scoped deletes in the file) and is
+  the FIRST statement inside the locked callback, nested seeds re-enter the lock by short-circuit, and the send runs
+  inside it too. With three decoys the threshold stays in the decoy band while the cheap band holds k ≤ 9 rows; the
+  wipe puts k at 2, so EIGHT leaked foreign rows would still not flip a pin. Draw-independent by construction, which
+  is why substituting a structural argument for a reproduction was the right trade.
+  **_ THE FLAKE IS GONE FOR A BIGGER REASON THAN THE FIX INTENDED, and only this auditor could have established it
+  because it is the one that saw the failures. 4 of 4 post-fix runs green against 3 of 4 red before is weak on its
+  own; what makes it a verdict is that the eight wipe sites now re-pin the pool upstream of the two tests that
+  actually failed, which previously ranked against ~150 tests' worth of accumulated cheap rows and now start from
+  k = 2. THE FIX REMOVED THE CROWDING, NOT MERELY B4'S CONTRIBUTION TO IT. Honest residual recorded: those two tests
+  remain unwrapped, so their determinism is a margin (k ≤ 9) rather than a guarantee — pre-existing, out of scope,
+  and the file's authors already pinned the paid-path analogue for exactly this reason. _**
+  MY SCOPE ACCEPTANCE CONFIRMED: the fourth pin's mechanism is identical (same gate, same predicate, same flip
+  direction) and wrapping changed nothing it asserts — the descriptor is byte-identical and both expectations
+  untouched. Verdict in its words: "justified, not convenient." The delegation refactor verified behaviour-identical
+  by diff, with exactly one line generalised and the pre-existing sibling tests seeing the same five-row set.
+  **_ I RECORDED A WRONG MECHANISM AND THE AUDITOR CAUGHT IT — my own §Known Breakage entry, written from the
+  fixer's framing without deriving it. The hazard I wrote down (a concurrent test seeding in beforeAll and reading
+  WITHOUT the lock) DOES NOT EXIST: all six catalog-touching suites already hold the lock across their reads. The
+  real cost of 4 → 8 wipe sites is lock OCCUPANCY — four more critical sections each spanning a full HTTP request
+  on a lock whose waiters abort at 12 s, i.e. a contributor to the timeout class §Known Breakage already documents,
+  at roughly a second per run against a 12 s budget. Entry corrected. The disposition (a note, not a finding) was
+  right; the mechanism was not. This is the fifth time in this run I have shipped a stated mechanism I had not
+  derived, and the second time inside a §Known Breakage entry — the section I have twice acknowledged is my weakest
+  artefact. The auditor's reason for insisting matters more than the correction: "or the next agent will look for a
+  hazard that isn't there." _**
+  THE STANDING RULE TOOK ITS FOURTH SHARPENING, AND AGAIN NOT FROM ME. The auditor showed my refinement STILL does
+  not reach finding 1: my test asks WHERE a claim's truth-maker lives, and finding 1 was same file, same cycle, same
+  author — so it answers "no" to the test and was wrong anyway. The missing axis is the sentence's GRAMMAR. A comment
+  stating WHAT ANOTHER QUANTITY IS ("the shared cap is the tightest sibling's") is the MIRRORED-CONSTANT BAN IN PROSE
+  FORM — two places holding one fact, free to drift, a shape CODE-RULES already bans for code. Rewritten to state
+  WHAT THIS CODE GUARANTEES AND WHERE THE MECHANISM LIVES, an inversion elsewhere cannot falsify it, and the result
+  is checkable by reading one comment in isolation — which is what makes it enforceable in a brief. Decisive detail:
+  a name-grep would NOT have caught finding 1, because the comment never named the helper, it paraphrased its output.
+  Also adopted: the re-read cannot be delegated to a test, so it belongs in the end-of-cycle checklist beside
+  re-lint — after the last edit, re-read every comment the diff touched against the FINAL state of the code.
+  Provenance of the rule now stands at four sharpenings, all from agents: bounding test (A2 fixer), gate
+  discriminator (A2 auditor), behaviour-not-explanation (B4 fixer), grammar axis (B4 auditor). It is the most
+  transferable artefact this run has produced and I contributed none of its four load-bearing ideas.
+- 2026-07-26: DISPATCH — B5 plus TWO READ-ONLY ANALYSTS, on founder instruction to parallelise wherever it is safe.
+  THE GRAPH ADMITS NO SECOND IMPLEMENTATION TASK, checked rather than assumed: every other unstarted task has an
+  unmet dependency (B6←B5, B7←B6, B8←B7+C1, C1←B6, C2←C1, C3←C2, D1←C3, D2←D1, E1←B5+B6+B8, E2←E1+D2, E3←E1,
+  E4←C3, G1←B8, G2←E1, G3←C3+D2+E1+E2, H1←C3+D1+D2). Dispatching into an unmet dependency is how this run already
+  paid for B1b's criteria depending on producers that did not exist, so I did not manufacture parallelism.
+  WHAT IS SAFE TO PARALLELISE IS READ-ONLY WORK, and it targets blockers that are ALREADY KNOWN to sit in the path
+  rather than speculative research: (1) the mandatory-single-rung priceability shape, which B5's resolved-corner
+  criterion is KNOWN to be unsatisfiable without — so the answer arrives while B5 works instead of after it stalls;
+  (2) B6's three-resolver collapse plus the two contract questions B3 routed there. Both are read-only, own no
+  files, and cannot collide. The speed gain is real: each would otherwise have been a mid-task NEEDS\*CONTEXT
+  round-trip, and the run has already paid that cost four times.
+  \*\** PLAN DEFECT CAUGHT PRE-DISPATCH, and it is the exact class that cost B2 a cycle: §B5's Files list OMITTED
+  apps/api/src/slices/models/domain/trial-eligibility.ts while ruling 5 requires deleting that file's
+  TRIAL*PRICE_PERCENTILE and TRIAL_RECENCY_MS duplicates and stopping it pricing storage. The criteria were
+  unsatisfiable inside the stated bounds. Verified on disk before amending — the file holds both constants at :34
+  and :43 and prices storage per its own docblock at :24-29. Corrected, with the correction recorded IN the plan so
+  the next reader sees why the list changed. B2 discovered its equivalent gap mid-task and had to enumerate a
+  spill; catching this one cost a grep. \*\*\*
+  I ALSO SWEPT §B5 for every item routed to it before dispatching, since "criteria do not carry what I routed" has
+  bitten this run once (G2): maxCallCost ordering, the tiebreak, basis-independence, the premium collapse onto
+  affordability/premium.ts, trial-eligibility, the storage strip, releasedAt/PriceableModel, resolved-corner,
+  mandatory-rung, the inverted-rate-shape requirement, the outlier median and its × 20, the before-and-after
+  eligibility measurement, and the classifier-storage split are all present. Ownership, scoped checks and the
+  two-auditor flag are stated.
+  B5's brief carries three coordination facts and two NEEDS_CONTEXT triggers, the important trigger shaped to
+  forbid the specific wrong turn rather than to invite a stop: if the resolved corner cannot be graded for a
+  mandatory-single-rung model, report the shape needed and grade on nothing — do NOT fall back to
+  MINIMUM_OUTPUT_TOKENS, which is the unreachable zero the criterion exists to forbid and would silently defeat it
+  while looking satisfied. It is also told it is the first task that could reintroduce rate arithmetic into
+  apps/api now that Global Constraint 4 is genuinely satisfied there.
+  Both analysts are required to grade every load-bearing claim Verified/Inferred/Assumed with file:line, and both
+  are told explicitly that the most valuable possible answer is "already satisfied today, here is how" — because
+  that outcome saves a contract change, and an analyst rewarded only for proposals will find one.
+- 2026-07-26: BOTH ANALYSTS IN, and the parallel read-only dispatch paid for itself twice over — one returned a
+  founder-ruled unblock for the task in flight, the other a LIVE HAZARD that would have hit that same task.
+  **_ ANALYST 1 — THE MANDATORY-SINGLE-RUNG SHAPE IS A ONE-LINE DEFECT AND A LIVE ONE. reasoning-plan.ts:248
+  returns an empty option list when a model's reasoning is mandatory with one native level, so e_min(m) is
+  undefined, maxB(m) is 0, and eligible(m) degenerates to ceiling ≥ 1,000 — the unreachable zero §Affordability
+  forbids by name. It is NOT hypothetical: openai/gpt-5-pro, openai/o4-mini-high and openai/o3-mini-high all carry
+  the shape, and I verified against the live API that all three pass A1/A2 admission (created 2025, combined rates
+  $0.135 / $0.0055 / $0.0055 per 1K, far above the floor). So we currently sell those models at a 1,000-token floor
+  while the provider spends its whole cap thinking — a paid, contentless answer. Money is NOT under-held (effort is
+  a partition dimension and enters neither variableRate nor fixedCosts); it is a floor/eligibility defect. _**
+  IT FOUND A SPEC SELF-CONTRADICTION, and I verified all three clauses myself rather than trusting the citation —
+  the discipline that has now caught two mis-citations this run. §Math's e\*min is TOTAL and explicitly says "a
+  mandatory-reasoning model's cheapest option is not free", which presupposes such a model HAS a cheapest option;
+  §Affordability says "never on an unreachable zero", which the code violates today; while §Reasoning Effort's
+  "offers no choice" reads either as zero options (the code) or as one option with nothing to choose. The clauses
+  are not symmetric — the first two are normative about PRICING and the third is about CHOICE — so the reconciling
+  reading was already the spec's own.
+  FOUNDER RULED: one priceable rung. Delete the line. Net code deletion, and it repairs three things at once —
+  e_min becomes total, the lowestOfferedWhenMandatory carve-out stops being dead code for the shape it was written
+  for, and the effort badge starts recording a level the model actually ran at. Rejected: a pricing-only second
+  view of the ladder, which would have institutionalised the priced-vs-presented fork B3 spent three cycles
+  deleting — the analyst named that cost itself rather than presenting the option neutrally.
+  Applied: BILLING.md's clause corrected to "exactly one rung — no choice to present, but a priceable one";
+  §B5 gained the ruling, the expected user-visible consequences stated as correct-not-regressions (a solo High
+  chip, explicit wire effort, three models' floors rising ~30×), and an OWNERSHIP EXTENSION to the two api test
+  files whose expectations the ruling inverts. B5 messaged mid-flight so it stops treating this as a blocker.
+  \*\*\* ANALYST 2 — THE PLAN'S CLASSIFIER-STORAGE SPLIT WAS UNSAFE IN THE SPINE'S ACTUAL ORDER, and B5 was in flight
+  with the dangerous half. The plan gave the emitter to B6 and the folder to B5 — but B5 runs FIRST, and removing a
+  fold while the emitter still emits AND while estimate-run.ts still folds the term into the REAL ADMISSION HOLD
+  makes candidate caps grow against a hold that still carries it: hold > effectiveBalance at the balance edge,
+  which is exactly the storage-edge affordable-then-402 the term exists to prevent. Worse, the money-critical fold
+  (estimate-run.ts) had NO OWNER AT ALL — the ownership table assigns that file to B4, which is complete. Re-ruled:
+  the strip is B5's, ATOMICALLY, with estimate-run.ts added to its Files list, or B5 touches none of it and says
+  so. Removal must positively select kind === 'provider', never subtract a storage number (which double-subtracts
+  and under-reserves). B5 warned before it could reach the file. \_\*\*
+  IT ALSO CORRECTED ME: my §B6 sentence calling the ≤54-character reserve gap "binary — it holds or it does not"
+  OVERSTATED it. The arithmetic is right (four labels + three separators = exactly 54 chars beyond the priced
+  4,000), but the same expression converts at the TRIAL ratio of 2 chars/token while paid is 4 — a deliberate ~2×
+  over-reserve on that leg, so 27 reserve-tokens cannot flip an inequality carrying thousands of tokens of slack.
+  Real derivation defect, not a live reserve ⊇ bill breach; the binding term in the one shape where it could bite
+  (CJK/emoji) is the RATIO, not the 54 chars. Corrected in place, with the fix direction (make the emitter respect
+  the priced cap, or derive the envelope once) and an explicit refusal of a mirrored `+ 54` constant.
+  A CONTRACT CHANGE AVOIDED, which is worth more than a proposal: 3(b) does NOT need a PriceableModel field.
+  Descriptions are already capped at a declared maximum, so pricing that leg at its declared bound is a strict
+  upper bound for any catalog, keeps the money layer content-free, and avoids putting a free-text field on the
+  narrow projection whose entire purpose is that a new catalog field cannot reshape money inputs. It also found a
+  WORSE adjacent defect nobody had named: the producer prices the overhead against the FULL CATALOG while the
+  executor's prompt lists only the presentable pool — so the error's SIGN IS NOT FIXED and the reserve is not an
+  upper bound by construction, which is the property that matters rather than the magnitude. Now a B6 criterion.
+  RESOLVER COLLAPSE PRE-ANSWERED: the registry implementation is authoritative (the only one resolving over the
+  PRESENTED support, as §Reasoning Effort 3 requires), collapsed as a core plus thin adapters that keep the
+  published names — because repointing call sites instead would edit C2's, C3's and E1's files, which B6 may not
+  do, while C2 can delete the adapters for free when it repoints. Two behaviours a naive collapse would silently
+  drop are named so they cannot be: the wire-SILENCE arm and the cap-feasibility step-down. The re-partition bound
+  is on TWO lines not one, its arithmetic already exists, and what is missing is the live wiring plus a BOUNDARY
+  pin (returned maxTokens equals the cap argument, never a recomputed number) — the pin that makes deleting the
+  distance sort unable to delete the spend bound. A fourth B+H site exists and the property must cover it too.
+  §B6 FILES-LIST GAP RECORDED FOR RESOLUTION BEFORE DISPATCH — third instance of this class after B2's and B5's:
+  three of B6's own criteria cannot be satisfied inside affordability/\*\* alone (the level triple has consumers in
+  two mock files plus C2's executor; the distance sorter's only production caller is C2's file, which the adapter
+  approach is what avoids; and the cleanest ≤54-char fix edits classifier-context.ts, which appears in NO Files
+  list anywhere in the plan). Also recorded: five things already true today that B6 must not rebuild or "fix".
+- 2026-07-26: **_ B4 RAISED A 32% UNDER-RESERVE AS URGENT; I VERIFIED IT AND IT IS NOT PRESENT. Reported: B3's pin
+  "withholds a candidate whose arrangement starves a pinned sibling" failing at hold 89,263,685n against a
+  presented arrangement pricing 117,957,435n, attributed to B5's landed outlier work four independent ways (both
+  pins verbatim at ada0341c; B4's turn-core.test.ts diff purely additive; B4's turn-core.ts still 2 comment lines /
+  0 code, which I had verified myself; turn-arithmetic.ts untouched by B4). I ran it rather than escalating:
+  turn-core.test.ts passes 55/55 INCLUDING that pin. Full affordability suite is 4 failed / 1,328 passed, and all
+  four failures are reasoning-plan/effort-options tests asserting a mandatory-single-rung model has NO priceable
+  effort — expectations the founder ruled obsolete an hour earlier, so they are the EXPECTED flips of a ruling B5
+  is mid-way through. A transient mid-flight read, not landed work. _**
+  RAISING IT WAS STILL CORRECT AND I TOLD B4 SO. The amounts were specific, the attribution sound, and a 32%
+  under-reserve on a money path is exactly what should interrupt an orchestrator. A finding that proves transient
+  costs one verification; an unraised one costs a shipped defect. It also declined to touch another task's files
+  and declined to rewrite a red money pin — both correct, and the second is the rule working as designed.
+  WHAT I DID INSTEAD OF ESCALATING, and the order mattered: messaged B5 FIRST, because the danger was not the
+  failure but the shape of it. B5's own criteria tell it to expect "the hold falls, the presented set grows" —
+  which is precisely the shape that produces this violation when the two readings stop being derived from one
+  place. So a red pin here can read as intended behaviour and be resolved by rewriting the expectation, passing
+  B5's self-gate while shipping a 32% under-reserve. The message forbids that route, restates that B3 made
+  `runnable ∩ candidates ≡ viableCandidates` true BY CONSTRUCTION, and requires any narrowing to go through the one
+  leaf predicate rather than be re-agreed by adjusting a number. Then I verified. Warning before verifying was the
+  right order because the verification is cheap and reversible while a rewritten money pin is neither.
+  **\* MY SEQUENCING DEFECT, NOW A STANDING RULE. B4 and B5 both declare packages/shared/src/affordability/**. I
+  released that glob to B5 the moment B4 went clean — but CLEAN ENDS THE TASK, NOT THE AGENT, and B4 remained
+  resumable and re-gated a suite B5 was actively rewriting. The readiness rule I follow ("no in-flight task shares
+  its files") does not cover a stood-up-but-finished agent. Written into §Known Breakage: tell an implementer
+  explicitly to STAND DOWN when its task goes clean, and treat any red a stood-down agent reports in a glob the
+  next task owns as transient until reproduced against the current tree. B4 has now been told to stand down, to
+  keep the fourth wrapped pin, and to stop re-running both suites. \*\*\*
+  ALSO CONFIRMED IN PASSING, since I had the run: B5 is genuinely mid-implementation of the mandatory-rung ruling —
+  turn-arithmetic.ts is +100/−1 and turn-core.ts +96/−15 against baseline, and the four red tests are exactly the
+  set the analyst PREDICTED would flip under the ruled option, named in advance at file:line. An analyst's
+  prediction matching the observed failure set is the cheapest possible confirmation that the ruling is being
+  implemented as ruled rather than approximated.
+- 2026-07-26: B4 STOOD DOWN CLEANLY, and raised one item worth the exception I granted: impl-report-3.md carries a
+  section asserting the 89,263,685n vs 117,957,435n under-reserve as PRESENT, which a cold reader could chase after
+  I verified the tree passes. It deliberately did NOT edit the file, on the reasoning that editing after standing
+  down would itself be a further edit, and asked for my disposition — the right instinct on both halves.
+  RULED: one superseding line, nothing else. The reasoning is a principle rather than an ad-hoc call, and I stated
+  it to B4 so the exception cannot be cited loosely: every other superseded item in this run was a stale COUNT or
+  ANNOTATION, corrected in plan.md or the ledger rather than by spending a cycle on a markdown record, because a
+  cold reader loses nothing. This one would send someone hunting a money defect that is not there — the one case
+  where the record itself must carry the correction, since the run directory is permanent. Required four elements:
+  the fact, the verification, who verified, and that the original observation was accurate when made.
+  **_ SECOND STANDING RULE FROM THIS EPISODE, and it closes a gap the section's own rules created. Everything in
+  §Known Breakage trains agents to attribute failures OUTWARD — to the list, to load, to a concurrent workstream.
+  B4's finding 3 is the INVERSE and nothing covered it: a fixture you just added can be the thing making the suite
+  noisy. One extra seeded catalog row shifted a shared percentile and produced 403s in tests its author never
+  touched, in three of four runs, while the author's own green run was one draw of a variable its own fixture had
+  worsened. Written in: a green suite is not evidence your fixture is inert, and "load-dependent, therefore not
+  mine" is only sound AFTER checking that what you seeded is not the load. An orchestrator who only ever teaches
+  attribute-away has built a blind spot, and this run had it until B4 named it. _**
+  B4's OWN SCORECARD, recorded because it is the model I want later tasks briefed toward: the hardest task in the
+  run, and the two choices that made it cheap to audit were both unprompted — refusing to rewrite a red money pin
+  (which is what surfaced the trial exposure instead of burying it green), and disclosing its own mis-reported pin
+  rather than quietly fixing it. It also volunteered the fixture-rate changes, the floor deviation named pin-by-pin
+  so it could be reversed, and the structural-not-reproduced nature of its own evidence. Every volunteered item
+  checked out. Contributed two of the four sharpenings the durable-claim rule has taken.
+- 2026-07-26: **B4 CLOSED.** The superseding line landed in impl-report-3.md carrying all four required elements
+  (defect not in the tree, turn-core.test.ts 55/55 including that pin, orchestrator-verified, original observation
+  and attribution sound when made), positioned directly under the section heading so a cold reader meets the
+  correction before the claim. Fourth wrapped route pin kept. No further gates or edits, none planned.
+  **_ ITS CLOSING DISCLOSURE IS WORTH MORE THAN THE FIX, AND IT SHARPENED THE RULE IT EARNED: "I only looked at all
+  because a stale background waiter surfaced a `git status` I had no other reason to run. The check that found the
+  crowding was luck, not method." So the fixture-crowding discovery — which explained 403s across three of four
+  full runs in tests B4 never touched — was accidental. Nothing in the process would have caught it. That is
+  exactly what makes the new §Known Breakage entry load-bearing rather than decorative, so I gave it a TRIGGER:
+  if a diff adds or changes a fixture writing to state another suite reads (a catalog row, a shared counter,
+  anything behind a cross-suite lock), enumerate what else ranks or aggregates over that state BEFORE attributing
+  anything. A rule that says "check" without saying when to check is an aspiration; the trigger is what removes the
+  luck B4 named. _**
+  It also declined credit for the generalisation, noting it reported "my fixture made the variable noisier" — a
+  fact about one test — where the useful form is the inverse of the attribute-away rules. Both readings are in the
+  entry now.
+  B4 FINAL: the run's hardest task. One implementation cycle plus two fix cycles, two independent audits (money
+  lens zero findings after a 4,000-configuration differential against the deleted formula with 0 holds moving up;
+  contract lens 3 Minors all closed), one validation, one closure verification. It restored `reserve ⊇ bill` on the
+  trial path, closed two ungated doors (the second of which its own first report missed and a validator found),
+  deleted the last rate arithmetic in `apps/api` so Global Constraint 4 is genuinely satisfied there, and made the
+  402-causing drift class impossible by construction — `physicalAnswerCeiling` provably carries no rate, pinned by
+  a 1-nano payer and a $10,000 payer receiving the identical bound.
+  IN FLIGHT: B5 alone, with both rulings and the under-reserve hazard warning delivered.

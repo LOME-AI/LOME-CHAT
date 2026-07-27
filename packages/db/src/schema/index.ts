@@ -12,6 +12,7 @@ export {
   memberPrivilegeEnum,
   messageSenderTypeEnum,
   modalityEnum,
+  modelExcludeReasonEnum,
   newsletterConsentSourceEnum,
   newsletterDeliveryStatusEnum,
   newsletterIssueStatusEnum,

@@ -421,6 +421,13 @@
       "when": 1784907251714,
       "tag": "0059_brief_starjammers",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1785100108784,
+      "tag": "0060_panoramic_steel_serpent",
+      "breakpoints": true
     }
   ]
 }

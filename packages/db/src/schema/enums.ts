@@ -1,5 +1,6 @@
 import { pgEnum } from 'drizzle-orm/pg-core';
 import {
+  EXCLUDE_REASONS,
   FEEDBACK_KINDS,
   FEEDBACK_STATUSES,
   LEDGER_ENTRY_KINDS,
@@ -79,6 +80,13 @@ export const devicePlatformEnum = pgEnum('device_platform', ['ios', 'android', '
 export const userLockReasonEnum = pgEnum('user_lock_reason', USER_LOCK_REASONS);
 
 export const verificationPurposeEnum = pgEnum('verification_purpose', ['email_verification']);
+
+/**
+ * Why a catalog row is not sellable, derived by the hourly refresh. Sources the
+ * single shared EXCLUDE_REASONS const, which is also what the refresh summary's
+ * per-reason breakdown counts — one authority, no second list.
+ */
+export const modelExcludeReasonEnum = pgEnum('model_exclude_reason', EXCLUDE_REASONS);
 
 /** Derives from the single shared FEEDBACK_KINDS const (same pattern as modality). */
 export const feedbackKindEnum = pgEnum('feedback_kind', FEEDBACK_KINDS);

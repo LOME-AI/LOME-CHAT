@@ -1,6 +1,7 @@
 import { LOCAL_NEON_DEV_CONFIG, createDb } from '@hushbox/db';
 import { afterAll, describe, expect, it } from 'vitest';
 import { TEST_GATEWAY_BASE_URL, catalogFetch } from '../slices/models/domain/gateway-fixtures.js';
+import { createCatalogSightingRecorder } from '../slices/models/index.js';
 import {
   CATALOG_REFRESH_JITTER_MAX_MS,
   createCatalogRefreshEntry,
@@ -35,6 +36,7 @@ describe('createCatalogRefreshEntry', () => {
       db,
       telemetry: silentTelemetry,
       now: () => new Date(),
+      recordSighting: createCatalogSightingRecorder(db),
       fetch: catalogFetch({ models: [], zdrModelIds: [] }),
       gatewayBaseUrl: TEST_GATEWAY_BASE_URL,
       jitter: {
@@ -57,6 +59,7 @@ describe('createCatalogRefreshEntry', () => {
       db,
       telemetry: silentTelemetry,
       now: () => new Date(),
+      recordSighting: createCatalogSightingRecorder(db),
       fetch: () => Promise.reject(new Error('gateway unreachable')),
       gatewayBaseUrl: TEST_GATEWAY_BASE_URL,
       jitter: { maxMs: 0, random: () => 0, sleep: () => Promise.resolve() },

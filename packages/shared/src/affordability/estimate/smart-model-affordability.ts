@@ -14,10 +14,26 @@
  * admission.
  *
  * {@link priceSmartModelPool} remains the internal balance-independent pricing
- * (classifier pick + sort + priceable set) both entry points build on.
+ * (classifier pick + pool order + priceable set) both entry points build on. Two
+ * DIFFERENT orders live in it, and the difference is load-bearing
+ * (`docs/BILLING.md` §Smart Model 1, 3):
+ *
+ * - the classifier ENGINE is the cheapest combined per-token rate, a
+ *   prompt-independent quantity, so the two option sets cannot buy different
+ *   classifiers;
+ * - the POOL is ordered on `maxCallCost` — turn cost — and has `outlier(m)`
+ *   removed, because the hold is a MAX over the pool and an extreme candidate taxes
+ *   every other one.
+ *
+ * The engine is therefore neither the first candidate nor necessarily a candidate at
+ * all: the cheapest model per token can be an enormous-capacity outlier. A consumer
+ * must therefore resolve a classifier answer within `candidates` and never fall back
+ * to the engine, which is not an option the pool presented.
  */
 
 import { MINIMUM_OUTPUT_TOKENS } from '../constants.js';
+import { nanoUSD } from '../nano-usd.js';
+import { maxCallCostNanoUsd, outlierModelIds } from '../turn-arithmetic.js';
 import {
   estimateTokensForTier,
   outputCharsPerTokenForTier,
@@ -26,7 +42,9 @@ import {
 import { classifierLineItems, classifierReserveChars } from './classifier-line-item.js';
 import { estimateRunCeilingNanoUsd, ratesFromPricing } from './run-ceiling.js';
 import { STORAGE_COST_PER_CHARACTER_NANO } from './storage-rate.js';
+import type { CallCostBasis } from '../turn-arithmetic.js';
 import type { ClassifierStage, NanoLineItem } from './types.js';
+import type { PriceableModel } from '../priceable-model.js';
 import type { Pricing } from '../model-descriptor.js';
 
 /**
@@ -89,11 +107,11 @@ export interface PricedSmartModelCandidate {
 }
 
 export interface PricedSmartModelPool {
-  /** The cheapest text candidate — the classifier model and runtime fallback. */
+  /** The cheapest text model per token — the model that RUNS the classification. */
   readonly classifierModelId: string;
   /** The classifier reserve every candidate's affordability is checked against. */
   readonly classifierWorstCaseNanoUsd: bigint;
-  /** Priceable candidates, ascending by combined base price. */
+  /** Priceable candidates minus `outlier(m)`, ascending by `maxCallCost`. */
   readonly priced: readonly PricedSmartModelCandidate[];
   /**
    * The reserve plus the cheapest candidate's realistic floor. Retained as
@@ -108,19 +126,98 @@ export interface SmartModelCandidateId {
   readonly description?: string;
 }
 
-/** input + output per-token base rates — the price candidates sort on. */
+/** input + output per-token base rates — the price the ENGINE choice sorts on. */
 function combinedBasePrice(candidate: SmartModelPoolCandidate): bigint {
   const input = candidate.pricing['inputPerToken'];
   const output = candidate.pricing['outputPerToken'];
   return (typeof input === 'bigint' ? input : 0n) + (typeof output === 'bigint' ? output : 0n);
 }
 
+function byIdentifier(a: SmartModelPoolCandidate, b: SmartModelPoolCandidate): number {
+  if (a.id < b.id) return -1;
+  return a.id > b.id ? 1 : 0;
+}
+
+/**
+ * The ENGINE order: combined per-token rate, identifier tiebreak. Deliberately
+ * PROMPT-INDEPENDENT, and deliberately not the pool order below.
+ *
+ * `maxCallCost` depends on `contextHeadroom` and therefore on the prompt, so
+ * choosing the classifier by it would let the two option sets — one evaluated
+ * against an empty basis, one against the composed prompt — buy DIFFERENT
+ * classifiers, hence different reserves, and `admissible ⊆ affordable` could
+ * break. The tiebreak matters for the same reason a total order does anywhere
+ * here: without it, catalog row order decides which model classifies.
+ */
 function ascendingByPrice(a: SmartModelPoolCandidate, b: SmartModelPoolCandidate): number {
   const left = combinedBasePrice(a);
   const right = combinedBasePrice(b);
   if (left < right) return -1;
   if (left > right) return 1;
-  return 0;
+  return byIdentifier(a, b);
+}
+
+/**
+ * The narrow money-layer projection of a poolable candidate, for the ONE
+ * `maxCallCost` implementation. `undefined` for a candidate the pool cannot price
+ * at all — exactly the ones {@link floorNanoUsd} already drops.
+ */
+function priceableOf(candidate: SmartModelPoolCandidate): PriceableModel | undefined {
+  const input = candidate.pricing['inputPerToken'];
+  const output = candidate.pricing['outputPerToken'];
+  if (typeof input !== 'bigint' || typeof output !== 'bigint') return undefined;
+  if (candidate.contextLength === undefined) return undefined;
+  return {
+    modelId: candidate.id,
+    inputRateNanoUsd: nanoUSD(input),
+    outputRateNanoUsd: nanoUSD(output),
+    contextLength: candidate.contextLength,
+    providerCap: candidate.maxOutputTokens,
+    // Reasoning plays no part in `maxCallCost`: the ceiling it prices is a
+    // physical bound, and reasoning tokens are output tokens inside it.
+    reasoning: undefined,
+  };
+}
+
+/**
+ * The `maxCallCost` basis for this pool: the prompt's input tokens and the
+ * turn's own storage ratio, with no funding term. Absent storage means a
+ * non-persisting turn, which carries no storage term at all.
+ */
+function callCostBasisOf(
+  promptInputTokens: number | undefined,
+  storage: SmartModelStorageContext | undefined
+): CallCostBasis {
+  return {
+    inputTokens: promptInputTokens ?? 0,
+    outputCharsPerToken: storage?.outputCharsPerToken ?? 1,
+    persists: storage !== undefined,
+  };
+}
+
+/**
+ * The POOL order of §Smart Model 1: turn cost, which §Predicates fixes as
+ * `maxCallCost(m)`, with an identifier tiebreak. It is genuinely a different
+ * order from the summed rates — the input leg is prompt-weighted, the output leg
+ * carries storage, and per-model caps differ — which is why §Smart Model 3's
+ * outlier test also catches an enormous-CAPACITY model rather than only an
+ * expensive-per-token one.
+ */
+function ascendingByMaxCallCost(
+  basis: CallCostBasis
+): (a: SmartModelPoolCandidate, b: SmartModelPoolCandidate) => number {
+  return (a, b) => {
+    const left = priceableOf(a);
+    const right = priceableOf(b);
+    /* v8 ignore next 2 -- the sort runs over candidates the pool priced, which
+       are exactly the projectable ones; this narrows the projection only */
+    if (left === undefined || right === undefined) return byIdentifier(a, b);
+    const leftCost = maxCallCostNanoUsd(left, basis);
+    const rightCost = maxCallCostNanoUsd(right, basis);
+    if (leftCost < rightCost) return -1;
+    if (leftCost > rightCost) return 1;
+    return byIdentifier(a, b);
+  };
 }
 
 /** The paid filter's classifier reserve: the worst-case billable provider cost
@@ -180,14 +277,32 @@ function floorNanoUsd(
  */
 export function priceSmartModelPool(
   candidates: readonly SmartModelPoolCandidate[],
-  promptInputTokens?: number
+  promptInputTokens?: number,
+  storage?: SmartModelStorageContext
 ): PricedSmartModelPool | null {
-  const sorted = candidates.toSorted(ascendingByPrice);
-  const classifier = sorted[0];
+  const byRate = candidates.toSorted(ascendingByPrice);
+  const classifier = byRate[0];
   if (classifier === undefined) return null;
 
-  const reserve = classifierWorstCaseNanoUsd(classifier, sorted);
+  // The classifier prompt lists every candidate the pool was built from, so the
+  // reserve is rendered against the same list whichever order it is read in.
+  const reserve = classifierWorstCaseNanoUsd(classifier, byRate);
   if (reserve === undefined) return null;
+
+  const basis = callCostBasisOf(promptInputTokens, storage);
+  // `outlier(m)` is measured over the priceable catalog pool — the whole list
+  // passed in, never the eligible subset — which is what keeps the exclusion set
+  // balance-independent and reproducible from the catalog (§Smart Model 3).
+  const outliers = outlierModelIds(
+    candidates.flatMap((candidate) => {
+      const model = priceableOf(candidate);
+      return model === undefined ? [] : [model];
+    }),
+    basis
+  );
+  const sorted = candidates
+    .filter((candidate) => !outliers.has(candidate.id))
+    .toSorted(ascendingByMaxCallCost(basis));
 
   let minFloor: bigint | undefined;
   const priced = sorted.flatMap((candidate): PricedSmartModelCandidate[] => {
@@ -260,7 +375,7 @@ export function admitSmartModel(
   promptInputTokens?: number,
   storage?: SmartModelStorageContext
 ): SmartModelAdmission | null {
-  const pool = priceSmartModelPool(candidates, promptInputTokens);
+  const pool = priceSmartModelPool(candidates, promptInputTokens, storage);
   if (pool === null) return null;
   const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
   const classifier = byId.get(pool.classifierModelId);
@@ -341,11 +456,12 @@ export interface SmartModelStorageContext {
 }
 
 export interface SmartModelAdmission {
-  /** The cheapest text candidate — the classifier model and runtime fallback. */
+  /** The cheapest text model per token — the model that RUNS the classification. */
   readonly classifierModelId: string;
   /** The classifier's billable provider reserve (storage excluded). */
   readonly classifierWorstCaseNanoUsd: bigint;
-  /** The ELIGIBLE subset (`cap(m) ≥ MINIMUM_OUTPUT_TOKENS`), ascending by price. */
+  /** The ELIGIBLE subset (`cap(m) ≥ MINIMUM_OUTPUT_TOKENS`) minus the pool's
+   * outliers, ascending by `maxCallCost`. */
   readonly candidates: readonly SmartModelCappedCandidate[];
   /** `R = MAX over eligible ( fixedReserve + inputCost(m) + cap(m)×outputRate(m) )`; ≤ effBalance. */
   readonly reserveNanoUsd: bigint;

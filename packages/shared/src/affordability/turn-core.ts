@@ -43,9 +43,10 @@ import { classifierLineItems, classifierReserveChars } from './estimate/classifi
 import { estimateTokensForTier, outputCharsPerTokenForTier } from './estimate/pre-adapters.js';
 import { evaluateManifest } from './estimate/reducers.js';
 import { webSearchLineItem } from './estimate/search-reservation.js';
-import { combinedRateNanoUsd } from './premium.js';
+import { combinedRateNanoUsd, exceedsTrialBudget } from './premium.js';
 import {
   budgetBuysTokens,
+  callCostBasisForTier,
   ceilingTokens,
   contextHeadroomTokens,
   costNanoUsd,
@@ -53,12 +54,13 @@ import {
   fixedCostsNanoUsd,
   inputStorageNanoUsd,
   inputTokensOf,
+  outlierModelIds,
   requiredCeilingTokens,
   siblingLineItems,
   variableRateNanoUsd,
 } from './turn-arithmetic.js';
 import { promptCharsOf, refusalPrecedence } from './turn-types.js';
-import type { CostContext } from './turn-arithmetic.js';
+import type { CallCostBasis, CostContext } from './turn-arithmetic.js';
 import type { DimensionOption, OptionId } from './dimensions/index.js';
 import type { NanoLineItem } from './estimate/types.js';
 import type { PriceableModel } from './priceable-model.js';
@@ -234,15 +236,18 @@ function classifierReserveNanoUsd(catalog: readonly PriceableModel[], tier: User
 /**
  * How the turn's effort selection lands on one model.
  *
- * A model that offers no rung — one that cannot reason, or a
- * mandatory-reasoning model with a single level, which §Reasoning Effort 2 says
- * "offers no choice" — runs the turn with no reasoning wire and reserves
- * nothing, whether the turn pinned a level or left it open. It does NOT veto the
- * turn: the effort menu is the union of the selection's offered rungs
- * (§Reasoning Effort 4), so refusing a rung the same call presents as available
- * would enable a level the server rejects, which §Reasoning Effort 3 forbids
- * outright. Per-model resolution onto an empty ladder is the declared mapping of
- * §Reasoning Effort 10(a), not a substitution of the turn's choice.
+ * A model that offers no rung — one that cannot reason at all — runs the turn
+ * with no reasoning wire and reserves nothing, whether the turn pinned a level or
+ * left it open. A mandatory-reasoning model with a single native word is NOT that
+ * case: it offers that one rung, and grading it here on the rung's real budget is
+ * what keeps eligibility on a reachable corner (§Predicates).
+ *
+ * An empty ladder does NOT veto the turn: the effort menu is the union of the
+ * selection's offered rungs (§Reasoning Effort 4), so refusing a rung the same
+ * call presents as available would enable a level the server rejects, which
+ * §Reasoning Effort 3 forbids outright. Per-model resolution onto an empty ladder
+ * is the declared mapping of §Reasoning Effort 10(a), not a substitution of the
+ * turn's choice.
  */
 function effortGate(model: PriceableModel, pin: OptionId | undefined): EffortGate {
   const support = dimensionSupportFor(EFFORT_DIMENSION, model);
@@ -346,6 +351,11 @@ function boundReason(
  * menu is asking about. `undefined` means open, which grades on `e_min(m)`: that
  * is `eligible(m)`, and `feasible(m, e)` on a resolved pin. One predicate either
  * way.
+ *
+ * The trial per-message cap is tested FIRST, in the precedence
+ * {@link REFUSAL_CODES} declares: it is a tier fact, not a funding one, so no
+ * balance and no shorter answer clears it and a money reason would name an action
+ * that cannot help (§Notices & Refusals 3, §Trial Usage).
  */
 function siblingBlock(
   model: PriceableModel,
@@ -353,6 +363,9 @@ function siblingBlock(
   context: PricingContext,
   effort: OptionId | undefined
 ): RefusalCode | undefined {
+  if (context.tier === 'trial' && exceedsTrialBudget(model, context.promptChars)) {
+    return 'trial_message_cap_exceeded';
+  }
   const gate = effortGate(model, effort);
   if (!gate.resolvable) return 'option_not_offered';
   const ceiling = ceilingIn(arrangement, model, context);
@@ -427,6 +440,8 @@ function reachableAt(
  * What one row is graded by, at any effort. A row's own verdict is this at the
  * turn's effort selection and each of its rungs is this at that rung, so the two
  * cannot disagree: they are one function at different arguments.
+ *
+ * Only a candidate row needs one, because only a candidate row publishes rungs.
  */
 type RowGrader = (effort: OptionId | undefined) => RefusalCode | undefined;
 
@@ -570,15 +585,35 @@ function classifierIsBoughtForTurn(
   );
 }
 
-/** Who would answer: the pinned siblings, the ids nothing prices, and the pool. */
+/**
+ * Who would answer: the pinned siblings, the ids nothing prices, and two readings
+ * of the rest of the catalog.
+ *
+ * `candidatePool` is every non-pinned model and is what the PICKER renders — an
+ * outlier is excluded from the product nowhere, so it keeps its row and stays one
+ * deliberate click away. `classifierPool` is that pool minus `outlier(m)` and is
+ * the CLASSIFIER-SELECTABLE set: the arrangements a smart slot could become, and
+ * therefore the domain the hold's `MAX` ranges over (§Smart Model 3).
+ */
 interface SiblingPlan {
   readonly pinnedModels: readonly PriceableModel[];
   readonly unpriceableIds: readonly string[];
   readonly candidatePool: readonly PriceableModel[];
+  readonly classifierPool: readonly PriceableModel[];
+  /**
+   * The candidate ids `outlier(m)` removed — `candidatePool` minus
+   * `classifierPool`. A PINNED model is never in here however extreme it is:
+   * pinning IS the explicit selection §Smart Model 3 keeps available.
+   */
+  readonly excludedIds: ReadonlySet<string>;
   readonly smartSlot: boolean;
 }
 
-function planSiblings(catalog: readonly PriceableModel[], selection: Selection): SiblingPlan {
+function planSiblings(
+  catalog: readonly PriceableModel[],
+  selection: Selection,
+  basis: CallCostBasis
+): SiblingPlan {
   const byId = new Map(catalog.map((model) => [model.modelId, model]));
   const pinnedIds = selection.answerSources.models;
   const pinnedModels: PriceableModel[] = [];
@@ -588,31 +623,53 @@ function planSiblings(catalog: readonly PriceableModel[], selection: Selection):
     if (model === undefined) unpriceableIds.push(modelId);
     else pinnedModels.push(model);
   }
+  // The median is taken over the whole priceable catalog pool, pinned models
+  // included: it must be reproducible from the catalog and the prompt size, and a
+  // selection-dependent median would make the exclusion set move as the user
+  // pins siblings.
+  const outliers = outlierModelIds(catalog, basis);
+  const candidatePool = catalog.filter((model) => !pinnedIds.includes(model.modelId));
+  const excluded = candidatePool.filter((model) => outliers.has(model.modelId));
   return {
     pinnedModels,
     unpriceableIds,
-    candidatePool: catalog.filter((model) => !pinnedIds.includes(model.modelId)),
+    candidatePool,
+    classifierPool: candidatePool.filter((model) => !outliers.has(model.modelId)),
+    excludedIds: new Set(excluded.map((model) => model.modelId)),
     smartSlot: selection.answerSources.smartSlot,
   };
 }
 
-function pricingContextFor(input: CoreInput, plan: SiblingPlan): PricingContext {
-  const { basis, tier, selection, catalog } = input;
+/**
+ * The prompt-and-tier half of a cost, with no funding term. Shared by the outlier
+ * pool (which must stay balance-independent) and the arrangement pricing, so the
+ * two cannot disagree about how wide the prompt leaves a model.
+ */
+function callCostBasisFor(input: CoreInput): CallCostBasis {
   // Trial turns are ephemeral, so nothing about them is stored and no storage
   // term appears anywhere in their pricing.
-  const persists = tier !== 'trial';
+  const persists = input.tier !== 'trial';
+  return callCostBasisForTier(inputTokensOf(input.basis, input.tier), input.tier, persists);
+}
+
+function pricingContextFor(input: CoreInput, plan: SiblingPlan): PricingContext {
+  const { basis, tier, selection, catalog } = input;
+  const { inputTokens, persists } = callCostBasisFor(input);
   const effortPin = selection.pinned.effort;
+  // Pool SIZE decides whether the classifier is bought (§Reserve ⟺ classify), and
+  // the pool it sizes is the classifier-selectable one — an excluded outlier is
+  // not an option the classifier could be asked to choose between.
   const classifierBought = classifierIsBoughtForTurn(
-    plan.smartSlot ? [...plan.pinnedModels, ...plan.candidatePool] : plan.pinnedModels,
+    plan.smartSlot ? [...plan.pinnedModels, ...plan.classifierPool] : plan.pinnedModels,
     effortPin === undefined,
     plan.smartSlot,
-    plan.candidatePool.length
+    plan.classifierPool.length
   );
   return {
     fundingNanoUsd: input.fundingNanoUsd,
     tier,
     persists,
-    inputTokens: inputTokensOf(basis, tier),
+    inputTokens,
     promptChars: promptCharsOf(basis),
     inputStorageNanoUsd: inputStorageNanoUsd(basis, persists),
     classifierReserveNanoUsd: classifierBought ? classifierReserveNanoUsd(catalog, tier) : 0n,
@@ -723,7 +780,14 @@ function presentedArrangements(
   pinnedArrangement: Arrangement | undefined,
   candidateArrangements: ReadonlyMap<string, Arrangement>
 ): readonly Arrangement[] {
-  if (plan.smartSlot) return [...candidateArrangements.values()];
+  if (plan.smartSlot) {
+    return plan.classifierPool.flatMap((candidate) => {
+      const arrangement = candidateArrangements.get(candidate.modelId);
+      /* v8 ignore next -- the classifier pool is a subset of the candidate pool,
+         so every member has an arrangement; this narrows the lookup only */
+      return arrangement === undefined ? [] : [arrangement];
+    });
+  }
   return pinnedArrangement === undefined ? [] : [pinnedArrangement];
 }
 
@@ -753,7 +817,7 @@ export function evaluateTurn(input: CoreInput): CoreResult {
   // render and no ceiling to grade one on.
   if (selection.modality !== 'text') return refused('modality_not_priceable', [], []);
 
-  const plan = planSiblings(catalog, selection);
+  const plan = planSiblings(catalog, selection, callCostBasisFor(input));
   const context = pricingContextFor(input, plan);
   const candidateArrangements = new Map<string, Arrangement>(
     plan.candidatePool.map((candidate) => [
@@ -772,7 +836,15 @@ export function evaluateTurn(input: CoreInput): CoreResult {
   };
 
   const entries = entriesFor(plan, pinnedArrangement, candidateArrangements, context);
-  const runnable = entries.filter((entry) => entry.availability.available);
+  // `runnable` is the witness for what can run in THIS turn, so a high-cost
+  // outlier is not among it: the smart slot cannot resolve to one, and the hold's
+  // `MAX` is not taken over it. Its ROW stays in `all`, marked available, because
+  // pinning it is a different selection and one the payer can still make
+  // (§Smart Model 3). Membership of `all` is therefore wider than `runnable`,
+  // which is what keeps `hold ≥ every runnable candidate's arrangement` true.
+  const runnable = entries.filter(
+    (entry) => entry.availability.available && !plan.excludedIds.has(entry.modelId)
+  );
   const turnDimensions = turnDimensionsFor(presented, context);
 
   const refusal = turnRefusal(evaluation);

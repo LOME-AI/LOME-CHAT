@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { TEST_IDS } from '@hushbox/shared';
-import { AccessibilityPanel } from '@hushbox/ui/accessibility';
+import { AccessibilityPanel } from '@hushbox/ui/accessibility/panel';
 import { PageHeader } from '@/components/shared/page-header';
 import { PageBody } from '@/components/shared/page-body';
 import { ThemeToggle } from '@/components/shared/theme-toggle';

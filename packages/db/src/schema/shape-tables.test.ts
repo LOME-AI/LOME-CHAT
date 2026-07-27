@@ -639,6 +639,25 @@ describe('modelCatalog', () => {
   it('persists the descriptor as jsonb', () => {
     expect(column(schema.modelCatalog, 'descriptor').getSQLType()).toBe('jsonb');
   });
+
+  it('carries the derived exclusion reason as a nullable pgEnum', () => {
+    const c = column(schema.modelCatalog, 'excluded_reason');
+    expect(c.getSQLType()).toBe('model_exclude_reason');
+    expect(c.notNull).toBe(false);
+  });
+
+  it('carries a nullable excluded_at beside the reason', () => {
+    const c = column(schema.modelCatalog, 'excluded_at');
+    expect(c.getSQLType()).toBe('timestamp with time zone');
+    expect(c.notNull).toBe(false);
+  });
+
+  it('carries a NOT NULL last_seen_at defaulted to now', () => {
+    const c = column(schema.modelCatalog, 'last_seen_at');
+    expect(c.getSQLType()).toBe('timestamp with time zone');
+    expect(c.notNull).toBe(true);
+    expect(c.hasDefault).toBe(true);
+  });
 });
 
 describe('idempotency_keys', () => {

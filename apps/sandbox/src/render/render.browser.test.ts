@@ -95,6 +95,58 @@ function rootHtmlOf(frame: EmbeddedFrame): Promise<string> {
   return frame.probeFrame(() => document.querySelector('#document-root')?.innerHTML ?? '');
 }
 
+/**
+ * Measure the rendered root against the frame's own viewport, from inside it.
+ * The panel gives the frame its size, so "fills" means the viewport — content
+ * height would be satisfied by the collapsed root this measurement exists to
+ * catch.
+ */
+function layoutOf(
+  frame: EmbeddedFrame
+): Promise<{ rootHeight: number; viewportHeight: number; scrollHeight: number }> {
+  return frame.probeFrame(() => ({
+    rootHeight: document.querySelector('#document-root')?.getBoundingClientRect().height ?? -1,
+    viewportHeight: window.innerHeight,
+    scrollHeight: document.documentElement.scrollHeight,
+  }));
+}
+
+/** Read the appearance the frame is actually painting, from inside its realm. */
+function appearanceOf(
+  frame: EmbeddedFrame
+): Promise<{ colorScheme: string; backgroundColor: string; color: string }> {
+  return frame.probeFrame(() => {
+    const computed = getComputedStyle(document.documentElement);
+    return {
+      colorScheme: computed.colorScheme,
+      backgroundColor: computed.backgroundColor,
+      color: computed.color,
+    };
+  });
+}
+
+/**
+ * Wait for the frame to be painting a given background.
+ *
+ * A `theme` message names no request and gets no answer — restyling is not a
+ * render — so there is no terminal message to wait on and the appearance has to
+ * be watched instead.
+ */
+async function waitForBackground(
+  frame: EmbeddedFrame,
+  backgroundColor: string
+): Promise<{ colorScheme: string; backgroundColor: string; color: string }> {
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    const appearance = await appearanceOf(frame);
+    if (appearance.backgroundColor === backgroundColor) return appearance;
+    if (Date.now() >= deadline) {
+      throw new Error(`frame background stayed ${appearance.backgroundColor}`);
+    }
+    await sleep(50);
+  }
+}
+
 /** Sleep in Node: one of these tests mocks the page's own clock. */
 function sleep(ms: number): Promise<void> {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -627,6 +679,225 @@ describe('web renderer (real browser)', () => {
       const error = messages.find((m) => m.type === 'error');
       expect(error?.code).toBe('timed_out');
       expect(messages.some((m) => m.type === 'rendered')).toBe(false);
+    } finally {
+      await frame.close();
+    }
+  }, 30_000);
+
+  it('gives a short document the whole frame to occupy', async () => {
+    // The panel sizes the frame; the document has to fill it. A root sized to
+    // its own content instead leaves the document as a strip at the top of an
+    // empty panel — and reports success while doing it, which is why this is
+    // measured rather than eyeballed.
+    const frame = await openRenderer();
+    try {
+      await frame.send({
+        type: 'init',
+        kind: 'html',
+        requestId: 'fill-1',
+        code: '<p id="short">short</p>',
+      });
+      await frame.waitForMessage((m) => m.type === 'rendered' && m.requestId === 'fill-1');
+      const { rootHeight, viewportHeight } = await layoutOf(frame);
+      expect(viewportHeight).toBeGreaterThan(0);
+      expect(Math.abs(rootHeight - viewportHeight)).toBeLessThanOrEqual(2);
+    } finally {
+      await frame.close();
+    }
+  }, 30_000);
+
+  it('lets a document taller than the frame scroll to exactly its own height', async () => {
+    // Filling the frame must not mean capping it: a long document scrolls. The
+    // exact equality is the other half — a default body margin would inset the
+    // document from the frame's edges and pad the scroll extent past its
+    // content.
+    const frame = await openRenderer();
+    try {
+      await frame.send({
+        type: 'init',
+        kind: 'html',
+        requestId: 'tall-1',
+        code: '<div id="tall" style="height: 2000px"></div>',
+      });
+      await frame.waitForMessage((m) => m.type === 'rendered' && m.requestId === 'tall-1');
+      const { scrollHeight, viewportHeight } = await layoutOf(frame);
+      expect(scrollHeight).toBeGreaterThan(viewportHeight);
+      expect(scrollHeight).toBe(2000);
+    } finally {
+      await frame.close();
+    }
+  }, 30_000);
+
+  it('paints the canvas and colour scheme the embedder asked for', async () => {
+    // The frame is cross-origin: it cannot read the app's variables, and the OS
+    // preference is not the app's theme. What the embedder states is the only
+    // thing it has to go on — including the colours, which it holds none of.
+    const frame = await openRenderer();
+    try {
+      await frame.send({
+        type: 'init',
+        kind: 'html',
+        requestId: 'dark-1',
+        code: '<p id="themed">themed</p>',
+        theme: 'dark',
+        background: '#1a1816',
+        foreground: '#f2f1ef',
+      });
+      await frame.waitForMessage((m) => m.type === 'rendered' && m.requestId === 'dark-1');
+      const appearance = await appearanceOf(frame);
+      expect(appearance.colorScheme).toBe('dark');
+      expect(appearance.backgroundColor).toBe('rgb(26, 24, 22)');
+      expect(appearance.color).toBe('rgb(242, 241, 239)');
+    } finally {
+      await frame.close();
+    }
+  }, 30_000);
+
+  it('restyles a live frame when a later init names the other theme', async () => {
+    // A theme change must not cost a remount: the frame element stays, so a
+    // running document keeps running and a rendered one stays on screen.
+    const frame = await openRenderer();
+    try {
+      await frame.send({
+        type: 'init',
+        kind: 'html',
+        requestId: 'theme-dark',
+        code: '<p id="living">living</p>',
+        theme: 'dark',
+        background: '#1a1816',
+        foreground: '#f2f1ef',
+      });
+      await frame.waitForMessage((m) => m.type === 'rendered' && m.requestId === 'theme-dark');
+      const dark = await appearanceOf(frame);
+      await frame.send({
+        type: 'init',
+        kind: 'html',
+        requestId: 'theme-light',
+        code: '<p id="living">living</p>',
+        theme: 'light',
+        background: '#faf9f6',
+        foreground: '#1a1a1a',
+      });
+      await frame.waitForMessage((m) => m.type === 'rendered' && m.requestId === 'theme-light');
+      const light = await appearanceOf(frame);
+      expect(light.colorScheme).toBe('light');
+      expect(light.colorScheme).not.toBe(dark.colorScheme);
+      expect(light.backgroundColor).not.toBe(dark.backgroundColor);
+      expect(light.color).not.toBe(dark.color);
+    } finally {
+      await frame.close();
+    }
+  }, 30_000);
+
+  it('restyles a live frame without re-running the document', async () => {
+    // Restyling has its own message because the alternative does damage: a
+    // second `init` is how a document is loaded, so it unmounts what is on
+    // screen and executes the source again from the top. A reader toggling the
+    // app's theme would lose whatever the document had built up.
+    const frame = await openRenderer();
+    try {
+      await frame.send({
+        type: 'init',
+        kind: 'html',
+        requestId: 'keeps-running',
+        // The run counter is the discriminator: a re-execution shares this realm
+        // with the run before it, so a restart shows up as a second increment.
+        code: `<p id="live"></p>
+          <script>
+            globalThis.__runs = (globalThis.__runs ?? 0) + 1;
+            document.querySelector('#live').textContent = 'run ' + globalThis.__runs;
+          </script>`,
+        theme: 'light',
+        background: '#faf9f6',
+        foreground: '#1a1a1a',
+      });
+      await frame.waitForMessage((m) => m.type === 'rendered' && m.requestId === 'keeps-running');
+      // State the document acquired after it rendered — a stand-in for anything
+      // a live document holds. Nothing recreates it, so it survives a restyle
+      // only if the document was left alone.
+      await frame.probeFrame(() => {
+        const live = document.querySelector<HTMLElement>('#live');
+        if (live !== null) live.dataset['live'] = 'kept';
+      });
+
+      await frame.send({
+        type: 'theme',
+        theme: 'dark',
+        background: '#1a1816',
+        foreground: '#f2f1ef',
+      });
+      const restyled = await waitForBackground(frame, 'rgb(26, 24, 22)');
+      expect(restyled.colorScheme).toBe('dark');
+      expect(restyled.color).toBe('rgb(242, 241, 239)');
+
+      const survived = await frame.probeFrame(() => ({
+        runs: (globalThis as unknown as { __runs?: number }).__runs,
+        marker: document.querySelector<HTMLElement>('#live')?.dataset['live'],
+        text: document.querySelector('#live')?.textContent,
+      }));
+      expect(survived.runs).toBe(1);
+      expect(survived.marker).toBe('kept');
+      expect(survived.text).toBe('run 1');
+    } finally {
+      await frame.close();
+    }
+  }, 30_000);
+
+  it("keeps a document's own root-level colours over the frame's", async () => {
+    // The frame's theme is the canvas a document sits on, not a house style
+    // imposed on it. This is the unconditional half of that promise: `:root` is
+    // a class-level selector (0,1,0) and outranks the frame's type selector
+    // (0,0,1), so a document's `:root` rule wins wherever it sits relative to
+    // the frame's — source order never enters into it.
+    const frame = await openRenderer();
+    try {
+      await frame.send({
+        type: 'init',
+        kind: 'html',
+        requestId: 'own-colours',
+        code: `<style>:root { background-color: rgb(0, 128, 0); color: rgb(255, 0, 255); }</style>
+          <p id="own">own colours</p>`,
+        // Colours the frame is actually painting, so there is something for the
+        // document's rule to beat.
+        theme: 'dark',
+        background: '#1a1816',
+        foreground: '#f2f1ef',
+      });
+      await frame.waitForMessage((m) => m.type === 'rendered' && m.requestId === 'own-colours');
+      const appearance = await appearanceOf(frame);
+      expect(appearance.backgroundColor).toBe('rgb(0, 128, 0)');
+      expect(appearance.color).toBe('rgb(255, 0, 255)');
+    } finally {
+      await frame.close();
+    }
+  }, 30_000);
+
+  it("keeps a document's own html-level colours over the frame's", async () => {
+    // The order-dependent half, and the reason the frame styles `html` rather
+    // than `:root`: those select the same element with equal specificity, so a
+    // document's `html` rule wins only by being later — which it is, because
+    // the frame's style element is appended at init, ahead of the document. A
+    // frame rule written at `:root` would outrank every `html { … }` a document
+    // ships no matter the order — silently, and only for documents that style
+    // the root that way.
+    const frame = await openRenderer();
+    try {
+      await frame.send({
+        type: 'init',
+        kind: 'html',
+        requestId: 'own-html-colours',
+        code: `<style>html { background-color: rgb(0, 128, 0); color: rgb(255, 0, 255); }</style>
+          <p id="own-html">own colours</p>`,
+        theme: 'dark',
+        background: '#1a1816',
+        foreground: '#f2f1ef',
+      });
+      await frame.waitForMessage(
+        (m) => m.type === 'rendered' && m.requestId === 'own-html-colours'
+      );
+      const appearance = await appearanceOf(frame);
+      expect(appearance.backgroundColor).toBe('rgb(0, 128, 0)');
+      expect(appearance.color).toBe('rgb(255, 0, 255)');
     } finally {
       await frame.close();
     }

@@ -59,9 +59,6 @@ vi.mock('@hushbox/shared', async (importOriginal) => {
 vi.mock('@hushbox/ui/accessibility', () => ({
   A11yProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   MotionProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  AccessibilityWidget: () => null,
-  AccessibilityPanel: () => null,
-  AccessibilityPage: () => null,
   SvgColorblindDefs: () => null,
 }));
 

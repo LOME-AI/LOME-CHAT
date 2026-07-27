@@ -1,4 +1,5 @@
 import { ERROR_CODES, REASONING_OFF_WIRE, reasoningPlanModelFrom, textTag } from '@hushbox/shared';
+import { MINIMUM_OUTPUT_TOKENS } from '@hushbox/shared/affordability/constants';
 import { turnEffortOptions } from '@hushbox/shared/affordability/estimate/effort-options';
 import { buildWorkflow, smartModel, workflowInputs } from '../../workflows/index.js';
 import {
@@ -18,17 +19,17 @@ import {
   TRIAL_TURN_HOOKS,
 } from './constants.js';
 import {
-  answerHeadroomTokens,
   createTurnCompileRegistries,
+  fitAnswerCapToCeiling,
   payerSpendableNanoUsd,
   promptInputTokensFor,
   reconcileAnswerCeiling,
-  turnMaxOutputTokens,
+  sharedAnswerCeiling,
   turnModelPricings,
   turnStorageContext,
   withStorageStamp,
 } from './turn-definition.js';
-import type { TurnBudget, TurnModelPricing } from './turn-definition.js';
+import type { TurnBudget } from './turn-definition.js';
 import type { createConstraintRegistry, NodeRegistryContext } from '../../workflows/index.js';
 import type { SmartModelCandidateEntry } from '../../models/index.js';
 import type { BillingStores } from '../../billing/index.js';
@@ -65,7 +66,7 @@ export interface SmartModelTurnParams {
    * the node's params (the classifier call never reads them — it sets only its
    * own fixed output cap). Omitted = the answering model's own default.
    */
-  readonly answerMaxOutputTokens?: number;
+  readonly answerCapTokens?: number;
   /** The estimated prompt input-token count, stamped for the candidate answer
    * legs' admission bounding (the classifier reserve is truncated-context). */
   readonly promptInputTokens?: number;
@@ -85,89 +86,31 @@ export interface SmartModelTurnParams {
 }
 
 /**
- * The tightest declared provider completion cap across the candidates: it
- * bounds the answer ceiling jointly with the context window (a candidate
- * without one is bounded by its context alone). Undefined when none declares
- * a cap.
+ * The Smart Model turn's single-cap PHYSICAL answer ceiling: the tightest
+ * candidate's own completion cap and remaining context, and no money term. What
+ * the payer can afford — the classifier reserve included — is the canonical
+ * admission estimator's question, asked once by `reconcileAnswerCeiling`, so
+ * nothing is deducted from the budget here and no rate is read.
+ *
+ * The bound must be CONCRETE even for a wallet that covers the whole window:
+ * admission prices each candidate's OWN full context and takes the MAX, so an
+ * omitted cap reserves the widest candidate's full window at the priciest rate.
+ * A genuinely unaffordable wallet is refused at admission, the only balance gate.
+ *
+ * Undefined when a candidate is missing from the snapshot — there is nothing to
+ * bound, and the reconcile then leaves the definition untouched.
  */
-function tightestCompletionCap(pricings: readonly TurnModelPricing[]): number | undefined {
-  const declared = pricings
-    .map((candidate) => candidate.maxOutputTokens)
-    .filter((cap): cap is number => cap !== undefined);
-  return declared.length === 0 ? undefined : Math.min(...declared);
-}
-
-/**
- * The answer generation's output-token ceiling for a Smart Model turn: the
- * shared derivation priced at the MOST EXPENSIVE candidate rates (legacy
- * `computeMaxEligibleFees` — the budget must absorb whichever candidate the
- * classifier picks) against the TIGHTEST candidate context window, sized
- * against the funds left after the classifier's worst-case reserve is set
- * aside (legacy deducted the stage reservation from the balance first, so
- * classifier + answer together never exceed the payer's funds). Undefined when
- * any candidate is missing a rate or context limit, or when the post-reserve
- * budget covers the remaining context (the model default applies).
- */
-export function answerMaxOutputTokens(
+export function candidateAnswerCeiling(
   catalog: readonly ModelDescriptor[],
   candidates: readonly SmartModelCandidateEntry[],
-  budget: TurnBudget,
-  classifierReserveNanoUsd: bigint
+  budget: TurnBudget
 ): number | undefined {
   const pricings = turnModelPricings(
     candidates.map((candidate) => candidate.id),
     snapshotResolver(catalog)
   );
-  const first = pricings?.[0];
-  if (pricings === undefined || first === undefined) return undefined;
-  // Rates are bigint (Math.max cannot take them); a plain scan keeps the money
-  // math integral.
-  let maxInputRate = first.inputPerTokenNanoUsd;
-  let maxOutputRate = first.outputPerTokenNanoUsd;
-  let minContextLength = first.contextLength;
-  for (const candidate of pricings) {
-    if (candidate.inputPerTokenNanoUsd > maxInputRate)
-      maxInputRate = candidate.inputPerTokenNanoUsd;
-    if (candidate.outputPerTokenNanoUsd > maxOutputRate) {
-      maxOutputRate = candidate.outputPerTokenNanoUsd;
-    }
-    minContextLength = Math.min(candidate.contextLength, minContextLength);
-  }
-  const minMaxOutputTokens = tightestCompletionCap(pricings);
-  const worstCase: TurnModelPricing = {
-    inputPerTokenNanoUsd: maxInputRate,
-    outputPerTokenNanoUsd: maxOutputRate,
-    contextLength: minContextLength,
-    ...(minMaxOutputTokens === undefined ? {} : { maxOutputTokens: minMaxOutputTokens }),
-  };
-  // The classifier call is spent before the answer, so the answer's affordable
-  // ceiling is sized against the funds that remain once the classifier's
-  // worst-case reserve is deducted.
-  const answerBudget: TurnBudget = {
-    promptCharacterCount: budget.promptCharacterCount,
-    funding: {
-      ...budget.funding,
-      remainingNanoUsd: budget.funding.remainingNanoUsd - classifierReserveNanoUsd,
-    },
-  };
-  const cap = turnMaxOutputTokens(answerBudget, [worstCase]);
-  if (cap !== undefined) return cap;
-  // `turnMaxOutputTokens` (via `computeSafeMaxTokens`) drops the cap when the
-  // budget covers the tightest candidate's remaining context. That is safe for
-  // a SINGLE-model turn, but wrong here: the multi-candidate admission estimator
-  // (`declaredOutputCeiling`) takes the MAX over the candidates' OWN full
-  // contexts, so an omitted cap reserves the WIDEST candidate's full window at
-  // the priciest rate — >$200 on a $100 wallet. Always stamp a concrete
-  // ceiling, clamped to the tightest candidate's remaining context and its
-  // declared completion cap, so BOTH the admission estimate and the real
-  // provider request stay bounded.
-  const contextHeadroom = minContextLength - promptInputTokensFor(budget);
-  return Math.max(
-    1,
-    minMaxOutputTokens === undefined
-      ? contextHeadroom
-      : Math.min(contextHeadroom, minMaxOutputTokens)
-  );
+  if (pricings === undefined) return undefined;
+  return sharedAnswerCeiling(budget, pricings);
 }
 
 /**
@@ -197,9 +140,7 @@ export function buildSmartModelTurn(
   // cannot be hand-written here, so the shape can never drift from
   // `planReasoningOff`'s output.
   const answerParams: Record<string, unknown> = {
-    ...(params.answerMaxOutputTokens === undefined
-      ? {}
-      : { maxOutputTokens: params.answerMaxOutputTokens }),
+    ...(params.answerCapTokens === undefined ? {} : { maxOutputTokens: params.answerCapTokens }),
     ...(params.reasoningOff === true ? { reasoning: REASONING_OFF_WIRE } : {}),
   };
   const node = smartModel({
@@ -242,6 +183,11 @@ export interface SmartModelTurnDeps {
  * Compiles the one-node definition from a derived candidate pick over the
  * SAME catalog snapshot the pick was derived from (compile ⟺ runtime never
  * diverge) — the shared tail of the paid and trial builders.
+ *
+ * Exported as the Smart Model sizing seam, for the same reason the regular turn's
+ * compile is: the trial arm's wire cap has to be pinned on the definition a request
+ * actually compiles, and reassembling that build in a test would re-derive the
+ * sizing it is meant to check.
  */
 interface CompileSmartModelOptions {
   readonly hooks?: PolicyHooks;
@@ -261,12 +207,12 @@ function optionalTurnParams(
   return {
     ...(classify === undefined ? {} : { classify }),
     ...(hooks === undefined ? {} : { hooks }),
-    ...(guessCap === undefined ? {} : { answerMaxOutputTokens: guessCap }),
+    ...(guessCap === undefined ? {} : { answerCapTokens: guessCap }),
     ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
   };
 }
 
-function compileSmartModelBuild(
+export function compileSmartModelBuild(
   catalog: readonly ModelDescriptor[],
   picked: {
     readonly classifierModelId: string;
@@ -278,22 +224,18 @@ function compileSmartModelBuild(
   const { hooks, budget, classify } = options;
   if (picked === null) return okAsync<SmartModelTurnBuild, DomainError>({ buildable: false });
   const registries = createTurnCompileRegistries(snapshotResolver(catalog));
-  // The paid candidate derivation carries the marked-up classifier reserve; the
-  // trial derivation prices in base units and never sizes an answer ceiling
-  // against that reserve, so an absent reserve is a zero deduction.
-  const classifierReserveNanoUsd = picked.classifierWorstCaseNanoUsd ?? 0n;
   // The paid derivation stamps a PER-CANDIDATE cap on each eligible candidate
   // (`cap(m)`); the node then reserves and runs each at its own cap, so there is
   // NO single node-level answer cap and no single-cap reconcile. The trial
   // derivation carries no per-candidate caps, so it keeps the single-cap
-  // `answerMaxOutputTokens` guess + `reconcileAnswerCeiling` (storage-fit).
+  // physical bound + `reconcileAnswerCeiling` (the estimator's own fit).
   const perCandidateCaps = picked.candidates.some(
     (candidate) => candidate.maxOutputTokens !== undefined
   );
   const guessCap =
     budget === undefined || perCandidateCaps
       ? undefined
-      : answerMaxOutputTokens(catalog, picked.candidates, budget, classifierReserveNanoUsd);
+      : candidateAnswerCeiling(catalog, picked.candidates, budget);
   const promptInputTokens = budget === undefined ? undefined : promptInputTokensFor(budget);
   const built = buildSmartModelTurn({
     classifierModelId: picked.classifierModelId,
@@ -314,9 +256,9 @@ function compileSmartModelBuild(
   const stamped = withStorageStamp(built.value, budget, hooks ?? CHAT_TURN_HOOKS);
   return okAsync<SmartModelTurnBuild, DomainError>({
     buildable: true,
-    // The per-rate / storage-excluded `answerMaxOutputTokens` is only an
-    // upper-bound guess; the shared `reconcileAnswerCeiling` re-fits it against
-    // the ONE canonical admission estimator (see `fitAnswerCapToCeiling`).
+    // The physical single-cap bound is only an upper bound; the shared
+    // `reconcileAnswerCeiling` fits it against the ONE canonical admission
+    // estimator (see `fitAnswerCapToCeiling`).
     definition: reconcileAnswerCeiling(stamped, snapshotResolver(catalog), budget, guessCap),
   });
 }
@@ -456,17 +398,9 @@ export function compileAutoEffortTurn(
   }
   const pricings = turnModelPricings([model], snapshotResolver(catalog));
   if (pricings === undefined) return ok({ kind: 'fallback' });
-  // The classifier spends before the answer, so the cap sizes against the
-  // funds left after its worst-case reserve (the Smart Model deduction rule).
-  const answerBudget: TurnBudget = {
-    promptCharacterCount: budget.promptCharacterCount,
-    funding: {
-      ...budget.funding,
-      remainingNanoUsd: budget.funding.remainingNanoUsd - classifier.classifierWorstCaseNanoUsd,
-    },
-  };
-  const cap = autoEffortAnswerCap(target, answerBudget, pricings);
-  if (cap === undefined) return ok({ kind: 'fallback' });
+  const room = sharedAnswerCeiling(budget, pricings);
+  /* v8 ignore next -- `pricings` is a one-element list here, so a room always resolves */
+  if (room === undefined) return ok({ kind: 'fallback' });
   const registries = createTurnCompileRegistries(snapshotResolver(catalog));
   const built = buildSmartModelTurn({
     classifierModelId: classifier.classifierModelId,
@@ -477,7 +411,7 @@ export function compileAutoEffortTurn(
       },
     ],
     classify: { model: false, effort: true },
-    answerMaxOutputTokens: cap,
+    answerCapTokens: room,
     promptInputTokens: promptInputTokensFor(budget),
     nodes: registries.nodes,
     constraints: registries.constraints,
@@ -487,38 +421,40 @@ export function compileAutoEffortTurn(
      the two reads drifted — kept fail-closed rather than assumed impossible */
   if (built.isErr()) return ok({ kind: 'fallback' });
   const stamped = withStorageStamp(built.value, budget, CHAT_TURN_HOOKS);
-  return ok({
-    kind: 'built',
-    // The B+H guess is an upper bound; the ONE canonical admission estimator
-    // re-fits it (shrinking the cap, never growing it) so the hold fits the
-    // payer's funds by construction.
-    definition: reconcileAnswerCeiling(stamped, snapshotResolver(catalog), budget, cap),
-  });
+  // The physical room is only the upper bound; the ONE canonical admission
+  // estimator sizes the cap that the classifier's strongest pick has to fit
+  // inside. Its own price includes the classifier reserve, which is why nothing
+  // here deducts that reserve from the payer's funds first.
+  const fit = fitAnswerCapToCeiling(
+    stamped,
+    snapshotResolver(catalog),
+    room,
+    payerSpendableNanoUsd(budget)
+  );
+  if (!fit.withinFunds || !someLevelFits(target, fit.answerTokens)) {
+    return ok({ kind: 'fallback' });
+  }
+  return ok({ kind: 'built', definition: fit.definition });
 }
 
 /**
- * The auto turn's completion-cap guess: the STRONGEST offered option the
- * payer can afford, as B + H. The reserve must cover whatever the classifier
- * picks, and it is presented exactly the turn's options — so the walk runs
- * the model's own offered budgets, descending, rather than any fixed level
- * order. Min (B = 0) needs no reserve of its own: any level's cap covers it.
- * Undefined when no offered level fits — auto then degrades through the
- * fallback path.
+ * Whether the fitted cap leaves room for any offered level the classifier could
+ * pick: one of the model's OWN offered reasoning budgets plus a minimum viable
+ * answer. The walk is over the model's real options rather than a fixed level
+ * list, because a tight context clamps upper rungs onto the whole window and only
+ * a lower one still leaves an answer.
+ *
+ * No level fits ⇒ the turn is abandoned to the regular single-model path, which
+ * runs it reasoning-free rather than charging for a classifier whose every option
+ * is unaffordable.
  */
-function autoEffortAnswerCap(
-  target: ModelDescriptor,
-  budget: TurnBudget,
-  pricings: readonly TurnModelPricing[]
-): number | undefined {
-  const budgets = turnEffortOptions([reasoningPlanModelFrom(target)])
+function someLevelFits(target: ModelDescriptor, fittedCapTokens: number): boolean {
+  return turnEffortOptions([reasoningPlanModelFrom(target)])
     .map((option) => option.maxReasoningBudgetTokens)
     .filter((tokens) => tokens > 0)
-    .toSorted((a, b) => b - a);
-  for (const reasoningBudgetTokens of budgets) {
-    const headroom = answerHeadroomTokens(budget, pricings, reasoningBudgetTokens);
-    if (headroom !== undefined) return reasoningBudgetTokens + headroom;
-  }
-  return undefined;
+    .some(
+      (reasoningBudgetTokens) => reasoningBudgetTokens + MINIMUM_OUTPUT_TOKENS <= fittedCapTokens
+    );
 }
 
 /**

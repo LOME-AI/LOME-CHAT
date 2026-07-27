@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { STORAGE_COST_PER_CHARACTER_NANO, nanoUSD } from '@hushbox/shared';
+import { STORAGE_COST_PER_CHARACTER_NANO, buildTurnSystemPrompt, nanoUSD } from '@hushbox/shared';
 import {
   estimateTokensForTier,
   outputCharsPerTokenForTier,
 } from '@hushbox/shared/affordability/estimate/pre-adapters';
+import { callBillableNanoUsd } from './estimate.js';
 import {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
   isTextModel,
   trialEligibility,
   trialMessageBillableNanoUsd,
-  trialPriceThresholdNanoUsd,
 } from './trial-eligibility.js';
 import type { Modality, ModelDescriptor, Pricing } from '@hushbox/shared';
 
@@ -177,26 +177,33 @@ describe('trialEligibility', () => {
   });
 });
 
-describe('trialPriceThresholdNanoUsd', () => {
-  it('returns the value at floor(len * 0.75) of the sorted combined prices', () => {
-    // [10,20,30,100] sorted; floor(4 * 0.75) = index 3 => 100.
+describe('the premium price boundary over the exposed catalog', () => {
+  // The percentile itself is the money layer's (`premiumPriceThresholdNanoUsd`);
+  // what this file owns is WHICH models form the distribution.
+  it('marks the model at floor(len * 0.75) of the combined prices premium', () => {
     const catalog = priceSpread([100n, 10n, 30n, 20n]);
-    expect(trialPriceThresholdNanoUsd(catalog)).toBe(100n);
+    const atThreshold = catalog.find((entry) => entry.pricing['inputPerToken'] === nanoUSD(100n));
+    const below = catalog.find((entry) => entry.pricing['inputPerToken'] === nanoUSD(30n));
+    expect(trialEligibility(atThreshold!, catalog, NOW_MS)).toEqual({
+      eligible: false,
+      reason: 'premium',
+    });
+    expect(trialEligibility(below!, catalog, NOW_MS)).toEqual({ eligible: true });
   });
 
-  it('ignores non-text models when computing the threshold', () => {
+  it('ignores non-text models when forming the distribution', () => {
     const textModels = priceSpread([10n, 20n, 30n, 40n]);
     const image = model({
       id: 'img',
       outputs: ['image'] as Modality[],
       pricing: pricing(999n, 0n),
     });
-    // floor(4 * 0.75) = index 3 => 40 (the image's 999 is excluded).
-    expect(trialPriceThresholdNanoUsd([...textModels, image])).toBe(40n);
-  });
-
-  it('has no threshold for an empty text catalog', () => {
-    expect(trialPriceThresholdNanoUsd([])).toBeUndefined();
+    // The image's 999 would push the threshold up and let the 40 model through.
+    const dearest = textModels.find((entry) => entry.pricing['inputPerToken'] === nanoUSD(40n));
+    expect(trialEligibility(dearest!, [...textModels, image], NOW_MS)).toEqual({
+      eligible: false,
+      reason: 'premium',
+    });
   });
 });
 
@@ -273,5 +280,94 @@ describe('trialMessageBillableNanoUsd', () => {
       { role: 'assistant', content: 'y'.repeat(12_000) },
     ]);
     expect(result.isOk() && result.value > TRIAL_MESSAGE_COST_CAP_NANO_USD).toBe(true);
+  });
+});
+
+/**
+ * The per-message gate must stay strictly stricter than the floor the compiled
+ * trial turn prices, or an over-cap turn reaches the provider. The gate does not
+ * price the server's own system prompt (1,609 characters, 805 trial input tokens)
+ * while the turn does, so what covers that unpriced input leg is the gate's
+ * surplus: 1,000 extra output tokens plus the pass-through storage of the send.
+ *
+ * The surplus is finite, so domination is a property of the RATE SHAPE, not a
+ * theorem. Measured here in both directions: it holds across the whole shape band
+ * the live catalog occupies (176 of 176 exposed text models price output at or
+ * above input), and it fails past a measured inversion — which is why §Trial
+ * Usage's storage-free reading cannot be applied to this gate until the gate
+ * prices the same input the turn does.
+ */
+describe('the per-message gate dominates the compiled turn floor', () => {
+  /** The exact base system prompt the send carries but this gate never counts. */
+  const SYSTEM_PROMPT_CHARS = buildTurnSystemPrompt({
+    now: new Date('2026-07-26T00:00:00Z'),
+  }).length;
+  const PROMPT = 'x'.repeat(400);
+
+  /** The unstamped turn's own floor: the whole input the send carries, at a
+   * minimum answer, provider-only — trial turns persist nothing. */
+  function compiledTurnFloorNanoUsd(target: ModelDescriptor): bigint {
+    return callBillableNanoUsd(target.pricing, {
+      kind: 'tokens',
+      inputTokens: estimateTokensForTier('trial', SYSTEM_PROMPT_CHARS + PROMPT.length),
+      outputTokens: 1000,
+    })._unsafeUnwrap();
+  }
+
+  /** The gate with its storage line items removed — the strip §Trial Usage asks
+   * for, priced here rather than shipped. */
+  function gateWithoutStorageNanoUsd(target: ModelDescriptor): bigint {
+    return callBillableNanoUsd(target.pricing, {
+      kind: 'tokens',
+      inputTokens: estimateTokensForTier('trial', PROMPT.length),
+      outputTokens: 2000,
+    })._unsafeUnwrap();
+  }
+
+  function gateNanoUsd(target: ModelDescriptor): bigint {
+    return trialMessageBillableNanoUsd(target, PROMPT, [])._unsafeUnwrap();
+  }
+
+  const LIVE_SHAPES: readonly (readonly [string, bigint, bigint])[] = [
+    ['output far dearer', 100n, 400n],
+    ['output slightly dearer', 100n, 200n],
+    ['flat', 100n, 100n],
+  ];
+
+  it.each(LIVE_SHAPES)('holds as shipped for a %s shape', (_label, input, output) => {
+    const target = model({ pricing: pricing(input, output) });
+    expect(gateNanoUsd(target)).toBeGreaterThan(compiledTurnFloorNanoUsd(target));
+  });
+
+  it.each(LIVE_SHAPES)('holds WITHOUT storage for a %s shape', (_label, input, output) => {
+    const target = model({ pricing: pricing(input, output) });
+    expect(gateWithoutStorageNanoUsd(target)).toBeGreaterThan(compiledTurnFloorNanoUsd(target));
+  });
+
+  it('fails as shipped once input is ~32.5× output — a pre-existing gap, not a new one', () => {
+    // The gate carries 200 prompt tokens where the turn carries 1,005, so its
+    // surplus is 1,000 × output + storage(400 input chars + 2,000 output tokens at
+    // the trial ratio) less the 805 unpriced system-prompt tokens:
+    // 2,620,000 − 805 × input, which turns negative at input 3,255.
+    const inside = model({ pricing: pricing(3254n, 100n) });
+    const outside = model({ pricing: pricing(3255n, 100n) });
+    expect(gateNanoUsd(inside)).toBeGreaterThan(compiledTurnFloorNanoUsd(inside));
+    expect(gateNanoUsd(outside)).toBeLessThan(compiledTurnFloorNanoUsd(outside));
+  });
+
+  it('fails WITHOUT storage as soon as input passes ~1.25× output — a 26× wider band', () => {
+    // With no storage the surplus is 1,000 × output alone, so the boundary falls
+    // from input 3,256 to input 125 at output 100: an inverted shape the shipped
+    // gate refuses would be admitted, which is why the strip is not applied here.
+    const inverted = model({ pricing: pricing(125n, 100n) });
+    expect(gateNanoUsd(inverted)).toBeGreaterThan(compiledTurnFloorNanoUsd(inverted));
+    expect(gateWithoutStorageNanoUsd(inverted)).toBeLessThan(compiledTurnFloorNanoUsd(inverted));
+  });
+
+  it('measures the escape for a far-inverted shape by amount', () => {
+    const inverted = model({ pricing: pricing(4000n, 100n) });
+    expect(compiledTurnFloorNanoUsd(inverted) - gateWithoutStorageNanoUsd(inverted)).toBe(
+      805n * 4000n - 1000n * 100n
+    );
   });
 });

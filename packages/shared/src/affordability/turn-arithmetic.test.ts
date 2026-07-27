@@ -13,6 +13,7 @@ import { dimensionSupportFor } from './dimensions/derive.js';
 import { nanoUSD } from './nano-usd.js';
 import {
   budgetBuysTokens,
+  callCostBasisForTier,
   ceilingTokens,
   contextHeadroomTokens,
   costNanoUsd,
@@ -21,6 +22,10 @@ import {
   fixedCostsNanoUsd,
   inputTokensOf,
   inputStorageNanoUsd,
+  maxCallCostNanoUsd,
+  maxCallCostTokens,
+  medianMaxCallCostNanoUsd,
+  outlierModelIds,
   reasoningBudgetTokens,
   requiredCeilingTokens,
   siblingLineItems,
@@ -320,5 +325,93 @@ describe('feasible(m, e) and eligible(m)', () => {
   it('states the same requirement the predicate tests, so a reason cannot re-add it', () => {
     expect(requiredCeilingTokens(mandatory, 'low')).toBe(4096 + MINIMUM_OUTPUT_TOKENS);
     expect(feasible(mandatory, 'low', requiredCeilingTokens(mandatory, 'low'))).toBe(true);
+  });
+});
+
+describe('maxCallCostNanoUsd — cost(m, min(providerCap, contextHeadroom))', () => {
+  it('prices the provider cap when the prompt leaves more room: 250 × 1,000 + 8,000 × 2,600', () => {
+    expect(maxCallCostNanoUsd(MODEL, callCostBasisForTier(250, 'paid', true))).toBe(
+      250_000n + 20_800_000n
+    );
+  });
+
+  it('prices the context headroom when that is tighter than the provider cap', () => {
+    expect(maxCallCostNanoUsd(MODEL, callCostBasisForTier(99_000, 'paid', true))).toBe(
+      99_000_000n + 1000n * 2600n
+    );
+  });
+
+  it('drops the storage term on a turn that does not persist', () => {
+    expect(maxCallCostNanoUsd(MODEL, callCostBasisForTier(250, 'paid', false))).toBe(
+      250_000n + 16_000_000n
+    );
+  });
+
+  it('carries no funding term, so two payers price the same model identically', () => {
+    const basis = callCostBasisForTier(250, 'paid', true);
+    expect(maxCallCostNanoUsd(MODEL, basis)).toBe(maxCallCostNanoUsd(MODEL, basis));
+  });
+
+  it('is zero tokens wide once the prompt fills the window', () => {
+    expect(maxCallCostTokens(MODEL, 100_000)).toBe(0);
+  });
+});
+
+describe('outlier(m) — maxCallCost above OUTLIER_COST_MULTIPLE × the pool median', () => {
+  /** Output rate alone varies, and every cap is 1,000 tokens, so maxCallCost is
+   * exactly 1,000 × outputRate: 1e6, 2e6, 3e6, 4e6 and 1e8 nano. */
+  const pool: readonly PriceableModel[] = [1000n, 2000n, 3000n, 4000n, 100_000n].map((rate) => ({
+    modelId: `vendor/rate-${String(rate)}`,
+    inputRateNanoUsd: nanoUSD(0n),
+    outputRateNanoUsd: nanoUSD(rate),
+    contextLength: 100_000,
+    providerCap: 1000,
+    reasoning: undefined,
+  }));
+  const basis = callCostBasisForTier(0, 'paid', false);
+
+  it('takes the median over the whole priceable pool: 3,000,000 nano', () => {
+    expect(medianMaxCallCostNanoUsd(pool, basis)).toBe(3_000_000n);
+  });
+
+  it('excludes only the model past 20 × that median', () => {
+    expect([...outlierModelIds(pool, basis)]).toEqual(['vendor/rate-100000']);
+  });
+
+  it('never trims a tight distribution', () => {
+    expect(outlierModelIds(pool.slice(0, 4), basis).size).toBe(0);
+  });
+
+  it('keeps a candidate exactly at the multiple: the test is strictly greater', () => {
+    const atThreshold: PriceableModel = {
+      ...pool[0]!,
+      modelId: 'vendor/at-threshold',
+      outputRateNanoUsd: nanoUSD(3000n * 20n),
+    };
+    expect(outlierModelIds([...pool.slice(0, 4), atThreshold], basis).size).toBe(0);
+  });
+
+  it('excludes a model made extreme by its CAPACITY rather than its rate', () => {
+    const enormous: PriceableModel = {
+      ...pool[1]!,
+      modelId: 'vendor/enormous',
+      providerCap: 100_000,
+      contextLength: 1_000_000,
+    };
+    expect([...outlierModelIds([...pool.slice(0, 4), enormous], basis)]).toEqual([
+      'vendor/enormous',
+    ]);
+  });
+
+  it('drops a model the prompt leaves no room for from the pool rather than ranking it at zero', () => {
+    const narrow: PriceableModel = { ...pool[0]!, modelId: 'vendor/narrow', contextLength: 10 };
+    expect(medianMaxCallCostNanoUsd([...pool, narrow], { ...basis, inputTokens: 100 })).toBe(
+      medianMaxCallCostNanoUsd(pool, { ...basis, inputTokens: 100 })
+    );
+  });
+
+  it('has no median, and therefore no exclusion, over an empty pool', () => {
+    expect(medianMaxCallCostNanoUsd([], basis)).toBeUndefined();
+    expect(outlierModelIds([], basis).size).toBe(0);
   });
 });

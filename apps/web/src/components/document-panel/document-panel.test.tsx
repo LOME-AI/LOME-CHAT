@@ -616,6 +616,36 @@ describe('DocumentPanel', () => {
 
       expect(screen.getByTestId(TEST_IDS.documentPanelScroll)).toBeInTheDocument();
     });
+
+    // A rendered document sizes itself against the panel: every `h-full`/`flex-1`
+    // under here resolves against this element, so a percentage height it cannot
+    // resolve collapses the document to nothing.
+    it('gives the content a height for a rendered document to fill', () => {
+      useDocumentStore.setState({
+        isPanelOpen: true,
+        activeDocumentId: 'doc-123',
+        activeDocument: defaultDocument,
+      });
+      render(<DocumentPanel />);
+
+      const content = screen.getByTestId(TEST_IDS.documentPanelScroll).firstElementChild;
+      expect(content).toHaveClass('h-full');
+    });
+
+    // Fill and overflow trade against each other: a content box that fills the
+    // panel must still let taller source spill into the scroller above it.
+    it('lets source taller than the panel spill to the scroller', () => {
+      useDocumentStore.setState({
+        isPanelOpen: true,
+        activeDocumentId: 'doc-123',
+        activeDocument: defaultDocument,
+      });
+      render(<DocumentPanel />);
+
+      const scroll = screen.getByTestId(TEST_IDS.documentPanelScroll);
+      expect(scroll).toHaveClass('overflow-auto');
+      expect(scroll.firstElementChild?.className).not.toMatch(/overflow-(hidden|auto|clip)/);
+    });
   });
 
   describe('responsive behavior', () => {

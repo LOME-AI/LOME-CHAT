@@ -46,8 +46,9 @@ flowchart LR
   CDN["Module CDN (esm.sh)"]
   Wheels["PyPI wheel hosts"]
 
-  Panel -- "postMessage: init/run/stop" --> A & P
-  A & P -- "ready/rendered/console/result/error/loading" --> Panel
+  A & P -- "ready (transfers a port)" --> Panel
+  Panel -- "port: init/run/stop" --> A & P
+  A & P -- "port: loading/rendered/console/result/error" --> Panel
   Panel --> Status
   A -- "ES module imports" --> CDN
   P -- "micropip (pure-Python only)" --> Wheels
@@ -57,7 +58,7 @@ flowchart LR
   its own subdomain. It serves the two renderer pages and the pinned Pyodide
   distribution. It has no cookies, no sessions, no API, no server logic — nothing to
   steal. Locally it runs as part of `pnpm dev` on `HB_SANDBOX_PORT`.
-- **Web renderer** (`html`/`js`/`react`): the page receives code via postMessage,
+- **Web renderer** (`html`/`js`/`react`): the page receives code over the bridge port,
   **rewrites bare npm imports to absolute module-CDN URLs** in the source,
   transpiles JSX in-browser, and renders inside the sandboxed frame. npm resolution and
   bundling happen on the CDN side — arbitrary packages work without a bundler.
@@ -65,9 +66,11 @@ flowchart LR
   iframe's main thread** — not a worker. (A module worker, which Pyodide requires,
   cannot be spawned from the opaque-origin sandbox iframe; keeping the strong sandbox
   forces main-thread. Security is unaffected — the cross-origin sandbox is the wall, not
-  the worker.) Imports load from the bundled distribution (numpy/pandas/matplotlib and
-  the rest of Pyodide's package set); pure-Python PyPI packages auto-install via
-  micropip. Loading is lazy: nothing downloads until the first Run; assets are
+  the worker.) Imports resolve against a vendored, pinned wheel closure — numpy,
+  matplotlib and their transitive deps — and pure-Python PyPI packages auto-install via
+  micropip. Any other compiled package is unreachable: its Emscripten wheel lives on the
+  Pyodide CDN, which `connect-src` blocks, and PyPI serves only the useless native
+  wheel. Loading is lazy: nothing downloads until the first Run; assets are
   browser-cached afterwards. Because execution is main-thread, a long synchronous run
   blocks the iframe until it yields or is stopped; **Stop is the parent tearing the
   iframe down** (it owns the element and can kill a spinning frame from outside).
@@ -79,8 +82,10 @@ flowchart LR
 ## Bridge protocol
 
 Typed once as Zod schemas in `@hushbox/shared` (`documents/bridge`); both sides import
-the same schemas. All messages carry a `requestId`; the panel ignores messages for
-stale requests (teardown races).
+the same schemas. The Zod definitions themselves are transport-agnostic — they constrain
+message shape and carry no window, origin, or port concept — so the transport below is
+free to change without touching them. All messages carry a `requestId`; the panel ignores messages for stale
+requests (teardown races).
 
 | Direction      | Message    | Payload                              | Meaning                                      |
 | -------------- | ---------- | ------------------------------------ | -------------------------------------------- |
@@ -100,6 +105,65 @@ load-bearing three ways: screen-reader status, Playwright assertions, and the Ma
 on-device proof (Android devtools hierarchy can see app-origin DOM but not reliably
 inside iframes — this element is the programmatic proof that execution really happened).
 
+### Transport: a frame-minted channel
+
+The frame mints a `MessageChannel`, keeps `port1`, and transfers `port2` to its embedder
+on the one-shot `ready` broadcast. Every later message, **in both directions**, rides
+that port. The frame registers no `window` message listener at all, and the panel never
+calls `iframe.contentWindow.postMessage`.
+
+The frame's origin is opaque (`"null"`), which leaves an embedder nothing to target: a
+`postMessage` naming the sandbox origin is discarded silently and without an exception,
+the literal `'null'` is rejected as a target origin, and `'/'` resolves to the parent's
+own origin and is dropped identically. Parent→frame is therefore either a wildcard post
+or a port, and the port is the stronger of the two rather than merely the working one:
+
+- **Inbound it is unforgeable.** Untrusted document code shares the frame's realm, so a
+  `window` listener as the intake is directly forgeable by it: the document posts
+  `init`/`run`/`stop` at its own window and is obeyed. That is demonstrated on both
+  runtimes, not theoretical. A port is a capability held only by whoever received the
+  transfer, and there is no window listener to post at. Pinned by tests that forge an
+  `init` at the frame's window and assert it is ignored.
+- **Outbound it is addressed.** Console lines, results, and rendered-document data reach
+  the single port holder instead of being broadcast to every listener on the embedding
+  page.
+- **It dies with the document that received it.** The capability binds to the receiving
+  _document_, not to an origin: once a frame self-navigates to a hostile document, a send
+  on the captured port delivers nothing, where a wildcard post would hand the payload to
+  the document that replaced it.
+
+**One handshake, both runtimes.** It lives once, in `apps/sandbox/src/embedder-channel.ts`;
+both bootstraps call it and neither keeps a copy of any step. The parent has a single
+implementation of the other side, so two frame copies would have to agree to be correct —
+and a divergence (a dropped `start()`, a changed transfer list) is silent, leaving the
+page loading forever with nothing thrown. See the `port.start()` asymmetry below for why
+no test would catch it.
+
+**First ready wins.** The panel captures the port from the first `ready` of a frame
+instance and ignores every later one; the reference clears on teardown so a replacement
+frame handshakes normally. Without the rule, document code could mint its own channel,
+broadcast a second `ready`, and take delivery of the parent's subsequent `init`/`run`/`stop`
+traffic itself.
+
+**`port.start()` is mandatory, and only half of it is testable.** A port registered with
+`addEventListener` stays paused until started — the `onmessage` assignment form starts it
+implicitly, and the repo's lint rules forbid that form. Both vitest environments supply
+Node's `MessagePort`, which starts itself when a listener is attached, so a missing
+`start()` is invisible to every unit and integration test here. The frame side is covered
+anyway, because its browser tests drive the shipped bundles in real Chromium. **The parent
+side is covered by nothing but E2E** — deleting its `start()` leaves the whole suite green.
+
+Wildcard posting survives in exactly these places:
+
+| Site                                          | What it is                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `embedder-channel.ts` — the `ready` broadcast | The handshake. One source site, shipped inside both bundles, sent once per frame instance. It cannot be narrowed: an opaque frame cannot learn its embedder's origin (`capacitor://localhost` on mobile), and `parent` names exactly one window regardless. The payload is a bare type tag; the capability is the port. |
+| `embed-harness.ts` — `postToFrameWindow`      | Test infrastructure that exists to be ignored: it forges an `init` at the frame's window so a test can prove intake is port-only. Deleting it deletes the proof.                                                                                                                                                        |
+
+The panel posts at the frame's window not at all — wildcard or otherwise — pinned by a
+test that spies on `iframe.contentWindow.postMessage` across a full init→rendered cycle
+and asserts zero calls.
+
 ## Security model
 
 Containment, not code vetting. Arbitrary code — including arbitrary npm packages — is
@@ -113,6 +177,7 @@ primary wall; everything else narrows what's reachable inside it.
 | Sandbox-origin CSP    | `default-src 'none'`; `script-src` self + `'unsafe-inline'` + `'wasm-unsafe-eval'` + blob: + module CDN; connect-src: Python wheel hosts only; frame-src/child-src/worker-src/object-src `'none'`; frame-ancestors: app origins (+ `http://localhost:*` for Android/dev); `X-DNS-Prefetch-Control: off` | Runtime network — fetch/XHR/WS/EventSource/beacon (connect-src); untrusted code spawning a child frame/worker/object to obtain a fresh realm (default-src/frame-src/worker-src `'none'`); DNS-prefetch leaks; third-party embedding. `script-src` deliberately allows `'unsafe-inline'` — the sandbox exists to run the document's own (inline) scripts; containment is origin isolation + this network lockdown, never script-src |
 | WebRTC neutralization | The sandbox bootstrap deletes `RTCPeerConnection`/`webkitRTCPeerConnection`/`mozRTCPeerConnection`/`RTCDataChannel` from the frame global before any untrusted code runs                                                                                                                                | WebRTC exfil (STUN/TURN egress) — CSP `webrtc 'block'` is a draft directive Chromium does NOT enforce, so this JS layer is the actual block; the `'none'` CSP prevents recovering the deleted globals via a fresh realm                                                                                                                                                                                                            |
 | App-origin CSP        | `frame-src` = sandbox origin — delivered via generated `_headers` on web AND a `<meta http-equiv>` in the app HTML so it also applies inside the bundled Capacitor WebView                                                                                                                              | Any other frame source; a sandboxed document self-navigating its own frame to an off-allowlist host to exfiltrate in the URL (parent `frame-src` governs child navigation — must exist on mobile too, where `_headers` does not reach)                                                                                                                                                                                             |
+| Bridge transport      | The frame's only intake is a `MessageChannel` port it mints and transfers on `ready`; no `window` message listener exists in either runtime, and the port endpoint stays closure-scoped inside an IIFE bundle                                                                                           | Document code forging `init`/`run`/`stop` at its own window — it shares the frame's realm, so a window listener would obey it; frame output being broadcast to every listener on the embedding page; a self-navigated frame taking delivery of traffic addressed to the document it replaced                                                                                                                                       |
 | Process lifecycle     | Parent tears down the iframe on Stop/teardown; fresh frame per run                                                                                                                                                                                                                                      | Post-stop execution, cross-run state leakage                                                                                                                                                                                                                                                                                                                                                                                       |
 | Cookie hygiene        | Sessions are host-only; tested: no credentialed request ever reaches the sandbox origin                                                                                                                                                                                                                 | Subdomain cookie bleed                                                                                                                                                                                                                                                                                                                                                                                                             |
 
@@ -128,6 +193,10 @@ test in the security suite — a CSP or sandbox-attr edit fails tests before rev
    app-origin `frame-src`, which must be present on mobile as well as web). Loosening any
    of these is a founder decision, not a task-level fix.
 4. The sandbox origin never serves anything requiring credentials.
+5. The frame's only intake is the transferred port: neither runtime registers a `window`
+   message listener, and no parent→frame `window.postMessage` exists in the product.
+   Untrusted document code shares the frame's realm, so a window listener is directly
+   forgeable from inside the sandbox.
 
 Accepted residual risks (founder-ruled): a document can render deceptive UI inside its
 frame (phishing-shaped; contained, cannot navigate or read anything); module loads can
@@ -187,7 +256,8 @@ any browser. Facts a maintainer needs:
 - The `.wasm → application/wasm` MIME mapping ships inside Capacitor's iOS asset
   handler (fixed in Capacitor 5.1.0); it reaches the built app via `cap sync`.
 - iOS memory ceilings for WKWebView are unpublished and reported inconsistently; heavy
-  pandas workloads on old devices may be memory-killed. That degrades to a failed run.
+  numpy or matplotlib workloads on old devices may be memory-killed. That degrades to a
+  failed run.
 - The Android Maestro flow asserts `document-render-status` via
   `androidWebViewHierarchy: devtools`. There is no iOS test automation (founder-ruled).
 
@@ -205,7 +275,7 @@ the same change.
 1. Add the kind to `RunnableDocumentKind` and the parser's fence mapping.
 2. Add a renderer page (or mode) on the sandbox origin speaking the same bridge schemas
    — the bridge is runtime-agnostic; extend payloads only by amending the shared Zod
-   schemas.
+   schemas. Handshake through the shared `connectToEmbedder`, never a second copy of it.
 3. Extend the sandbox-origin CSP only if the runtime needs new asset hosts; every
    addition needs a security-suite pin and founder sign-off (invariant 3).
 4. Add: panel dispatch, system-prompt capability text, security-corpus cases, an E2E
@@ -214,12 +284,13 @@ the same change.
 
 ## Rejected designs (do not re-propose without new evidence)
 
-| Design                                | Why rejected                                                                                     |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Sandpack (any hosting)                | Bundler hard-requires service workers → structurally dead on iOS                                 |
-| StackBlitz WebContainers              | Paid license; app-wide COOP/COEP tax; Capacitor-incompatible                                     |
-| react-runner/react-live in app origin | Untrusted code in our realm beside plaintext and keys                                            |
-| Plain same-origin Pyodide worker      | Pyodide's JS bridge reaches app credentials/IndexedDB                                            |
-| Pyodide in a worker (any)             | Module worker unspawnable from the opaque sandbox iframe; keeping the sandbox forces main-thread |
-| Per-platform renderers                | Founder-ruled: no dual implementations                                                           |
-| Open runtime network                  | Exfiltration channel; revisit = founder decision on `connect-src`                                |
+| Design                                | Why rejected                                                                                                                                                                                                                                              |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sandpack (any hosting)                | Bundler hard-requires service workers → structurally dead on iOS                                                                                                                                                                                          |
+| StackBlitz WebContainers              | Paid license; app-wide COOP/COEP tax; Capacitor-incompatible                                                                                                                                                                                              |
+| react-runner/react-live in app origin | Untrusted code in our realm beside plaintext and keys                                                                                                                                                                                                     |
+| Plain same-origin Pyodide worker      | Pyodide's JS bridge reaches app credentials/IndexedDB                                                                                                                                                                                                     |
+| Pyodide in a worker (any)             | Module worker unspawnable from the opaque sandbox iframe; keeping the sandbox forces main-thread                                                                                                                                                          |
+| Per-platform renderers                | Founder-ruled: no dual implementations                                                                                                                                                                                                                    |
+| Open runtime network                  | Exfiltration channel; revisit = founder decision on `connect-src`                                                                                                                                                                                         |
+| Parent→frame `window.postMessage`     | The frame's origin is opaque: an explicit target is silently discarded, `'null'` throws, `'/'` resolves to the parent and is dropped. A wildcard delivers, but is forgeable by document code sharing the frame's realm and survives frame self-navigation |

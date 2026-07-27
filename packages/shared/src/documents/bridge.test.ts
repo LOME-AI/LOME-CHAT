@@ -3,6 +3,10 @@ import type { DocumentErrorCode, LoadingPhase, ConsoleStream } from './bridge.js
 import {
   RUNNABLE_DOCUMENT_KINDS,
   RunnableDocumentKind,
+  DOCUMENT_THEMES,
+  DocumentTheme,
+  DocumentColour,
+  ThemeMessage,
   DOCUMENT_ERROR_CODES,
   LOADING_PHASES,
   CONSOLE_STREAMS,
@@ -34,6 +38,41 @@ describe('RunnableDocumentKind', () => {
   });
 });
 
+describe('DocumentTheme', () => {
+  it('accepts each theme', () => {
+    for (const theme of DOCUMENT_THEMES) {
+      expect(DocumentTheme.parse(theme)).toBe(theme);
+    }
+  });
+
+  it('rejects a theme outside the closed set', () => {
+    expect(DocumentTheme.safeParse('sepia').success).toBe(false);
+  });
+});
+
+describe('DocumentColour', () => {
+  it('accepts a six-digit hex colour in either case', () => {
+    expect(DocumentColour.parse('#faf9f6')).toBe('#faf9f6');
+    expect(DocumentColour.parse('#1A1816')).toBe('#1A1816');
+  });
+
+  it('rejects anything that is not six hex digits', () => {
+    for (const value of ['#fff', 'red', 'var(--background)', 'rgb(0,0,0)', '#faf9f']) {
+      expect(DocumentColour.safeParse(value).success).toBe(false);
+    }
+  });
+
+  it('rejects a value carrying CSS declaration or block syntax', () => {
+    // The frame writes these into a stylesheet, so the pattern is what keeps a
+    // colour from being anything but a colour: `;`, `{` and `}` are the three
+    // characters that would let a value close the declaration and open a rule
+    // of the attacker's own, and none of them is a hex digit.
+    for (const value of ['#fff;}html{color:red', '#faf9f6;color:red', '#faf9f6}']) {
+      expect(DocumentColour.safeParse(value).success).toBe(false);
+    }
+  });
+});
+
 describe('parent→frame: init', () => {
   it('round-trips a valid init message', () => {
     const msg = { type: 'init', kind: 'react', code: 'export default () => null', requestId: 'r1' };
@@ -59,6 +98,65 @@ describe('parent→frame: init', () => {
     const parsed = InitMessage.safeParse({ type: 'init', kind: 'html', requestId: 'r1' });
     expect(parsed.success).toBe(false);
   });
+
+  it('carries the theme the embedder states', () => {
+    const msg = { type: 'init', kind: 'html', code: 'x', requestId: 'r1', theme: 'dark' };
+    expect(InitMessage.parse(msg)).toEqual(msg);
+  });
+
+  it('rejects init with a theme outside the closed set', () => {
+    const parsed = InitMessage.safeParse({
+      type: 'init',
+      kind: 'html',
+      code: 'x',
+      requestId: 'r1',
+      theme: 'sepia',
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('carries the colours the embedder resolved', () => {
+    const msg = {
+      type: 'init',
+      kind: 'html',
+      code: 'x',
+      requestId: 'r1',
+      theme: 'dark',
+      background: '#1a1816',
+      foreground: '#f2f1ef',
+    };
+    expect(InitMessage.parse(msg)).toEqual(msg);
+  });
+
+  it('rejects init with a colour that is not six-digit hex', () => {
+    const parsed = InitMessage.safeParse({
+      type: 'init',
+      kind: 'html',
+      code: 'x',
+      requestId: 'r1',
+      background: 'rgb(0,0,0)',
+    });
+    expect(parsed.success).toBe(false);
+  });
+});
+
+describe('parent→frame: theme', () => {
+  it('round-trips an appearance with no document attached to it', () => {
+    // Restyling is its own message precisely because it names no request and
+    // carries no code: the frame applies it without touching whatever is
+    // running, which an `init` cannot do.
+    const msg = { type: 'theme', theme: 'light', background: '#faf9f6', foreground: '#1a1a1a' };
+    expect(ThemeMessage.parse(msg)).toEqual(msg);
+  });
+
+  it('accepts a theme message stating only the colour scheme', () => {
+    const msg = { type: 'theme', theme: 'dark' };
+    expect(ThemeMessage.parse(msg)).toEqual(msg);
+  });
+
+  it('rejects a theme message with a colour that is not six-digit hex', () => {
+    expect(ThemeMessage.safeParse({ type: 'theme', foreground: 'white' }).success).toBe(false);
+  });
 });
 
 describe('parent→frame: run and stop', () => {
@@ -78,12 +176,13 @@ describe('parent→frame: run and stop', () => {
 });
 
 describe('ParentToFrameMessage union', () => {
-  it('discriminates init, run, and stop', () => {
+  it('discriminates init, run, stop, and theme', () => {
     expect(
       ParentToFrameMessage.parse({ type: 'init', kind: 'js', code: 'x', requestId: 'a' }).type
     ).toBe('init');
     expect(ParentToFrameMessage.parse({ type: 'run', requestId: 'a' }).type).toBe('run');
     expect(ParentToFrameMessage.parse({ type: 'stop', requestId: 'a' }).type).toBe('stop');
+    expect(ParentToFrameMessage.parse({ type: 'theme', theme: 'dark' }).type).toBe('theme');
   });
 
   it('rejects a frame→parent message shape', () => {
@@ -196,7 +295,9 @@ describe('parse helpers', () => {
   it('parseParentToFrameMessage returns a typed success for a valid message', () => {
     const result = parseParentToFrameMessage({ type: 'run', requestId: 'r' });
     expect(result.success).toBe(true);
-    if (result.success) expect(result.data.requestId).toBe('r');
+    // Narrowed on the discriminant, because not every parent→frame message
+    // names a request: a restyle applies to the frame, not to a run.
+    if (result.success && result.data.type === 'run') expect(result.data.requestId).toBe('r');
   });
 
   it('parseParentToFrameMessage returns failure (never throws) for garbage', () => {

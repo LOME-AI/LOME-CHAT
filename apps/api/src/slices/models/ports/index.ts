@@ -1,3 +1,4 @@
+export type { CatalogSighting, RecordCatalogSighting } from './catalog-lifecycle.js';
 export type {
   InferOptions,
   ModelProvider,

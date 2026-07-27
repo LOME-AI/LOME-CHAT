@@ -1,7 +1,17 @@
 import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useLayoutEffect } from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { TEST_IDS } from '@hushbox/shared';
+import { ThemeProvider, useTheme } from '@/providers/theme-provider';
 import { DocumentSandbox } from './document-sandbox';
+
+// Shiki lazy-loads through React.lazy() inside Streamdown, so highlighted source
+// is invisible to a synchronous test. The stub echoes the fenced block it was
+// handed, which is what these tests are about.
+vi.mock('streamdown', () => ({
+  Streamdown: ({ children }: { children: string }) => <pre>{children}</pre>,
+}));
 
 const ORIGIN = 'http://localhost:7400';
 
@@ -43,7 +53,54 @@ async function settle(): Promise<void> {
   });
 }
 
-function renderSandbox(props: Partial<React.ComponentProps<typeof DocumentSandbox>> = {}): {
+/** Stands in for the app's stylesheet: the tokens the frame is painted with. */
+function stubTokens(): void {
+  const style = document.createElement('style');
+  style.dataset['tokens'] = '';
+  style.textContent = `
+    :root { --background: #faf9f6; --foreground: #1a1a1a; }
+    .dark { --background: #1a1816; --foreground: #f2f1ef; }
+  `;
+  document.head.append(style);
+}
+
+/**
+ * What the app states when its stylesheet is not loaded, as in a test that
+ * stubs no tokens: the colour scheme it is showing, and no colours to paint.
+ */
+const UNPAINTED = { theme: 'light' } as const;
+
+const LIGHT = { theme: 'light', background: '#faf9f6', foreground: '#1a1a1a' } as const;
+const DARK = { theme: 'dark', background: '#1a1816', foreground: '#f2f1ef' } as const;
+
+function ThemeSwitch(): React.JSX.Element {
+  const { triggerTransition } = useTheme();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        triggerTransition({ x: 0, y: 0 });
+      }}
+    >
+      switch theme
+    </button>
+  );
+}
+
+/** The real theme provider, plus the control that moves it to the other theme. */
+function ThemeHarness({ children }: Readonly<{ children: React.ReactNode }>): React.JSX.Element {
+  return (
+    <ThemeProvider>
+      {children}
+      <ThemeSwitch />
+    </ThemeProvider>
+  );
+}
+
+function renderSandbox(
+  props: Partial<React.ComponentProps<typeof DocumentSandbox>> = {},
+  options: { wrapper?: React.ComponentType<{ children: React.ReactNode }> } = {}
+): {
   iframe: HTMLIFrameElement;
   win: Window;
   /** Calls into the frame's window — the transport an opaque frame never receives. */
@@ -63,7 +120,10 @@ function renderSandbox(props: Partial<React.ComponentProps<typeof DocumentSandbo
     pendingView: <div data-testid="pending-source" />,
     ...props,
   };
-  const { container, rerender } = render(<DocumentSandbox {...merged} />);
+  const { container, rerender } = render(
+    <DocumentSandbox {...merged} />,
+    options.wrapper ? { wrapper: options.wrapper } : undefined
+  );
   const iframe = screen.getByTitle<HTMLIFrameElement>(merged.title);
   const win = iframe.contentWindow!;
   const windowPost = vi.spyOn(win, 'postMessage');
@@ -120,6 +180,11 @@ describe('DocumentSandbox', () => {
     }
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    // The theme harness writes through to the real page and to storage, so a
+    // test that switched theme would otherwise hand the next one a dark app.
+    for (const style of document.querySelectorAll('style[data-tokens]')) style.remove();
+    document.documentElement.className = '';
+    localStorage.clear();
   });
 
   describe('iframe attributes', () => {
@@ -153,6 +218,54 @@ describe('DocumentSandbox', () => {
     });
   });
 
+  describe('the handshake listener beats the frame', () => {
+    it('takes a ready that arrives in the commit that mounted the frame', () => {
+      // The frame begins loading the moment the iframe is committed, and its
+      // `ready` is one-shot — nothing re-announces it. A listener installed in
+      // a passive effect is installed in a *later task* than that commit, so a
+      // frame quick enough to answer inside the gap (Capacitor serves the
+      // sandbox from local files, with no network hop) hands its port to
+      // nobody, and the panel sits at "Working…" forever. This probe answers
+      // during the commit itself, which is the earliest the frame could.
+      const { parentPort, toFrame } = frameChannel();
+      const title = 'Handshake';
+      function ReadyDuringCommit(): null {
+        useLayoutEffect(() => {
+          const frame = document.querySelector<HTMLIFrameElement>(`iframe[title="${title}"]`);
+          globalThis.dispatchEvent(
+            new MessageEvent('message', {
+              data: { type: 'ready' },
+              source: frame?.contentWindow ?? null,
+              ports: [parentPort],
+            })
+          );
+        }, []);
+        return null;
+      }
+
+      render(
+        <>
+          <DocumentSandbox
+            kind="html"
+            code="<p>x</p>"
+            title={title}
+            isStreaming={false}
+            pendingView={null}
+          />
+          <ReadyDuringCommit />
+        </>
+      );
+
+      expect(toFrame).toHaveBeenCalledWith({
+        type: 'init',
+        kind: 'html',
+        code: '<p>x</p>',
+        requestId: 'req-1',
+        ...UNPAINTED,
+      });
+    });
+  });
+
   describe('auto-render (html/js/react)', () => {
     it('sends init through the port when the frame reports ready', () => {
       const { toFrame, handshake } = renderSandbox({ kind: 'html', code: '<p>x</p>' });
@@ -162,6 +275,7 @@ describe('DocumentSandbox', () => {
         kind: 'html',
         code: '<p>x</p>',
         requestId: 'req-1',
+        ...UNPAINTED,
       });
     });
 
@@ -295,6 +409,7 @@ describe('DocumentSandbox', () => {
         kind: 'python',
         code: 'print(1)',
         requestId: 'req-1',
+        ...UNPAINTED,
       });
       expect(toFrame).toHaveBeenNthCalledWith(2, { type: 'run', requestId: 'req-1' });
     });
@@ -356,6 +471,7 @@ describe('DocumentSandbox', () => {
         kind: 'python',
         code: 'print(1)',
         requestId: 'req-1',
+        ...UNPAINTED,
       });
       expect(toFrame).toHaveBeenNthCalledWith(2, { type: 'run', requestId: 'req-1' });
     });
@@ -363,6 +479,13 @@ describe('DocumentSandbox', () => {
     it('shows the source alongside the Run control', () => {
       renderSandbox({ kind: 'python', code: 'print("marker")' });
       expect(screen.getByText(/print\("marker"\)/)).toBeInTheDocument();
+    });
+
+    it('highlights that source as python, the same way the raw toggle does', () => {
+      renderSandbox({ kind: 'python', code: 'print(1)' });
+      expect(screen.getByTestId(TEST_IDS.highlightedCode).textContent).toBe(
+        '```python\nprint(1)\n```'
+      );
     });
 
     it('streams console output into an aria-live log region', async () => {
@@ -421,6 +544,119 @@ describe('DocumentSandbox', () => {
       await emit({ type: 'result', requestId: 'req-1', outputs: [] });
       expect(statusOf(container)).toBe('complete');
       expect(statusOf(container)).not.toBe('rendered');
+    });
+  });
+
+  describe('frame appearance', () => {
+    it('paints a new frame with the appearance the app is showing', () => {
+      stubTokens();
+      const { toFrame, handshake } = renderSandbox({ code: '<p>x</p>' }, { wrapper: ThemeHarness });
+      handshake();
+
+      expect(toFrame).toHaveBeenCalledWith({
+        type: 'init',
+        kind: 'html',
+        code: '<p>x</p>',
+        requestId: 'req-1',
+        ...LIGHT,
+      });
+    });
+
+    it('paints a python frame too, before anything is run in it', async () => {
+      stubTokens();
+      const user = userEvent.setup();
+      const { toFrame, handshake } = renderSandbox(
+        { kind: 'python', code: 'print(1)' },
+        { wrapper: ThemeHarness }
+      );
+      handshake();
+      await user.click(screen.getByRole('button', { name: /^run$/i }));
+
+      expect(toFrame).toHaveBeenNthCalledWith(1, {
+        type: 'init',
+        kind: 'python',
+        code: 'print(1)',
+        requestId: 'req-1',
+        ...LIGHT,
+      });
+    });
+
+    // A second `init` would restyle too, and would restart the document doing
+    // it. Nothing a reader is watching may be lost to a theme toggle.
+    it('restyles a live frame without re-driving the document', async () => {
+      stubTokens();
+      const user = userEvent.setup();
+      const { toFrame, handshake, iframe } = renderSandbox({}, { wrapper: ThemeHarness });
+      handshake();
+      toFrame.mockClear();
+
+      await user.click(screen.getByRole('button', { name: 'switch theme' }));
+
+      expect(toFrame).toHaveBeenCalledTimes(1);
+      expect(toFrame).toHaveBeenCalledWith({ type: 'theme', ...DARK });
+      // The same element, so the frame was never torn down and rebuilt.
+      expect(screen.getByTitle('Preview')).toBe(iframe);
+    });
+
+    it('states the colour scheme even where the tokens do not resolve', () => {
+      const { toFrame, handshake } = renderSandbox({}, { wrapper: ThemeHarness });
+      handshake();
+
+      expect(toFrame).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'init', theme: 'light' })
+      );
+    });
+
+    it('sends no restyle to a frame that has not handed over its port', async () => {
+      stubTokens();
+      const user = userEvent.setup();
+      const { toFrame } = renderSandbox({}, { wrapper: ThemeHarness });
+
+      await user.click(screen.getByRole('button', { name: 'switch theme' }));
+
+      expect(toFrame).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('content sits on the panel background', () => {
+    it('gives the console strip no fill of its own', async () => {
+      const user = userEvent.setup();
+      const { emit, handshake } = renderSandbox({ kind: 'python' });
+      handshake();
+      await user.click(screen.getByRole('button', { name: /run/i }));
+      await emit({ type: 'console', requestId: 'req-1', stream: 'stdout', text: 'out' });
+
+      expect(screen.getByRole('log').className).not.toMatch(/\bbg-/);
+    });
+
+    it('gives a text result no fill of its own', async () => {
+      const user = userEvent.setup();
+      const { emit, handshake } = renderSandbox({ kind: 'python' });
+      handshake();
+      await user.click(screen.getByRole('button', { name: /run/i }));
+      await emit({ type: 'result', requestId: 'req-1', outputs: [{ type: 'text', data: '42' }] });
+
+      expect(screen.getByText('42').className).not.toMatch(/\bbg-/);
+    });
+
+    it('does not wash the frame over while a document is loading', async () => {
+      // The overlay covers the whole frame, so a fill of its own reads as a slab
+      // laid over the document rather than as the panel it sits in.
+      const { emit, handshake, container } = renderSandbox();
+      handshake();
+      await emit({ type: 'loading', requestId: 'req-1', phase: 'transpiling' });
+
+      const overlay = container.querySelector('.absolute.inset-0');
+      expect(overlay).not.toBeNull();
+      expect(overlay?.className).not.toMatch(/\bbg-/);
+    });
+
+    it('keeps the tint the error card carries deliberately', async () => {
+      const { emit, handshake } = renderSandbox();
+      handshake();
+      await emit({ type: 'error', requestId: 'req-1', code: 'import_failed', message: 'boom' });
+
+      expect(screen.getByRole('alert').className).toContain('bg-destructive/5');
     });
   });
 
@@ -593,6 +829,7 @@ describe('DocumentSandbox', () => {
         kind: 'html',
         code: '<h1>hel</h1>',
         requestId: 'req-2',
+        ...UNPAINTED,
       });
     });
 
@@ -686,6 +923,7 @@ describe('DocumentSandbox', () => {
         kind: 'python',
         code: 'print(1)',
         requestId: 'req-2',
+        ...UNPAINTED,
       });
       expect(toFrame).toHaveBeenCalledTimes(callsToDeadPort);
     });

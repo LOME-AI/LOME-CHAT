@@ -10,6 +10,8 @@ import {
   type LoadingPhase,
 } from '@hushbox/shared/documents';
 import { sandboxPageUrl } from '../../lib/sandbox-origin';
+import { useFrameAppearance } from './frame-appearance';
+import { HighlightedSource } from './highlighted-source';
 import { DocumentRenderStatus, PENDING_PREVIEW_TEXT } from './document-render-status';
 import type { DocumentRenderStatusValue } from './document-render-status';
 
@@ -266,7 +268,7 @@ function ConsoleStrip({ lines }: Readonly<{ lines: ConsoleLine[] }>): React.JSX.
       role="log"
       aria-live="polite"
       aria-label="Program output"
-      className="bg-muted/50 max-h-48 overflow-auto rounded-md p-3 font-mono text-xs"
+      className="max-h-48 overflow-auto rounded-md p-3 font-mono text-xs"
     >
       {lines.map((line) => (
         <div
@@ -297,7 +299,7 @@ function OutputList({ outputs }: Readonly<{ outputs: ResultOutput[] }>): React.J
         ) : (
           <pre
             key={index}
-            className="bg-muted/50 overflow-auto rounded-md p-3 font-mono text-xs whitespace-pre-wrap"
+            className="overflow-auto rounded-md p-3 font-mono text-xs whitespace-pre-wrap"
           >
             {output.data}
           </pre>
@@ -327,9 +329,7 @@ function PythonSandboxView({
   return (
     <div className="flex h-full flex-col gap-3 p-4">
       {frame}
-      <pre className="bg-muted/50 overflow-auto rounded-md p-3 font-mono text-xs whitespace-pre-wrap">
-        {code}
-      </pre>
+      <HighlightedSource content={code} language="python" />
       <div className="flex gap-2">
         <Button size="sm" onClick={onRun} disabled={status === 'booting' || isBusy}>
           Run
@@ -378,9 +378,7 @@ function RenderSandboxView({
       {frame}
       {status === 'streaming' ? pendingView : null}
       {overlay ? (
-        <div className="bg-background/85 absolute inset-0 flex items-center justify-center p-4">
-          {overlay}
-        </div>
+        <div className="absolute inset-0 flex items-center justify-center p-4">{overlay}</div>
       ) : null}
       <StatusMirror status={status} phase={phase} errorText={errorText} />
     </div>
@@ -459,6 +457,13 @@ export function DocumentSandbox({
   const [state, dispatch] = React.useReducer(sandboxReducer, INITIAL_STATE);
   const { errorCode, frameKey } = state;
 
+  const appearance = useFrameAppearance();
+  // Read at post time rather than closed over, so the appearance stays out of
+  // the senders' identities. `startAutoRun` is what the handshake listener and
+  // the re-drive debounce are keyed on: were it to change with the theme, a
+  // toggle would re-register the transport and restart a debounce in flight.
+  const appearanceRef = React.useRef(appearance);
+
   const nextRequestId = React.useCallback((): string => {
     requestCounterRef.current += 1;
     return `req-${String(requestCounterRef.current)}`;
@@ -471,21 +476,29 @@ export function DocumentSandbox({
     // whatever document the frame navigated itself to. A port is a capability
     // bound to the document that received it: it dies with that document rather
     // than following the window.
-    portRef.current?.postMessage(message);
+    const port = portRef.current;
+    // Loudly, never silently. Every sender is gated on the handshake that
+    // captures the port, so no port means that gating broke — and a dropped
+    // parent→frame message is the exact failure this transport exists to
+    // prevent: the frame simply never answers and the panel reads the silence
+    // as "Working…" forever. Both test embedders throw here for the same reason.
+    /* v8 ignore next -- unreachable through the component's surface: Run is disabled until the handshake lands, the re-drive effect is gated on it, and the only path that clears the port replaces the frame in the same update */
+    if (!port) throw new Error('document sandbox: the frame transferred no port');
+    port.postMessage(message);
   }, []);
 
   const startAutoRun = React.useCallback((): void => {
     const requestId = nextRequestId();
     requestIdRef.current = requestId;
     dispatch({ type: 'auto-start', code });
-    postToFrame({ type: 'init', kind, code, requestId });
+    postToFrame({ type: 'init', kind, code, requestId, ...appearanceRef.current });
   }, [kind, code, nextRequestId, postToFrame]);
 
   const runPython = React.useCallback((): void => {
     const requestId = nextRequestId();
     requestIdRef.current = requestId;
     dispatch({ type: 'python-start', code });
-    postToFrame({ type: 'init', kind, code, requestId });
+    postToFrame({ type: 'init', kind, code, requestId, ...appearanceRef.current });
     postToFrame({ type: 'run', requestId });
   }, [kind, code, nextRequestId, postToFrame]);
 
@@ -515,7 +528,17 @@ export function DocumentSandbox({
     [isPython]
   );
 
-  React.useEffect(() => {
+  // A layout effect, not a passive one, and that is load-bearing. The iframe is
+  // committed in this same render, and the frame's `ready` is one-shot: nothing
+  // re-announces it, and nothing may — a re-announcement would reopen the
+  // channel-hijack the first-ready-wins rule below closes. A passive effect runs
+  // in a later task than the commit that inserted the frame, so a frame that
+  // answers inside that gap would hand its port to nobody and the panel would
+  // sit at "Working…" forever. Layout effects run synchronously within the
+  // commit, before the event loop can deliver the frame's first message at all.
+  // The gap is widest where the sandbox assets are local files (Capacitor) and
+  // there is no network round trip to lose the race in.
+  React.useLayoutEffect(() => {
     const onMessage = (event: MessageEvent): void => {
       const frame: MessageEventSource | null = iframeRef.current?.contentWindow ?? null;
       if (event.source !== frame) return;
@@ -551,6 +574,18 @@ export function DocumentSandbox({
       globalThis.removeEventListener('message', onMessage);
     };
   }, [isPython, startAutoRun, handleFrameMessage]);
+
+  // Restyle a frame that is already holding a document. This is its own message
+  // rather than a repeated `init` because `init` is how a document is loaded:
+  // restating the appearance through it would re-execute whatever is running and
+  // discard its state, so a reader switching theme would lose what was on screen.
+  // Before the handshake there is no port and nothing to restyle — the `init`
+  // that follows carries the appearance instead.
+  React.useEffect(() => {
+    appearanceRef.current = appearance;
+    if (!readyRef.current) return;
+    postToFrame({ type: 'theme', ...appearance });
+  }, [appearance, postToFrame]);
 
   // Re-drive the live frame once the code has held still. The frame itself is
   // never remounted for a new attempt: a fresh one would be blank, discarding

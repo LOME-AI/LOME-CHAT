@@ -12,6 +12,7 @@ import {
 } from './gateway-fixtures.js';
 import { listDescriptors } from './list-descriptors.js';
 import { refreshCatalog } from './refresh.js';
+import { createCatalogSightingRecorder } from '../adapters/catalog-lifecycle.js';
 import type { ModelDescriptor } from '@hushbox/shared';
 import type { SafeLogFields, Telemetry } from '../../../lib/telemetry/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
@@ -89,6 +90,7 @@ async function refresh(fetch: typeof globalThis.fetch): Promise<void> {
     gatewayBaseUrl: TEST_GATEWAY_BASE_URL,
     telemetry: silentTelemetry,
     now: () => new Date('2026-06-12T00:00:00.000Z'),
+    recordSighting: createCatalogSightingRecorder(db),
   });
   result._unsafeUnwrap();
 }
@@ -221,6 +223,23 @@ describe('listDescriptors', () => {
     await db
       .update(modelCatalog)
       .set({ adminDisabledAt: new Date() })
+      .where(eq(modelCatalog.modelId, modelId));
+    const recorder = recordingTelemetry();
+    const descriptors = await unwrap(listDescriptors({ db, telemetry: recorder.telemetry }));
+    expect(descriptors.some((entry: ModelDescriptor) => entry.id === modelId)).toBe(false);
+    expect(recorder.errors.filter((line) => line.fields?.modelName === modelId)).toEqual([]);
+  });
+
+  it('hides a soft-deleted model without alerting (a derived verdict, not corrupt)', async () => {
+    const modelId = freshModelId('excluded');
+    await refresh(
+      catalogFetch({ models: [modelEntryFixture({ id: modelId })], zdrModelIds: [modelId] })
+    );
+    expect(await exposedIds([modelId])).toEqual([modelId]);
+
+    await db
+      .update(modelCatalog)
+      .set({ excludedReason: 'below-price-floor', excludedAt: new Date() })
       .where(eq(modelCatalog.modelId, modelId));
     const recorder = recordingTelemetry();
     const descriptors = await unwrap(listDescriptors({ db, telemetry: recorder.telemetry }));

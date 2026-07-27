@@ -32,6 +32,7 @@ function storedRow(
       catalogId: crypto.randomUUID(),
       descriptor: descriptorOf(modelId),
       adminDisabledAt: null,
+      excludedReason: null,
       popularityRank: null,
       ...overrides,
     },

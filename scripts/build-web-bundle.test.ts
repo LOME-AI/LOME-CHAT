@@ -100,7 +100,10 @@ describe('build-web-bundle', () => {
 
     it('verifies the merged web dist after merging', async () => {
       await buildWebBundle('e2e', '/repo', { NODE_ENV: 'development' }, deps);
-      expect(deps.verify).toHaveBeenCalledWith({ distributionDir: '/repo/apps/web/dist' });
+      expect(deps.verify).toHaveBeenCalledWith({
+        distributionDir: '/repo/apps/web/dist',
+        shipsTts: true,
+      });
     });
 
     it('does not generate headers when verification fails', async () => {

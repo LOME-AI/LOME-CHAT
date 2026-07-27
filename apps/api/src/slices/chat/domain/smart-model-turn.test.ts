@@ -7,10 +7,12 @@ import {
   promptInputTokensFor,
   withStorageStamp,
 } from './turn-definition.js';
+import { COST_CIRCUIT_MULTIPLIER } from '../../billing/index.js';
 import { CHAT_TURN_HOOKS, CHAT_TURN_NODE_ID, TRIAL_TURN_HOOKS } from './constants.js';
 import {
-  answerMaxOutputTokens,
   buildSmartModelTurn,
+  candidateAnswerCeiling,
+  compileSmartModelBuild,
   compileAutoEffortTurn,
   effortDimensionForCandidates,
   smartModelEffectiveBalanceNanoUsd,
@@ -164,65 +166,41 @@ describe('Smart Model admission reserve tracks the AFFORDABLE subset (legacy beh
   });
 });
 
-describe('answerMaxOutputTokens', () => {
-  // Legacy reserved the Smart Model slot at the MOST EXPENSIVE eligible rates
-  // (computeMaxEligibleFees) so the budget absorbs whichever candidate the
-  // classifier picks; the context bound is the tightest candidate window.
+describe('candidateAnswerCeiling', () => {
+  // The Smart Model slot's single-cap bound is PHYSICAL: the tightest candidate's
+  // own completion cap and remaining context. Whether the payer can afford it is
+  // the canonical admission estimator's question, asked once by the reconcile —
+  // so nothing here deducts the classifier reserve or reads a rate.
   const CATALOG = [
     pricedDescriptor('cheap', 2000n, 10_000n, 8000),
     pricedDescriptor('big', 4000n, 20_000n, 4000),
   ];
 
-  it('derives the ceiling from the max candidate rates and min context length', () => {
-    // free payer, chars=400 → estInput=200; max billable rates = 4000 / 20_000;
-    // fixed = 200×4000 + 400×300 = 920_000; variable = 20_000 + 4×300 = 21_200;
-    // maxOutputTokens = floor((50_000_000 − 920_000) / 21_200) = 2_315;
-    // min context 4000 − 200 = 3_800 remaining > 2_315 → capped.
-    const result = answerMaxOutputTokens(
-      CATALOG,
-      [{ id: 'cheap' }, { id: 'big' }],
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 50_000_000n, kind: 'free' } },
-      0n
-    );
-    expect(result).toBe(2315);
-  });
-
-  it('shrinks the ceiling by the classifier reserve deducted from the budget', () => {
-    // Same inputs as above, but the classifier's worst-case reserve is set aside
-    // first: effective = 50_000_000 − 10_000_000 = 40_000_000;
-    // maxOutputTokens = floor((40_000_000 − 920_000) / 21_200) = 1_843;
-    // min context 4000 − 200 = 3_800 remaining > 1_843 → capped.
-    const result = answerMaxOutputTokens(
-      CATALOG,
-      [{ id: 'cheap' }, { id: 'big' }],
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 50_000_000n, kind: 'free' } },
-      10_000_000n
-    );
-    expect(result).toBe(1843);
-  });
-
-  it('clamps to the tightest remaining context even when the reserve leaves little (admission is the gate)', () => {
-    // reserve 45_000_000 leaves 5_000_000 < the minimum-output cost, so
-    // `turnMaxOutputTokens` derives no budget-based cap. The cap must still be
-    // stamped (never undefined in the affordable-candidate case) so admission
-    // prices a BOUNDED reserve — the tightest candidate's remaining context
-    // (free tier: min context 4000 − 200 input tokens = 3800) — instead of
-    // reserving the widest candidate's full window. A genuinely unaffordable
-    // wallet is then refused at admission (the only balance gate), not by an
-    // inflated pre-admission full-context hold.
-    const result = answerMaxOutputTokens(
-      CATALOG,
-      [{ id: 'cheap' }, { id: 'big' }],
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 50_000_000n, kind: 'free' } },
-      45_000_000n
-    );
+  it('clamps to the tightest candidate remaining context', () => {
+    // free payer, chars=400 → estInput=200; min context 4000 − 200 = 3800.
+    const result = candidateAnswerCeiling(CATALOG, [{ id: 'cheap' }, { id: 'big' }], {
+      promptCharacterCount: 400,
+      funding: { remainingNanoUsd: 50_000_000n, kind: 'free' },
+    });
     expect(result).toBe(3800);
+  });
+
+  it('carries no money term — a nearly empty wallet gets the same bound as a full one', () => {
+    // The deleted per-rate sizing returned 2,315 here and 1,843 once a classifier
+    // reserve was deducted; both were a second cost formula, and the estimator's
+    // own fit is what bounds the money now.
+    const ceilingAt = (remainingNanoUsd: bigint): number | undefined =>
+      candidateAnswerCeiling(CATALOG, [{ id: 'cheap' }, { id: 'big' }], {
+        promptCharacterCount: 400,
+        funding: { remainingNanoUsd, kind: 'free' },
+      });
+    expect(ceilingAt(5_000_000n)).toBe(ceilingAt(50_000_000n));
   });
 
   it('bounds the ceiling by the tightest candidate provider completion cap', () => {
     // A declared `maxOutputTokens` is a strict tightening (BILLING
-    // §Affordability 5): with a budget that would otherwise reach the
-    // tightest remaining context (3900), the 1200-token cap wins.
+    // §Affordability 5): with a context that would otherwise reach the
+    // tightest remaining window (3900), the 1200-token cap wins.
     const capped = [
       { ...pricedDescriptor('cheap', 2000n, 10_000n, 8000), limits: { contextLength: 8000 } },
       {
@@ -230,43 +208,29 @@ describe('answerMaxOutputTokens', () => {
         limits: { contextLength: 4000, maxOutputTokens: 1200 },
       },
     ];
-    const result = answerMaxOutputTokens(
-      capped,
-      [{ id: 'cheap' }, { id: 'big' }],
-      {
-        promptCharacterCount: 400,
-        funding: { remainingNanoUsd: 10_000_000_000_000n, kind: 'purchased' },
-      },
-      0n
-    );
+    const result = candidateAnswerCeiling(capped, [{ id: 'cheap' }, { id: 'big' }], {
+      promptCharacterCount: 400,
+      funding: { remainingNanoUsd: 10_000_000_000_000n, kind: 'purchased' },
+    });
     expect(result).toBe(1200);
   });
 
   it('returns undefined when a candidate is missing from the catalog snapshot', () => {
-    const result = answerMaxOutputTokens(
-      CATALOG,
-      [{ id: 'cheap' }, { id: 'ghost' }],
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 50_000_000n, kind: 'free' } },
-      0n
-    );
+    const result = candidateAnswerCeiling(CATALOG, [{ id: 'cheap' }, { id: 'ghost' }], {
+      promptCharacterCount: 400,
+      funding: { remainingNanoUsd: 50_000_000n, kind: 'free' },
+    });
     expect(result).toBeUndefined();
   });
 
-  it('clamps to the tightest remaining context when the budget covers it (never undefined)', () => {
-    // A huge budget covers the tightest candidate's full context, so
-    // `computeSafeMaxTokens` would drop the cap. For a MULTI-candidate Smart
-    // Model that is unsafe (admission prices each candidate's OWN full context
-    // and takes the MAX), so the ceiling is clamped to the tightest candidate's
-    // remaining window: min context 4000 − 100 estimated input tokens = 3900.
-    const result = answerMaxOutputTokens(
-      CATALOG,
-      [{ id: 'cheap' }, { id: 'big' }],
-      {
-        promptCharacterCount: 400,
-        funding: { remainingNanoUsd: 10_000_000_000_000n, kind: 'purchased' },
-      },
-      0n
-    );
+  it('stamps a concrete cap even for a wallet that covers the whole window (never undefined)', () => {
+    // Admission prices each candidate's OWN full context and takes the MAX, so an
+    // omitted cap would reserve the widest candidate's whole window at the
+    // priciest rate: min context 4000 − 100 paid input tokens = 3900.
+    const result = candidateAnswerCeiling(CATALOG, [{ id: 'cheap' }, { id: 'big' }], {
+      promptCharacterCount: 400,
+      funding: { remainingNanoUsd: 10_000_000_000_000n, kind: 'purchased' },
+    });
     expect(result).toBe(3900);
   });
 });
@@ -314,7 +278,7 @@ describe('Smart Model per-candidate caps keep the reserve within the balance (mo
   }
 
   it('returns a concrete cap bounded by the tightest candidate context (trial single-cap helper)', () => {
-    const result = answerMaxOutputTokens(CATALOG, CANDIDATE_IDS, budget, 0n);
+    const result = candidateAnswerCeiling(CATALOG, CANDIDATE_IDS, budget);
     expect(typeof result).toBe('number');
     expect(result).toBe(TIGHT_CONTEXT - 100);
   });
@@ -385,7 +349,7 @@ describe('buildSmartModelTurn', () => {
     const definition = buildSmartModelTurn({
       classifierModelId: 'cheap-model',
       candidates: [{ id: 'cheap-model' }, { id: 'mid-model' }],
-      answerMaxOutputTokens: 512,
+      answerCapTokens: 512,
       nodes,
       constraints,
     })._unsafeUnwrap();
@@ -411,7 +375,7 @@ describe('buildSmartModelTurn', () => {
     const definition = buildSmartModelTurn({
       classifierModelId: 'cheap-model',
       candidates: [{ id: 'cheap-model' }, { id: 'mid-model' }],
-      answerMaxOutputTokens: 512,
+      answerCapTokens: 512,
       promptInputTokens: 250,
       nodes,
       constraints,
@@ -427,7 +391,7 @@ describe('buildSmartModelTurn', () => {
     const definition = buildSmartModelTurn({
       classifierModelId: 'cheap-model',
       candidates: [{ id: 'cheap-model' }, { id: 'mid-model' }],
-      answerMaxOutputTokens: 512,
+      answerCapTokens: 512,
       reasoningOff: true,
       nodes,
       constraints,
@@ -480,6 +444,116 @@ function reasoningDescriptor(
     pricing: { inputPerToken: nanoUSD(inputPerToken), outputPerToken: nanoUSD(outputPerToken) },
   };
 }
+
+describe('the trial Smart Model arm carries a money-bounded wire cap', () => {
+  // The SECOND ungated door. A trial turn is quota-gated and its definition is
+  // deliberately unstamped, so while the fit skipped unstamped definitions this arm
+  // took the physical ceiling with no money term — and unlike the single-model arm it
+  // had no wire-cap pin at all, so a single-arm fix would have left it open and green.
+  //
+  // Rates are realistic on purpose: at 2–3 nano per token the 1¢ ceiling buys the
+  // whole context window, the money term never binds, and the pin would pass either
+  // way. At 1,500 billable nano per output token it binds hard.
+  const TRIAL_CEILING_NANO = 10_000_000n;
+  const CONTEXT = 1_000_000;
+  const candidate: ModelDescriptor = {
+    ...descriptorFor('trial/candidate'),
+    limits: { contextLength: CONTEXT },
+    pricing: { inputPerToken: nanoUSD(1000n), outputPerToken: nanoUSD(1500n) },
+  };
+  const catalog = [candidate];
+  const trialBudget: TurnBudget = {
+    promptCharacterCount: 400,
+    funding: { kind: 'free', remainingNanoUsd: TRIAL_CEILING_NANO },
+  };
+  // Trial candidates carry NO per-candidate cap — that is what routes this arm
+  // through the single shared cap rather than the paid path's per-candidate ones.
+  const picked = { classifierModelId: candidate.id, candidates: [{ id: candidate.id }] };
+
+  async function trialDefinition(): Promise<WorkflowDefinition> {
+    const compiled = await compileSmartModelBuild(catalog, picked, {
+      hooks: TRIAL_TURN_HOOKS,
+      budget: trialBudget,
+    });
+    const build = compiled._unsafeUnwrap();
+    if (!build.buildable) throw new Error('expected a buildable trial smart-model turn');
+    return build.definition;
+  }
+
+  it('leaves the definition unstamped, so nothing it prices carries storage', async () => {
+    const definition = await trialDefinition();
+    expect(definition.storage).toBeUndefined();
+  });
+
+  it('prices the whole node within the per-message ceiling', async () => {
+    const definition = await trialDefinition();
+    const priced = createEstimateRun(snapshotResolver(catalog))(definition)._unsafeUnwrap();
+    expect(priced).toBeLessThanOrEqual(TRIAL_CEILING_NANO);
+  });
+
+  it('shrinks the cap below the physical room, which is what a money term means here', async () => {
+    const definition = await trialDefinition();
+    const node = definition.nodes[0];
+    if (node?.type !== 'smartModel') throw new Error('expected a smartModel node');
+    const cap = node.params['maxOutputTokens'];
+    const room = candidateAnswerCeiling(catalog, picked.candidates, trialBudget);
+    // 400 chars at the trial ratio (2 chars/token) = 200 input tokens, so the
+    // physical room is 999,800 tokens — and the 1¢ ceiling buys far fewer.
+    expect(room).toBe(999_800);
+    expect(typeof cap).toBe('number');
+    expect(cap as number).toBeLessThan(room!);
+  });
+
+  /** The definition re-capped at `tokens`, priced by the canonical estimator. */
+  async function pricedAt(tokens: number): Promise<bigint> {
+    const definition = await trialDefinition();
+    return createEstimateRun(snapshotResolver(catalog))({
+      ...definition,
+      nodes: definition.nodes.map((one) =>
+        one.type === 'smartModel'
+          ? { ...one, params: { ...one.params, maxOutputTokens: tokens } }
+          : one
+      ),
+    })._unsafeUnwrap();
+  }
+
+  it('deflates the trial cost circuit with the cap, because the circuit is estimate x 5', async () => {
+    // The circuit limit is `estimate × COST_CIRCUIT_MULTIPLIER`, so it inherited the
+    // cap's inflation and has to be shown to have followed the cap back down rather
+    // than assumed to have. Bounded now at 5× the per-message ceiling; at the physical
+    // room — the cap this arm carried while the fit skipped unstamped turns — the same
+    // circuit sat more than 100× higher.
+    const definition = await trialDefinition();
+    const priced = createEstimateRun(snapshotResolver(catalog))(definition)._unsafeUnwrap();
+    expect(priced * COST_CIRCUIT_MULTIPLIER).toBeLessThanOrEqual(
+      TRIAL_CEILING_NANO * COST_CIRCUIT_MULTIPLIER
+    );
+    const room = candidateAnswerCeiling(catalog, picked.candidates, trialBudget)!;
+    const beforeLimit = (await pricedAt(room)) * COST_CIRCUIT_MULTIPLIER;
+    expect(beforeLimit).toBeGreaterThan(TRIAL_CEILING_NANO * COST_CIRCUIT_MULTIPLIER * 100n);
+  });
+
+  it('is the LARGEST cap the ceiling admits, so the fit is maximal and not merely safe', async () => {
+    // The oracle is maximality, derived from the estimator itself rather than copied
+    // from whatever the code emitted: one token more must not fit.
+    const definition = await trialDefinition();
+    const node = definition.nodes[0];
+    if (node?.type !== 'smartModel') throw new Error('expected a smartModel node');
+    const cap = node.params['maxOutputTokens'] as number;
+    const estimate = createEstimateRun(snapshotResolver(catalog));
+    const at = (tokens: number): bigint =>
+      estimate({
+        ...definition,
+        nodes: definition.nodes.map((one) =>
+          one.type === 'smartModel'
+            ? { ...one, params: { ...one.params, maxOutputTokens: tokens } }
+            : one
+        ),
+      })._unsafeUnwrap();
+    expect(at(cap)).toBeLessThanOrEqual(TRIAL_CEILING_NANO);
+    expect(at(cap + 1)).toBeGreaterThan(TRIAL_CEILING_NANO);
+  });
+});
 
 describe('compileAutoEffortTurn (pinned model + auto effort)', () => {
   const pinned = reasoningDescriptor('pinned-model', 2n, 3n, 400_000);

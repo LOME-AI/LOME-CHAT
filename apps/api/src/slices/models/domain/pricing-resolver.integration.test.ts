@@ -6,6 +6,7 @@ import { acquireModelCatalogLock } from '../__tests__/model-catalog-lock.js';
 import { TEST_GATEWAY_BASE_URL, catalogFetch, modelEntryFixture } from './gateway-fixtures.js';
 import { createModelPricingResolver } from './pricing-resolver.js';
 import { refreshCatalog } from './refresh.js';
+import { createCatalogSightingRecorder } from '../adapters/catalog-lifecycle.js';
 import type { ModelPricingResolver } from './estimate-run.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 
@@ -60,6 +61,7 @@ async function refresh(fetch: typeof globalThis.fetch): Promise<void> {
     gatewayBaseUrl: TEST_GATEWAY_BASE_URL,
     telemetry: silentTelemetry,
     now: () => new Date('2026-06-12T00:00:00.000Z'),
+    recordSighting: createCatalogSightingRecorder(db),
   });
   result._unsafeUnwrap();
 }

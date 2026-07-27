@@ -1,64 +1,64 @@
 import { historyCharacterCount, isRunnableModelShape } from '@hushbox/shared';
 import {
+  exceedsTrialBudget,
+  isPremiumModel,
+  premiumPriceThresholdNanoUsd,
+  priceableModelFrom,
+} from '@hushbox/shared/affordability';
+import {
   estimateTokensForTier,
   outputCharsPerTokenForTier,
 } from '@hushbox/shared/affordability/estimate/pre-adapters';
 import { priceRequest } from '@hushbox/shared/affordability/estimate/price-request';
 import { evaluateManifest } from '@hushbox/shared/affordability/estimate/reducers';
-import { callBillableNanoUsd, ratesFromPricing } from './estimate.js';
+import { ratesFromPricing } from './estimate.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import type { Result } from '../../../lib/result/index.js';
-import type { ChatHistoryMessage, ModelDescriptor, Pricing } from '@hushbox/shared';
+import type { ChatHistoryMessage, ModelDescriptor } from '@hushbox/shared';
+import type { PriceableModel } from '@hushbox/shared/affordability';
 import type { DomainError } from '../../../lib/errors/index.js';
 
 /**
  * The trial send gate: three pre-run refusals that keep the free trial to
- * cheap text models — the premium gate (price percentile + release recency),
- * per-model affordability against the 1¢ cap, and non-text blocking — all
- * computed in integer nano-USD.
+ * cheap text models — the premium gate, per-model affordability against the 1¢
+ * cap, and non-text blocking — all computed in integer nano-USD.
+ *
+ * Every classification rule is the money layer's: the price percentile, the
+ * recency window and the minimal-exchange affordability leg are
+ * `premiumPriceThresholdNanoUsd`, `isPremiumModel` and `exceedsTrialBudget`. This
+ * file contributes the trial's own two facts — what counts as a TEXT model, and
+ * what the per-message cap prices — and nothing about premium.
  *
  * Cost basis, stated once (see also the route): the 1¢ cap compares BILLABLE
- * (all-in) cost — the same figure a paid send would be charged, never the
- * worst-case run ceiling. The per-send budget (`trialMessageBillableNanoUsd`)
- * is the billable model cost PLUS the pass-through R2 storage the send will
- * incur (legacy `calculateTrialBudget` included storage); storage is
- * pass-through by construction (it never marks up). The coarse
- * premium-classification leg (`exceedsMinimalAffordability`) folds the same
- * billable rates but prices no storage: it is a token-count heuristic over a
- * fixed synthetic exchange, with no real character count to size storage
- * against.
+ * cost — the same figure a paid send would be charged, never the worst-case run
+ * ceiling. The two legs price different bases deliberately. The MODEL-level leg
+ * is provider-only over a fixed synthetic exchange, because a trial turn never
+ * persists (§Trial Usage). The per-send budget (`trialMessageBillableNanoUsd`)
+ * still prices the pass-through storage of the send; §Trial Usage says a trial
+ * turn stores nothing, so that term does not belong there either — it is left in
+ * place deliberately, because removing it narrows the margin between this gate
+ * and the compiled turn's own floor to less than the system-prompt input tokens
+ * this gate does not price, and the gate must dominate that floor for every rate
+ * shape.
  */
 
-/** Combined price at/above this quartile of the exposed text catalog is premium. */
-const TRIAL_PRICE_PERCENTILE = 0.75;
-
-/** A quartile is only meaningful over a real sample; below this many priceable
- * text models the percentile leg is skipped (it would degenerate — e.g. a
- * single-model catalog marks its one model premium against itself). Recency and
- * affordability still guard. */
-const TRIAL_MIN_TEXT_MODELS_FOR_PERCENTILE = 4;
-
-/** A model released within this window (~6 months) is premium. */
-const TRIAL_RECENCY_MS = 182 * 24 * 60 * 60 * 1000;
-
-/** The minimal exchange reserves this multiple of the min output tokens. */
-const TRIAL_AFFORDABILITY_OUTPUT_MULTIPLIER = 2;
-
-/** Output tokens a minimal trial exchange is sized to afford. */
-const TRIAL_MIN_OUTPUT_TOKENS = 1000;
-
-/** 1¢ in nano-USD (0.01 USD). The per-message and affordability caps compare
- * BILLABLE (all-in) cost against this. */
+/** 1¢ in nano-USD (0.01 USD). The per-message cap compares BILLABLE (all-in)
+ * cost against this. */
 export const TRIAL_MESSAGE_COST_CAP_NANO_USD = 10_000_000n;
 
-/** A fixed, coarse system-prompt input-token estimate for the model-level
- * affordability leg. The 2000 output tokens dominate the estimate, so the exact
- * input figure is not load-bearing; it stands in for the base system prompt. */
-const TRIAL_MINIMAL_INPUT_TOKENS = 500;
+/** Output tokens the per-message cap prices. */
+const AFFORDABILITY_OUTPUT_TOKENS = 2000;
 
-/** Output tokens both the affordability leg and the per-message cap price. */
-const AFFORDABILITY_OUTPUT_TOKENS = TRIAL_AFFORDABILITY_OUTPUT_MULTIPLIER * TRIAL_MIN_OUTPUT_TOKENS;
+/**
+ * The coarse prompt-character basis the MODEL-level classification leg prices
+ * its minimal exchange over. A fixed figure, not the turn's real prompt: this
+ * leg answers "may this model ever be used on trial", which must not move with
+ * what a user typed. At the trial tier's 2 chars-per-token ratio it is the 500
+ * input tokens that leg has always priced, and the 2,000 output tokens dominate
+ * it either way.
+ */
+const TRIAL_CLASSIFICATION_PROMPT_CHARS = 1000;
 
 export type TrialEligibility =
   | { readonly eligible: true }
@@ -78,79 +78,32 @@ export function isTextModel(descriptor: ModelDescriptor): boolean {
   return isRunnableModelShape(descriptor) && descriptor.outputs[0] === 'text';
 }
 
-/** A flat per-token rate as a bigint, or 0n when absent or a matrix rate. */
-function flatRate(pricing: Pricing, key: string): bigint {
-  const rate = pricing[key];
-  return typeof rate === 'bigint' ? rate : 0n;
-}
-
 /**
- * A model is priceable for trial iff it carries BOTH plain per-token rates as
- * bigints — exactly what `callBillableNanoUsd({kind:'tokens'})` requires to price a
- * token exchange. A model missing either rate (e.g. priced only on
- * `cachedInputPerToken`) would error mid-send; refusing it at the gate turns
- * that crash into a clean `PREMIUM_REQUIRES_ACCOUNT` refusal (exclusion at
- * exposure), and keeps un-priceable models out of the percentile distribution.
+ * The priceable text pool the premium percentile is taken over: text models the
+ * money layer can project. Being projectable IS membership in §Predicates'
+ * priceable catalog pool, so a model missing a per-token rate or a context length
+ * is out of the distribution — and, as a target, refused at the gate rather than
+ * left to error mid-send.
  */
-function isPriceableForTrial(pricing: Pricing): boolean {
-  return (
-    typeof pricing['inputPerToken'] === 'bigint' && typeof pricing['outputPerToken'] === 'bigint'
-  );
-}
-
-/** input + output per-token billable rates — the price the percentile ranks on. */
-function combinedRate(pricing: Pricing): bigint {
-  return flatRate(pricing, 'inputPerToken') + flatRate(pricing, 'outputPerToken');
-}
-
-function ascending(a: bigint, b: bigint): number {
-  if (a < b) return -1;
-  if (a > b) return 1;
-  return 0;
-}
-
-/**
- * The premium price threshold: the combined billable rate at position
- * floor(len * 0.75) of the exposed text catalog, sorted ascending. `undefined`
- * when fewer than {@link TRIAL_MIN_TEXT_MODELS_FOR_PERCENTILE} priceable text
- * models exist (no threshold, so the percentile leg never fires — it would
- * degenerate on a tiny sample). Non-text and un-priceable models are excluded
- * from the distribution.
- */
-export function trialPriceThresholdNanoUsd(
-  exposedCatalog: readonly ModelDescriptor[]
-): bigint | undefined {
-  const prices = exposedCatalog
-    .filter((descriptor) => isTextModel(descriptor) && isPriceableForTrial(descriptor.pricing))
-    .map((descriptor) => combinedRate(descriptor.pricing))
-    .toSorted(ascending);
-  if (prices.length < TRIAL_MIN_TEXT_MODELS_FOR_PERCENTILE) return undefined;
-  return prices[Math.floor(prices.length * TRIAL_PRICE_PERCENTILE)];
-}
-
-/** releasedAt is UNIX SECONDS; recent iff its ms form is within the window. */
-function isRecent(releasedAtSeconds: number, nowMs: number): boolean {
-  return releasedAtSeconds * 1000 > nowMs - TRIAL_RECENCY_MS;
-}
-
-/** The minimal representative exchange's billable cost exceeds the 1¢ cap. An
- * un-priceable minimal exchange (missing rates) is treated as not-exceeded —
- * the percentile and recency legs still guard. */
-function exceedsMinimalAffordability(pricing: Pricing): boolean {
-  const billable = callBillableNanoUsd(pricing, {
-    kind: 'tokens',
-    inputTokens: TRIAL_MINIMAL_INPUT_TOKENS,
-    outputTokens: AFFORDABILITY_OUTPUT_TOKENS,
-  }).unwrapOr(0n);
-  return billable > TRIAL_MESSAGE_COST_CAP_NANO_USD;
+function priceableTextPool(exposedCatalog: readonly ModelDescriptor[]): readonly PriceableModel[] {
+  return exposedCatalog
+    .filter((descriptor) => isTextModel(descriptor))
+    .flatMap((descriptor) => {
+      const model = priceableModelFrom(descriptor);
+      return model === undefined ? [] : [model];
+    });
 }
 
 /**
  * The single source for whether a model may be used on the free trial. Blocks
- * non-text models first, then premium models (top price quartile OR recent
- * release OR a minimal exchange over the 1¢ cap). `exposedCatalog` is the full
+ * non-text models first, then premium models. `exposedCatalog` is the full
  * exposed catalog (from `listDescriptors`); the percentile is taken over its
- * text subset. `nowMs` is the reference clock for recency.
+ * priceable text subset. `nowMs` is the reference clock for recency.
+ *
+ * Both premium legs and the trial affordability leg are the money layer's own
+ * (`isPremiumModel`, `premiumPriceThresholdNanoUsd`, `exceedsTrialBudget`): the
+ * percentile and the recency window exist ONCE, inside the module, so this gate
+ * and every other premium surface cannot drift apart.
  */
 export function trialEligibility(
   target: ModelDescriptor,
@@ -158,18 +111,21 @@ export function trialEligibility(
   nowMs: number
 ): TrialEligibility {
   if (!isTextModel(target)) return { eligible: false, reason: 'non-text' };
-  // Un-priceable for trial (missing a plain per-token rate) is refused at the
-  // gate as premium — sending it would error mid-pricing.
-  if (!isPriceableForTrial(target.pricing)) return { eligible: false, reason: 'premium' };
+  const model = priceableModelFrom(target);
+  // Un-priceable (no plain per-token rate, or no context length) is refused at
+  // the gate as premium — sending it would error mid-pricing.
+  if (model === undefined) return { eligible: false, reason: 'premium' };
 
-  const threshold = trialPriceThresholdNanoUsd(exposedCatalog);
-  const topQuartile = threshold !== undefined && combinedRate(target.pricing) >= threshold;
+  const threshold = premiumPriceThresholdNanoUsd(priceableTextPool(exposedCatalog));
+  const premium = isPremiumModel({
+    model,
+    ...(threshold === undefined ? {} : { priceThresholdNanoUsd: threshold }),
+    // `releasedAt` is UNIX SECONDS; the classifier takes milliseconds.
+    releasedAtMs: target.releasedAt * 1000,
+    nowMs,
+  });
 
-  if (
-    topQuartile ||
-    isRecent(target.releasedAt, nowMs) ||
-    exceedsMinimalAffordability(target.pricing)
-  ) {
+  if (premium || exceedsTrialBudget(model, TRIAL_CLASSIFICATION_PROMPT_CHARS)) {
     return { eligible: false, reason: 'premium' };
   }
   return { eligible: true };

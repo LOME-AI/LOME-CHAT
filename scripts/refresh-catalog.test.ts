@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { formatRefreshSummary } from './refresh-catalog.js';
-import type { ExcludeReason, RefreshSummary } from '@hushbox/api/dev-seed';
+import type { RefreshSummary } from '@hushbox/api/dev-seed';
+import type { ExcludeReason } from '@hushbox/shared';
 
 /** Build a `RefreshSummary` with a per-reason breakdown, zero-filling the rest. */
 function summaryOf(

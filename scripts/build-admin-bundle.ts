@@ -22,8 +22,10 @@ import { fileURLToPath } from 'node:url';
 import { execa } from 'execa';
 import { generateEnvFiles } from './generate-env.js';
 import { selectE2eEnvMode } from './build-web-bundle.js';
+import { appBundleOptions, verifyWebBundle } from './verify-web-bundle.js';
 import { isMainModule } from './lib/is-main.js';
 import { runMain } from './lib/run-main.js';
+import type { VerifyBundle } from './verify-web-bundle.js';
 import type { Mode, createEnvUtilities } from '@hushbox/shared';
 
 type EnvContext = Parameters<typeof createEnvUtilities>[0];
@@ -31,6 +33,7 @@ type EnvContext = Parameters<typeof createEnvUtilities>[0];
 export interface BuildAdminBundleDeps {
   readonly generateEnv: (rootDir: string, mode: Mode, options?: { skipBackend?: boolean }) => void;
   readonly exec: (file: string, args: readonly string[]) => Promise<unknown>;
+  readonly verify: VerifyBundle;
 }
 
 export async function buildAdminBundle(
@@ -45,6 +48,12 @@ export async function buildAdminBundle(
   // Passthrough `--mode development` reaches `vite build`. No marketing merge here;
   // admin's CSP `_headers` are emitted by the admin Vite build's own plugin.
   await deps.exec('turbo', ['build', '--filter=@hushbox/admin', '--', '--mode', 'development']);
+
+  // Admin is declared TTS-free, and only the built artifact can show whether
+  // that still holds. This gate covers the e2e admin bundle only: the deployed
+  // `admin-dist` artifact is produced by `pnpm build` (turbo → the admin app's
+  // own `vite build`) and never passes through this script.
+  await deps.verify(appBundleOptions(rootDir, 'apps/admin'));
 }
 
 /* v8 ignore start -- CLI entry point exercised via the build:* package scripts */
@@ -55,6 +64,7 @@ if (isMainModule(import.meta.url)) {
     await buildAdminBundle(repoRoot, process.env, {
       generateEnv: generateEnvFiles,
       exec: (file, args) => execa(file, [...args], { stdio: 'inherit', cwd: repoRoot }),
+      verify: verifyWebBundle,
     });
   });
 }

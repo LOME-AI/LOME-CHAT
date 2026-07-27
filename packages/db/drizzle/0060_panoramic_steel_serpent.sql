@@ -1,0 +1,4 @@
+CREATE TYPE "public"."model_exclude_reason" AS ENUM('token-priced-image', 'token-priced-video', 'megapixel-priced-image', 'missing-pricing', 'zero-priced', 'below-price-floor', 'too-old', 'deprecated', 'non-zdr', 'non-conversational', 'non-runnable-shape', 'unclassifiable-modality', 'missing-release-date', 'unknown-pricing-unit');--> statement-breakpoint
+ALTER TABLE "model_catalog" ADD COLUMN "excluded_reason" "model_exclude_reason";--> statement-breakpoint
+ALTER TABLE "model_catalog" ADD COLUMN "excluded_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "model_catalog" ADD COLUMN "last_seen_at" timestamp with time zone DEFAULT now() NOT NULL;

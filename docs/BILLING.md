@@ -29,7 +29,16 @@ document means exactly what it means here.
 | `fixedCosts`                               | The turn's cost terms that do not scale with output tokens: input tokens at the input rate, `inputStorage`, `classifierReserve` when a classifier runs, and any `additive` dimension's requirement. |
 | `variableRate(m)`                          | The per-output-token cost of model `m`: `outputRate(m) + storageRatePerToken(tier)` when the turn persists, `outputRate(m)` when it does not.                                                       |
 | `storageRatePerToken(tier)`                | `outputCharsPerToken(tier) × storageRatePerChar` — output storage expressed per token, so one formula prices a token's provider cost and its retention together.                                    |
-| **markup**                                 | 15% (`FEE_RATE`), applied at exactly two seams — see **Fee Structure**.                                                                                                                             |
+| **markup**                                 | 15% (`TOTAL_FEE_RATE`), applied at exactly two seams — see **Fee Structure**.                                                                                                                       |
+
+**A decision that gates pricing may consume only bounds, never prices.** The payer decision and
+the price are mutually dependent — a ceiling is bounded by the payer's funding, and
+§Funding Decision Matrix priority 1 compares the estimate — so resolving them by iteration has no
+guaranteed fixed point. The resolution is asymmetry: the payer is decided on `minTurnCost` at the
+candidate payer's tier, and if group headroom cannot cover even that, the group can **never** pay,
+so a signed-in member falls through. One pass, no circularity, because the result never feeds the
+input. `eligible(m)` already follows the same rule by grading on a reachable corner rather than an
+unreachable zero.
 
 ### Funding
 
@@ -121,11 +130,13 @@ from the same pool as the answer. The ceiling bounds both together.
 
 ### Cost
 
-| Term                | Formula                                                                                                                                                                                                                                                                                                                 |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cost(m, tokens)`   | `inputTokens × inputRate(m) + tokens × variableRate(m)` — storage rides `variableRate`, so a non-persisting turn carries no storage term. Trial never persists.                                                                                                                                                         |
-| `maxCallCost(m)`    | `cost(m, min(providerCap(m), contextHeadroom(m)))` — the most a call on `m` could ever cost for this prompt. Money-only, balance-independent, and independent of the payer.                                                                                                                                             |
-| `classifierReserve` | Worst-case cost of the classifier's own provider call. **Provider leg only** — the classifier's prompt and output are never persisted, so no storage is reserved or charged for it. The engine is the cheapest priceable model, which is a sound rule only because **Catalog Admission** puts a floor under "cheapest". |
+| Term                | Formula                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cost(m, tokens)`   | `inputTokens × inputRate(m) + tokens × variableRate(m)` — storage rides `variableRate`, so a non-persisting turn carries no storage term. Trial never persists.                                                                                                                                                                                             |
+| `maxCallCost(m)`    | `cost(m, min(providerCap(m), contextHeadroom(m)))` — the most a call on `m` could ever cost for this prompt. Money-only, balance-independent, and independent of the payer.                                                                                                                                                                                 |
+| `minTurnCost`       | `Σᵢ (inputTokens × inputRate(mᵢ) + MINIMUM_OUTPUT_TOKENS × variableRate(mᵢ))` at a **candidate payer's** tier — the least this turn could possibly cost if that payer paid. The payer decision consumes this, never a full estimate.                                                                                                                        |
+| `trialTurnCost`     | Priced with **no storage term at all** — §Trial Usage's "trial never persists" is unconditional, so the per-message cap buys strictly more than a storage-inclusive reading allowed. There is exactly **one** premium/trial classifier, in the money module; a second copy carrying its own price percentile and recency window is a defect, not a variant. |
+| `classifierReserve` | Worst-case cost of the classifier's own provider call. **Provider leg only** — the classifier's prompt and output are never persisted, so no storage is reserved or charged for it. The engine is the cheapest priceable model, which is a sound rule only because **Catalog Admission** puts a floor under "cheapest".                                     |
 
 ### Sharing one budget across siblings
 
@@ -221,7 +232,7 @@ cost.
 | **Free**  | Basic only   | Full             | Welcome credit + daily allowance                    |
 | **Paid**  | All models   | Full             | Prepaid credits loaded via card                     |
 
-**Tier derivation** (`getUserTier` in `packages/shared/src/tiers.ts`):
+**Tier derivation** (`getUserTier` in `packages/shared/src/affordability/tiers.ts`):
 
 - Unauthenticated → **trial** (or **guest** when arriving through a shared link)
 - Authenticated with balance > 0 → **paid**; balance = 0 → **free**
@@ -245,18 +256,36 @@ decides whether a percentage of it is worth having.
 
 1. **Zero-priced models are excluded unconditionally.** Combined prompt + completion rate of
    zero earns exactly nothing, so no exemption applies and this check runs first.
-2. **Models below the price floor are excluded.** `MIN_PRICE_PER_1K_TOKENS` = **$0.0002** per
+2. **Models below the price floor are excluded.** `MIN_PRICE_PER_1K_TOKENS_NANO` = **200_000n** (i.e. $0.0002) per
    1,000 tokens, **combined** prompt + completion, tested against the **raw pre-fee**
    provider rate (equivalently 200 nano-USD per token combined, pre-fee).
 3. **Models older than two years are excluded.** An ageing catalog entry is a maintenance and
    quality liability, not a commercial one.
-4. **The top context percentile earns an exemption.** A model in the top 5% of context length
+4. **Exclusion is a soft delete, not a skip.** Ingestion only writes, so a rule added later
+   leaves already-admitted rows sellable — which defeats the rule for every model already present,
+   and equally hides a model that has **vanished from OpenRouter**. So a row that becomes
+   inadmissible is **marked, never deleted**: `model_catalog.excludedReason` (a pgEnum over the
+   same closed reason set the operator summary counts), `excludedAt`, and `lastSeenAt`. Exposure
+   filters on `excludedReason IS NULL AND adminDisabledAt IS NULL`.
+
+   **The two columns are separate authorities and must stay separate.** `excludedReason` is
+   **derived** — the hourly refresh recomputes it, so a model whose price later clears the floor
+   returns with no human action. `adminDisabledAt` is **asserted** by a person. Sharing one column
+   would force the refresh either to overwrite a human's decision or to trap a model out
+   permanently; neither is acceptable.
+
+   Rows are marked, not created: several exclusions exist _because_ the descriptor is unbuildable
+   (an unknown pricing unit, an unclassifiable modality), so there are no values to write. Every
+   reason is nonetheless reachable on the column, since any of them can newly apply to a model
+   that already has a row.
+
+5. **The top context percentile earns an exemption.** A model in the top 5% of context length
    (`TOP_CONTEXT_PERCENTILE` = 0.95, measured over the ZDR-filtered pool) bypasses the price
    floor and the age cutoff — exceptional capability buys its way in. It never bypasses rule 1:
    a free model is excluded however large its context window.
-5. **These rules apply to text models only.** Image, video and audio are priced per unit
+6. **These rules apply to text models only.** Image, video and audio are priced per unit
    rather than per token, so a per-token floor has no meaning for them and none is applied.
-6. **Every exclusion is counted and reported.** Each rule produces its own reason, so the
+7. **Every exclusion is counted and reported.** Each rule produces its own reason, so the
    hourly refresh summary reports the causes separately rather than collapsing them. An
    excluded cheap model is an expected outcome, not a defect, so it is counted without an
    alert — unlike the fail-closed reasons (unrepresentable pricing unit, unclassifiable
@@ -269,7 +298,7 @@ model every `auto` turn depends on. Do not treat it as arbitrary filtering.
 
 ## Model Classification
 
-Admitted models are **Basic** or **Premium** (`packages/shared/src/models/premium-check.ts`):
+Admitted models are **Basic** or **Premium** (`packages/shared/src/affordability/premium.ts`):
 
 - **Premium**: combined prompt+completion price ≥ the 75th-percentile threshold
   (`PREMIUM_PRICE_PERCENTILE`), OR released within the recency window
@@ -465,6 +494,17 @@ Each dimension declares the single resource it consumes and how its requirement 
 | `completionTokens` | Tokens out of `ceiling(m)`.                                |
 | `none`             | Consumes neither — a free dimension (aspect ratio is one). |
 
+A resource names a requirement's **units**, which is why a rate needs its own: `moneyPerToken`
+carries nano-USD **per token** and is **not** a hold amount. **No multiplication converts it into
+one** — `nanoUsdPerToken × ceiling ≠ cost(m, ceiling)`, because the input leg is prompt-sized, not
+ceiling-sized. A consumer needing money prices `cost(m, ceiling(m))` per candidate through the
+estimator and takes `MAX` over an open dimension, `Σ` over pinned siblings. The rate's only
+legitimate use is as a **unit**; treat any expression multiplying it by a token count as a defect.
+
+**The model dimension's cost class is `partition`**, and its resource is `moneyPerToken`. It
+redistributes an already-priced ceiling rather than enlarging it, exactly as reasoning effort
+does — which is what the re-partition invariant asserts.
+
 | Cost class       | Meaning                                                    | Example                       |
 | ---------------- | ---------------------------------------------------------- | ----------------------------- |
 | `partition`      | Redistributes an already-priced pool. Zero marginal money. | reasoning effort              |
@@ -536,7 +576,8 @@ Two rules make this hold:
    maps positionally onto the canonical ladder by count: 1→[high], 2→[low, high],
    3→[low, medium, high], 4→[low, medium, high, max], ≥5→strongest five. Budget-native
    models (no enumerated efforts) offer the full ladder as clamped token tiers; a
-   mandatory-reasoning model with one level offers no choice. One function is the sole
+   mandatory-reasoning model with one level offers **exactly one rung** — no choice to
+   present, but a priceable one, so `e_min(m)` is that rung and never an unreachable zero. One function is the sole
    normalization authority for menu, server validation, and classifier options alike.
 3. **Sizing.** Wire `maxTokens` = `B(m, e) + H(m, e)`, bounded per **Affordability 7**. A
    level is enabled iff `feasible(m, e)` and it is affordable — the _same_ predicate the
@@ -576,8 +617,13 @@ Two rules make this hold:
    search when active. Its own tokens are never streamed to the client — a classifier that
    is an ordinary model call would otherwise emit into the user's conversation, so streaming
    is withheld from any node whose output is consumed rather than displayed.
-7. **Reserve ⟺ classify.** The classifier reserve is held exactly when the turn will run a
-   classifier — one predicate shared by estimator and executor. The reserve covers the
+7. **Reserve ⟺ classify.** The classifier reserve is held whenever a classifier **may** run,
+   determined by **candidate-pool size** — one predicate shared by estimator and executor. It is
+   pool size rather than the presented set because a presented-set predicate **has no fixed
+   point**: the reserve itself shrinks what is presentable, so dropping it re-buys it. The
+   executor may skip the call when the presented set collapses to one option; the unspent reserve
+   is simply never charged, so `reserve ⊇ bill` is untouched and "one option ⇒ no call" is an
+   efficiency preference rather than a correctness rule. The reserve covers the
    provider call only: the classifier's prompt and output are never persisted, so no
    storage is reserved or charged for it.
 8. **The classifier cannot fail into an infeasible state.** Its options are feasible by
@@ -740,6 +786,12 @@ ground. Reaching for one of these again means the reason changed, not that it wa
 The shapes are chosen so that illegal states cannot be represented. Where a type cannot
 carry a property, the named executable pin carries it instead.
 
+**Identifiers are branded, not bare strings.** `ModelId` is a branded string type, and this is
+load-bearing rather than stylistic: §Where the Code Lives forbids a **bare `string`** parameter on any
+export of the money layer, so an identifier typed as plain `string` would either fail that rule or
+force an allowlist entry into it. A reader defining `ModelId` as `type ModelId = string` breaks the
+wall by accident — the same class of prose-guarded dependency the presented-set family came from.
+
 ### What the payer's situation is
 
 ```ts
@@ -802,11 +854,18 @@ type TurnOptions = {
 
 /**
  * A discriminated union. `sendable: true` carries the runnable entries as a
- * NonEmpty of its own, so "sendable with nothing runnable" is unrepresentable —
- * `all` exists separately because unavailable entries must still be rendered.
+ * NonEmpty of its own, so "sendable with nothing runnable" is unrepresentable.
+ * `all` and `turnDimensions` sit on BOTH arms: an unsendable set must still
+ * render every row greyed with its reason, because greying what a payer cannot
+ * afford is the point — hiding it is not.
  */
 type OptionSet =
-  | { readonly sendable: false; readonly refusal: RefusalCode }
+  | {
+      readonly sendable: false;
+      readonly refusal: RefusalCode;
+      readonly all: readonly ModelEntry[];
+      readonly turnDimensions: readonly DimensionAvailability[];
+    }
   | {
       readonly sendable: true;
       readonly runnable: NonEmpty<ModelEntry>; // availability.available === true
@@ -814,16 +873,56 @@ type OptionSet =
       readonly turnDimensions: readonly DimensionAvailability[];
     };
 
+/**
+ * `ceilingTokens` on a row of a turn with UNRESOLVED slots is a BEST CASE: the
+ * ceiling this model receives if every unresolved slot resolves to its cheapest
+ * admissible option. The hold, by contrast, is priced on the WORST arrangement.
+ *
+ * That asymmetry is deliberate and is what makes both monotone. A conservative
+ * presented ceiling is provably NOT monotone — an unclamped arrangement totals
+ * `funding − ((funding − fixedCosts) mod Σrate)`, so which candidate is
+ * "costliest" flips on a remainder, and a richer payer would see a SMALLER
+ * ceiling, breaking `admissible ⊆ affordable` and §Affordability 6. An
+ * over-presented ceiling is safe because the send gate is a separate monotone
+ * predicate: it degrades to a shorter answer, never to a refusal.
+ */
+
 /** Availability always carries its reason, so a surface cannot grey silently. */
 type Availability =
   | { readonly available: true }
   | { readonly available: false; readonly reason: RefusalCode };
 
-type ModelEntry = {
+/**
+ * TWO KINDS OF ROW, and the difference is load-bearing.
+ *
+ * A `candidate` row is graded on the arrangement it would create and is
+ * decision-bearing: its rungs are what an effort control may read.
+ *
+ * A `pinned` row carries an own-fit DIAGNOSIS — "is this the sibling blocking
+ * the turn?" — and no rungs at all, because a pinned row is not an arrangement
+ * the classifier can pick. It has no `dimensions` field, so consuming a
+ * diagnosis as a decision is a compile error rather than a documented mistake.
+ * Narrow on `kind`; never re-derive the kind from `Selection`.
+ */
+type ModelEntry = PinnedModelEntry | CandidateModelEntry;
+
+type PinnedModelEntry = {
+  readonly kind: 'pinned';
   readonly modelId: ModelId;
   readonly availability: Availability;
   readonly ceilingTokens: number;
-  /** Per-dimension options for THIS model. Every combination inside is feasible. */
+};
+
+type CandidateModelEntry = {
+  readonly kind: 'candidate';
+  readonly modelId: ModelId;
+  readonly availability: Availability;
+  readonly ceilingTokens: number;
+  /**
+   * Per-dimension options for THIS model, each graded on the arrangement it
+   * would create. Feasible individually; cross-dimension combinations are not
+   * claimed.
+   */
   readonly dimensions: readonly DimensionAvailability[];
 };
 
@@ -858,7 +957,7 @@ type DimensionSpec = {
   /** The option domain, from the catalog's own parameter spec: values, range, default. */
   readonly param: ParamSpec;
 
-  readonly resource: 'money' | 'completionTokens' | 'none';
+  readonly resource: 'money' | 'moneyPerToken' | 'completionTokens' | 'none';
   readonly costClass: 'partition' | 'additive' | 'multiplicative' | 'free';
 
   readonly ordered: boolean; // ordered ⇒ a ceiling represents the feasible set
@@ -890,7 +989,7 @@ type PriceableModel = {
   readonly outputRateNanoUsd: NanoUSD;
   readonly contextLength: number;
   readonly providerCap: number | undefined;
-  readonly reasoning: ReasoningMetadata | undefined;
+  readonly reasoning: ModelReasoning | undefined; // the catalog's own type
 };
 ```
 
@@ -1011,8 +1110,8 @@ effort every sibling runs.
 ## Funding Decision Matrix
 
 When a message is sent, the shared funding decision
-(`packages/shared/src/billing/funding-decision.ts`, wrapped for the client by
-`billing/client-billing.ts`) decides who pays, in priority order:
+(`packages/shared/src/affordability/billing/funding-decision.ts`, wrapped for the client by
+`affordability/billing/client-billing.ts`) decides who pays, in priority order:
 
 | Priority | Condition                                                                                                                                                        | Outcome                                                                                                                                      |
 | :------: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1161,7 +1260,11 @@ The money layer is a bounded module inside the shared package, reachable only th
 barrel: pricing, feasibility, the dimension registry, effort resolution, the funding decision,
 and money formatting. It is pure — no database, no cache, no clock, no randomness, no network —
 and **content-free**: no export accepts a prompt, a message, or a history array, only counts,
-rates and identifiers. Because affordability is computed on the client as the user types, this
+rates and identifiers. **Enforced structurally, not by naming:** no export takes a bare `string`
+parameter — branded and refined string types stay legal, because a branded string is a scalar with
+a checked shape while a bare `string` is unbounded content. The rule is phrased over what a type
+**permits** rather than what it is **named**, because a list of content type names is a sync
+contract that a new content type silently escapes. Because affordability is computed on the client as the user types, this
 layer necessarily lives in a package: a slice cannot be imported by the web app.
 
 The billing slice owns the tables (`wallets`, `ledger_entries`, `usage_records`,
@@ -1173,18 +1276,25 @@ writes was produced by the money layer.
 
 Feature code touches six things:
 
-| Export                                      | Purpose                                                                                                                                                                                                                                                                              |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `getTurnOptions(funding, basis, selection)` | The one producer. Called once with the composed basis; returns `TurnOptions` — the `affordable`/`admissible` pair plus the hold. It substitutes the empty basis for `affordable` itself, so the picker's prompt-independent floor needs no second call and no caller-supplied basis. |
-| `chooseFrom(options, rawAnswer)`            | Total. Resolves a classifier answer to a member of the presented set, or the declared fallback.                                                                                                                                                                                      |
-| `wireFor(chosen, modelId)`                  | The only constructor of provider parameters.                                                                                                                                                                                                                                         |
-| `renderOptions(options)`                    | The classifier prompt's option section, so presented and prompted cannot diverge.                                                                                                                                                                                                    |
-| `resolveFunding(inputs)`                    | Who pays.                                                                                                                                                                                                                                                                            |
-| `notices(decision, options)`                | Blocking reason → human copy with an action.                                                                                                                                                                                                                                         |
+| Export                                               | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `getTurnOptions(funding, basis, selection, catalog)` | The one producer. Called once with the composed basis; returns `TurnOptions` — the `affordable`/`admissible` pair plus the hold. It substitutes the empty basis for `affordable` itself, so the picker's prompt-independent floor needs no second call and no caller-supplied basis. The fourth argument is **necessary, not convenient**: `Selection` is identifier-shaped, the smart-slot pool is catalog-minus-pinned, and pushing catalog resolution to callers is the two-callers-resolve-differently hazard. |
+| `chooseFrom(options, rawAnswer)`                     | Total. Resolves a classifier answer to a member of the presented set, or the declared fallback.                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `wireFor(chosen, modelId)`                           | The only constructor of provider parameters.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `renderOptions(options)`                             | The classifier prompt's option section, so presented and prompted cannot diverge.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `resolveFunding(inputs)`                             | Who pays.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `notices(decision, options)`                         | Blocking reason → human copy with an action.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
-Plus the structural seams: the two fee applications (catalog ingestion and provider-cost
-conversion), the storage-fee function, tier and premium classification, the dimension registry
-as data, and money formatting.
+Plus the structural seams: the storage-fee function, tier and **premium classification** (which
+lives inside the module — it needs bigint rates, and both its clock and its pool percentile are
+inputs, so purity holds), the dimension registry as data, `buildClassifierSystemPrompt` — the one
+classifier template, shared because the overhead the reserve prices **is its length** — and money
+formatting.
+
+**The two fee applications are NOT barrel seams.** They are permitted at exactly two call sites by
+a **path allowlist**, and a barrel export would hand every consumer an allowed-looking route,
+making that allowlist decorative. What the module publishes and which files may apply a fee are
+different mechanisms; the second is enforced, so do not "fix" the absence of the first.
 
 Deliberately **not** exported: the minimum-answer constant, tier ratios, the reasoning-budget
 ladder, rates, manifests, reducers, per-candidate ceiling solvers, clamping. If a consumer needs
@@ -1272,9 +1382,10 @@ greys exactly the unavailable ones with their reasons attached.
   Raw provider cost is not retained anywhere.
 - Storage fees are separate, never marked up, and already final at their defining constants.
 
-Fee constants: `packages/shared/src/constants.ts`; the markup function is `applyMarkup` in
-`packages/shared/src/money.ts` (exact bigint nano-USD). `packages/shared/src/pricing.ts` retains
-only float display helpers for the marketing fee breakdown.
+Fee constants: `packages/shared/src/affordability/constants.ts`; the markup function is `applyMarkup`
+in `packages/shared/src/affordability/money.ts` (exact bigint nano-USD).
+`packages/shared/src/affordability/pricing.ts` retains only float display helpers for the marketing
+fee breakdown.
 
 ---
 
@@ -1282,7 +1393,7 @@ only float display helpers for the marketing fee breakdown.
 
 Messages are charged a per-character storage fee covering long-term retention. The money-path
 rates are single-sourced as exact integer nano-USD in
-`packages/shared/src/estimate/storage-rate.ts` — `STORAGE_COST_PER_CHARACTER_NANO`
+`packages/shared/src/affordability/estimate/storage-rate.ts` — `STORAGE_COST_PER_CHARACTER_NANO`
 (300n per character) and `MEDIA_STORAGE_COST_PER_BYTE_NANO` (18n per byte). Storage is
 pass-through: the estimator folds it as
 never-fee-bearing line items, and settlement adds the same nano rate to the charge without
@@ -1347,7 +1458,7 @@ send fails is a refusal the user could not have anticipated.
 ## New User Bonus
 
 Account creation provisions both wallets and grants a welcome credit (`WELCOME_CREDIT_CENTS` in
-`packages/shared/src/tiers.ts`) to the purchased wallet as a zero-sum promo ledger pair,
+`packages/shared/src/affordability/tiers.ts`) to the purchased wallet as a zero-sum promo ledger pair,
 idempotency-keyed per user (`provisionWalletsWithinTx` in
 `apps/api/src/slices/billing/domain/wallets.ts`). Hard deletion means a re-registered email
 receives it again — accepted, bounded by the global trial/welcome budget.
@@ -1373,31 +1484,31 @@ lane uses the Helcim sandbox.
 
 ## Configuration Reference
 
-| Configuration               | Location                                                                                                                          |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Money math                  | `packages/shared/src/money.ts`                                                                                                    |
-| Canonical estimator         | `packages/shared/src/estimate/`                                                                                                   |
-| Storage costs               | `packages/shared/src/estimate/storage-rate.ts`, `packages/shared/src/constants.ts`                                                |
-| Minimum answer floor        | `packages/shared/src/constants.ts` (`MINIMUM_OUTPUT_TOKENS`)                                                                      |
-| Outlier threshold           | `packages/shared/src/constants.ts` (`OUTLIER_COST_MULTIPLE` = 20)                                                                 |
-| Fee rate                    | `packages/shared/src/constants.ts` (`FEE_RATE` = 15%)                                                                             |
-| Cushion                     | `packages/shared/src/tiers.ts` (`MAX_ALLOWED_NEGATIVE_BALANCE_CENTS` = 50)                                                        |
-| Concurrent-run cap          | `apps/api/src/slices/chat/domain/constants.ts` (5 per wallet)                                                                     |
-| Selected-model cap          | `packages/shared/src/constants.ts` (`MAX_SELECTED_MODELS` = 5)                                                                    |
-| Tier logic & constants      | `packages/shared/src/tiers.ts`                                                                                                    |
-| Funding decision            | `packages/shared/src/billing/funding-decision.ts` (client wrapper: `billing/client-billing.ts`)                                   |
-| Model classification        | `packages/shared/src/models/premium-check.ts`                                                                                     |
-| Effort ladder & budgets     | `packages/shared/src/reasoning-effort.ts`, `packages/shared/src/estimate/reasoning-plan.ts`                                       |
-| Dimension option domains    | `packages/shared/src/param-spec.ts` (`ParamSpec` — the closed shape a dimension's options are declared in)                        |
-| Catalog admission rules     | catalog ingestion: the price floor, zero-price, age cutoff, and top-context exemption, each with its own counted exclusion reason |
-| Resolved effort (persisted) | `packages/db/src/schema/llm-completions.ts` — beside `reasoningTokens`                                                            |
-| Welcome credit              | `packages/shared/src/tiers.ts` (granted in `apps/api/src/slices/billing/domain/wallets.ts`)                                       |
-| Trial limits                | `packages/shared/src/tiers.ts`, `packages/shared/src/constants.ts`                                                                |
-| Trial global spend cap      | `apps/api/src/slices/billing/domain/constants.ts`                                                                                 |
-| Budget scopes               | `apps/api/src/slices/billing/domain/budget-resolution.ts`                                                                         |
-| Payment schema & states     | `packages/db/src/schema/payments.ts`, `packages/db/src/schema/enums.ts`                                                           |
-| Wallets                     | `packages/db/src/schema/wallets.ts`                                                                                               |
-| Ledger entries              | `packages/db/src/schema/ledger-entries.ts`                                                                                        |
-| Allowance spending          | `packages/db/src/schema/allowance-spending.ts`                                                                                    |
-| Member budgets              | `packages/db/src/schema/member-budgets.ts`                                                                                        |
-| Conversation spending       | `packages/db/src/schema/conversation-spending.ts`                                                                                 |
+| Configuration               | Location                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Money math                  | `packages/shared/src/affordability/money.ts`                                                                                                                                                                                                                                                                                                                            |
+| Canonical estimator         | `packages/shared/src/affordability/estimate/`                                                                                                                                                                                                                                                                                                                           |
+| Storage costs               | `packages/shared/src/affordability/estimate/storage-rate.ts`, `packages/shared/src/affordability/constants.ts`                                                                                                                                                                                                                                                          |
+| Minimum answer floor        | `packages/shared/src/affordability/constants.ts` (`MINIMUM_OUTPUT_TOKENS`)                                                                                                                                                                                                                                                                                              |
+| Outlier threshold           | `packages/shared/src/affordability/constants.ts` (`OUTLIER_COST_MULTIPLE` = 20)                                                                                                                                                                                                                                                                                         |
+| Fee rate                    | `packages/shared/src/affordability/constants.ts` (`TOTAL_FEE_RATE` = 15%)                                                                                                                                                                                                                                                                                               |
+| Cushion                     | `packages/shared/src/affordability/constants.ts` (`MAX_ALLOWED_NEGATIVE_BALANCE_CENTS` = 50)                                                                                                                                                                                                                                                                            |
+| Concurrent-run cap          | `apps/api/src/slices/chat/domain/constants.ts` (5 per wallet)                                                                                                                                                                                                                                                                                                           |
+| Selected-model cap          | `packages/shared/src/constants.ts` (`MAX_SELECTED_MODELS` = 5 — the NON-money half; deliberately not moved)                                                                                                                                                                                                                                                             |
+| Tier logic & constants      | `packages/shared/src/affordability/tiers.ts`                                                                                                                                                                                                                                                                                                                            |
+| Funding decision            | `packages/shared/src/affordability/billing/funding-decision.ts` (client wrapper: `affordability/billing/client-billing.ts`)                                                                                                                                                                                                                                             |
+| Model classification        | `packages/shared/src/affordability/premium.ts` (moved inside; the old `models/premium-check.ts` had no production consumer)                                                                                                                                                                                                                                             |
+| Effort ladder & budgets     | `packages/shared/src/affordability/reasoning-effort.ts`, `packages/shared/src/affordability/estimate/reasoning-plan.ts`                                                                                                                                                                                                                                                 |
+| Dimension option domains    | `packages/shared/src/affordability/param-spec.ts` (`ParamSpec` — the closed shape a dimension's options are declared in). **No per-model `ParamSpec` exists for effort** — ingestion seeds only `temperature`/`topP`/`maxOutputTokens`, and reasoning is a behaviour, so the effort vocabulary lives in `reasoning.supportedEfforts`. The ParamSpec route is for media. |
+| Catalog admission rules     | catalog ingestion: the price floor, zero-price, age cutoff, and top-context exemption, each with its own counted exclusion reason                                                                                                                                                                                                                                       |
+| Resolved effort (persisted) | `packages/db/src/schema/llm-completions.ts` — beside `reasoningTokens`                                                                                                                                                                                                                                                                                                  |
+| Welcome credit              | `packages/shared/src/affordability/tiers.ts` (granted in `apps/api/src/slices/billing/domain/wallets.ts`)                                                                                                                                                                                                                                                               |
+| Trial limits                | `packages/shared/src/affordability/tiers.ts`, `packages/shared/src/affordability/constants.ts`                                                                                                                                                                                                                                                                          |
+| Trial global spend cap      | `apps/api/src/slices/billing/domain/constants.ts`                                                                                                                                                                                                                                                                                                                       |
+| Budget scopes               | `apps/api/src/slices/billing/domain/budget-resolution.ts`                                                                                                                                                                                                                                                                                                               |
+| Payment schema & states     | `packages/db/src/schema/payments.ts`, `packages/db/src/schema/enums.ts`                                                                                                                                                                                                                                                                                                 |
+| Wallets                     | `packages/db/src/schema/wallets.ts`                                                                                                                                                                                                                                                                                                                                     |
+| Ledger entries              | `packages/db/src/schema/ledger-entries.ts`                                                                                                                                                                                                                                                                                                                              |
+| Allowance spending          | `packages/db/src/schema/allowance-spending.ts`                                                                                                                                                                                                                                                                                                                          |
+| Member budgets              | `packages/db/src/schema/member-budgets.ts`                                                                                                                                                                                                                                                                                                                              |
+| Conversation spending       | `packages/db/src/schema/conversation-spending.ts`                                                                                                                                                                                                                                                                                                                       |

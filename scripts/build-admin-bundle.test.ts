@@ -6,6 +6,7 @@ describe('build-admin-bundle', () => {
   const makeDeps = () => ({
     generateEnv: vi.fn<BuildAdminBundleDeps['generateEnv']>(),
     exec: vi.fn<BuildAdminBundleDeps['exec']>(),
+    verify: vi.fn<BuildAdminBundleDeps['verify']>().mockResolvedValue(),
   });
   let deps: ReturnType<typeof makeDeps>;
 
@@ -40,6 +41,30 @@ describe('build-admin-bundle', () => {
   it('runs only the turbo build — no marketing merge (admin CSP `_headers` come from its own Vite build)', async () => {
     await buildAdminBundle('/repo', { NODE_ENV: 'development' }, deps);
     expect(deps.exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('verifies the built admin dist as a bundle that must not ship TTS', async () => {
+    await buildAdminBundle('/repo', { NODE_ENV: 'development' }, deps);
+    expect(deps.verify).toHaveBeenCalledWith({
+      distributionDir: '/repo/apps/admin/dist',
+      shipsTts: false,
+    });
+  });
+
+  it('verifies only after the build has produced the dist', async () => {
+    const order: string[] = [];
+    deps.exec.mockImplementation(() => {
+      order.push('exec');
+      return Promise.resolve();
+    });
+    deps.verify.mockImplementation(() => {
+      order.push('verify');
+      return Promise.resolve();
+    });
+
+    await buildAdminBundle('/repo', { NODE_ENV: 'development' }, deps);
+
+    expect(order).toEqual(['exec', 'verify']);
   });
 
   it('generates env before invoking the build', async () => {

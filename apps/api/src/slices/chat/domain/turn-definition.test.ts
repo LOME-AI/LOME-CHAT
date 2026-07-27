@@ -16,7 +16,6 @@ import { MAX_SEARCH_TOOL_CALLS } from '@hushbox/shared';
 import { WEB_SEARCH_TOOL_NAME, createEstimateRun } from '../../models/index.js';
 import {
   MEDIA_TURN_MIME_TYPES,
-  answerHeadroomTokens,
   assertModelProducesModality,
   assertModelsProduceModality,
   assertModelsWebSearchCapable,
@@ -29,8 +28,9 @@ import {
   payerSpendableNanoUsd,
   promptInputTokensFor,
   reconcileAnswerCeiling,
+  physicalAnswerCeiling,
+  sharedAnswerCeiling,
   trialReasoningSelection,
-  turnMaxOutputTokens,
   turnModelPricings,
   withStorageStamp,
 } from './turn-definition.js';
@@ -445,127 +445,101 @@ function pricingEntry(
   };
 }
 
-describe('turnMaxOutputTokens', () => {
-  // Fixture rates: billable input 2000 / output 10_000 nano-USD per token —
-  // the catalog stores fee-inclusive rates, so the budget math sums them
-  // as-is (legacy fed the same math fee-inclusive prices).
+describe('physicalAnswerCeiling', () => {
+  // Fixture rates: billable input 2000 / output 10_000 nano-USD per token. They
+  // are present so a rate-bearing derivation WOULD have something to price with,
+  // and every expectation below is independent of them — the ceiling is
+  // `min(providerCap, contextHeadroom)` and carries no money term at all.
   const MODEL = pricingEntry(2000n, 10_000n, 1_000_000);
-
-  it('derives the purchased-payer ceiling with the legacy paid-tier formula', () => {
-    // chars=400 → estInput=ceil(400/4)=100 (paid = 4 chars/token);
-    // fixed = 100×2000 + 400×300(storage) = 320_000;
-    // variable = 10_000 + 2(paid output chars/token)×300 = 10_600;
-    // effective = 100_000_000 + 500_000_000 cushion = 600_000_000;
-    // maxOutputTokens = floor((600_000_000 − 320_000) / 10_600) = 56_573.
-    const result = turnMaxOutputTokens(
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
-      [MODEL]
-    );
-    expect(result).toBe(56_573);
+  const paid = (chars: number, remainingNanoUsd: bigint): TurnBudget => ({
+    promptCharacterCount: chars,
+    funding: { remainingNanoUsd, kind: 'purchased' },
   });
 
-  it('derives the free-payer ceiling with the legacy free-tier formula (no cushion, 2 chars/token)', () => {
-    // chars=400 → estInput=ceil(400/2)=200 (free = 2 chars/token);
-    // fixed = 200×2000 + 400×300 = 520_000;
-    // variable = 10_000 + 4(free output chars/token)×300 = 11_200;
-    // effective = 50_000_000 (allowance only, no cushion);
-    // maxOutputTokens = floor((50_000_000 − 520_000) / 11_200) = 4_417.
-    const result = turnMaxOutputTokens(
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 50_000_000n, kind: 'free' } },
-      [MODEL]
-    );
-    expect(result).toBe(4417);
+  it('is the context headroom when the model declares no completion cap', () => {
+    // chars=400 → inputTokens=ceil(400/4)=100 (paid = 4 chars/token);
+    // headroom = 1_000_000 − 100.
+    expect(physicalAnswerCeiling(paid(400, 100_000_000n), [MODEL])).toBe(999_900);
   });
 
-  it('returns undefined when the budget covers the remaining context (model default applies)', () => {
-    const result = turnMaxOutputTokens(
-      {
-        promptCharacterCount: 400,
-        funding: { remainingNanoUsd: 10_000_000_000_000n, kind: 'purchased' },
-      },
-      [MODEL]
-    );
-    expect(result).toBeUndefined();
+  it('is the provider completion cap when the context leaves more room', () => {
+    expect(
+      physicalAnswerCeiling(paid(400, 100_000_000n), [
+        pricingEntry(2000n, 10_000n, 1_000_000, 8192),
+      ])
+    ).toBe(8192);
   });
 
-  it('returns undefined below the legacy minimum-output threshold (admission is the refusal gate)', () => {
-    // free minimum = 520_000 + 1000×11_200 = 11_720_000 > 10_000_000 remaining →
-    // legacy set maxOutputTokens=0 and denied upstream; here the cap is omitted so
-    // the full-context hold makes admission refuse.
-    const result = turnMaxOutputTokens(
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 10_000_000n, kind: 'free' } },
-      [MODEL]
-    );
-    expect(result).toBeUndefined();
+  it('sizes the prompt at the payer tier ratio, so a free payer keeps less headroom', () => {
+    // free = 2 chars/token → 200 input tokens against the paid tier's 100.
+    const free: TurnBudget = {
+      promptCharacterCount: 400,
+      funding: { remainingNanoUsd: 100_000_000n, kind: 'free' },
+    };
+    expect(physicalAnswerCeiling(free, [MODEL])).toBe(999_800);
   });
 
-  it('returns undefined when the budget exceeds a small remaining context window', () => {
-    // context 5000 − estInput 100 = 4900 remaining < the 56_573 budget → omit.
-    const result = turnMaxOutputTokens(
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
-      [pricingEntry(2000n, 10_000n, 5000)]
-    );
-    expect(result).toBeUndefined();
+  it('takes the WIDEST sibling`s room on a multi-model turn, so no sibling caps another', () => {
+    // sibling a: headroom 100_000 − 100 = 99_900; sibling b: cap 9000. §Multi-Model 3
+    // forbids the tight sibling from truncating the wide one, and each node clamps
+    // itself when the cap is stamped, so the search's upper bound is the widest room.
+    expect(
+      physicalAnswerCeiling(paid(400, 100_000_000n), [
+        pricingEntry(2000n, 10_000n, 100_000),
+        pricingEntry(4000n, 20_000n, 50_000, 9000),
+      ])
+    ).toBe(99_900);
   });
 
-  it('sums rates across models and uses the min context length (legacy multi-model)', () => {
-    // sumIn = 2000+4000 = 6000; sumOut = 10_000+20_000 = 30_000;
-    // variable = 30_000 + 2×300×2 models = 31_200;
-    // fixed = 100×6000 + 400×300 = 720_000;
-    // maxOutputTokens = floor((600_000_000 − 720_000) / 31_200) = 19_207.
-    const result = turnMaxOutputTokens(
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
-      [pricingEntry(2000n, 10_000n, 100_000), pricingEntry(4000n, 20_000n, 50_000)]
-    );
-    expect(result).toBe(19_207);
+  it('is undefined for an empty model list', () => {
+    expect(physicalAnswerCeiling(paid(400, 100_000_000n), [])).toBeUndefined();
   });
 
-  it('returns undefined for an empty model list', () => {
-    const result = turnMaxOutputTokens(
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
-      []
-    );
-    expect(result).toBeUndefined();
+  it('floors at one token when the prompt overruns the context window', () => {
+    // 4000 chars → 1000 input tokens against a 500-token window: the fit needs a
+    // positive upper bound, and a one-token answer is what admission then refuses.
+    expect(
+      physicalAnswerCeiling(paid(4000, 100_000_000n), [pricingEntry(2000n, 10_000n, 500)])
+    ).toBe(1);
   });
 
-  it('returns undefined when the budget covers the provider completion cap (cap bounds, param omitted)', () => {
-    // ceiling = min(remaining context 999_900, cap 8192) = 8192 < budget
-    // 56_573 → omit; the provider enforces its own cap and admission bounds
-    // the hold by the same catalog cap.
-    const result = turnMaxOutputTokens(
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
-      [pricingEntry(2000n, 10_000n, 1_000_000, 8192)]
+  it('carries no money term — a broke payer and a rich one get the same bound', () => {
+    // The money bound belongs to the ONE canonical admission estimator, applied by
+    // `reconcileAnswerCeiling`; this function is only the search's upper bound, so
+    // it cannot drift from the estimator the way a second cost formula would.
+    expect(physicalAnswerCeiling(paid(400, 1n), [MODEL])).toBe(
+      physicalAnswerCeiling(paid(400, 10_000_000_000_000n), [MODEL])
     );
-    expect(result).toBeUndefined();
+  });
+});
+
+describe('sharedAnswerCeiling', () => {
+  // One cap that must fit EVERY model — the Smart Model slot's shape, where a
+  // single composite node's cap rides whichever candidate the classifier picks.
+  const paid = (chars: number, remainingNanoUsd: bigint): TurnBudget => ({
+    promptCharacterCount: chars,
+    funding: { remainingNanoUsd, kind: 'purchased' },
   });
 
-  it('keeps the budget ceiling when it sits below the provider completion cap', () => {
-    const result = turnMaxOutputTokens(
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
-      [pricingEntry(2000n, 10_000n, 1_000_000, 100_000)]
-    );
-    expect(result).toBe(56_573);
+  it('takes the tightest room across the models', () => {
+    // sibling a: headroom 100_000 − 100 = 99_900; sibling b: cap 9000.
+    expect(
+      sharedAnswerCeiling(paid(400, 100_000_000n), [
+        pricingEntry(2000n, 10_000n, 100_000),
+        pricingEntry(4000n, 20_000n, 50_000, 9000),
+      ])
+    ).toBe(9000);
   });
 
-  it('bounds the multi-model ceiling by the tightest sibling completion cap', () => {
-    // Same rates as the multi-model fixture (budget ceiling 19_207); the
-    // second sibling's cap 9000 is the binding output ceiling → omit at or
-    // past it, keep the budget below it.
-    const rich = turnMaxOutputTokens(
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
-      [pricingEntry(2000n, 10_000n, 100_000), pricingEntry(4000n, 20_000n, 50_000, 9000)]
-    );
-    expect(rich).toBeUndefined();
+  it('is undefined for an empty model list', () => {
+    expect(sharedAnswerCeiling(paid(400, 100_000_000n), [])).toBeUndefined();
   });
 
-  it('estimates zero input tokens for an empty prompt (legacy estimateTokensForTier)', () => {
-    // chars=0 → estInput=0; fixed = 0; effective = 600_000_000;
-    // maxOutputTokens = floor(600_000_000 / 10_600) = 56_603.
-    const result = turnMaxOutputTokens(
-      { promptCharacterCount: 0, funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' } },
-      [MODEL]
+  it('is the same as the per-node bound for a single model, where widest and tightest coincide', () => {
+    const one = [pricingEntry(2000n, 10_000n, 1_000_000, 8192)];
+    expect(sharedAnswerCeiling(paid(400, 100_000_000n), one)).toBe(
+      physicalAnswerCeiling(paid(400, 100_000_000n), one)
     );
-    expect(result).toBe(56_603);
   });
 });
 
@@ -872,10 +846,10 @@ describe('regular turn answer cap fits payer funds via the ONE estimator', () =>
   // Regression + one-implementation pin: the regular single/multi-model turn sizes
   // its answer cap through the SAME canonical admission estimator its hold is priced
   // by (`createEstimateRun` + `reconcileAnswerCeiling`), not a parallel per-rate cost
-  // formula. With tiny integer nano rates the per-rate markup rounds the 15% away, so
-  // the upper-bound guess (`turnMaxOutputTokens`) OVER-reserves past the payer's funds
-  // — the drift class that caused the 402s. The fit shrinks the cap until the estimator
-  // agrees, so "sized-to-fit" ⇒ "ceiling ≤ funds" by construction.
+  // formula. The upper bound it starts from is physical only
+  // (`physicalAnswerCeiling`), so the money question is asked exactly once; the fit
+  // shrinks the cap until the estimator agrees, which makes "sized-to-fit" ⇒
+  // "ceiling ≤ funds" by construction.
   const WIDE_MODELS = new Set(['wide-a', 'wide-b']);
   const wideResolver: ModelPricingResolver = (id) =>
     WIDE_MODELS.has(id) ? { ...descriptorFor(id), limits: { contextLength: 128_000 } } : undefined;
@@ -895,7 +869,7 @@ describe('regular turn answer cap fits payer funds via the ONE estimator', () =>
   it('fits a single-model turn cap so the estimator ceiling stays within the payer funds', () => {
     const { nodes, constraints } = createTurnCompileRegistries(wideResolver);
     const pricings = turnModelPricings(['wide-a'], wideResolver);
-    const guess = turnMaxOutputTokens(budget, pricings!);
+    const guess = physicalAnswerCeiling(budget, pricings!);
     expect(typeof guess).toBe('number');
     const built = buildSingleModelTurn({
       model: 'wide-a',
@@ -907,10 +881,8 @@ describe('regular turn answer cap fits payer funds via the ONE estimator', () =>
     const stamped = withStorageStamp(built, budget, CHAT_TURN_HOOKS);
     const fitted = reconcileAnswerCeiling(stamped, wideResolver, budget, guess);
     // Sized-to-fit ⇒ ceiling ≤ funds, by the same canonical estimator that
-    // prices the admission hold. (With billable catalog rates the sizing guess
-    // still applies its transitional per-rate markup — deleted by the
-    // port-conversion task — so the guess is conservative and the fit can only
-    // keep or shrink it, never inflate past funds.)
+    // prices the admission hold: the physical bound can only be kept or shrunk
+    // by the fit, never inflated past funds.
     expect(estimate(fitted)._unsafeUnwrap() <= spendable).toBe(true);
     const cap = modelCallCaps(fitted)[0];
     expect(typeof cap === 'number' && cap <= guess! && cap >= 1).toBe(true);
@@ -919,7 +891,7 @@ describe('regular turn answer cap fits payer funds via the ONE estimator', () =>
   it('fits a multi-model turn shared cap so the estimator ceiling stays within the payer funds', () => {
     const { nodes, constraints } = createTurnCompileRegistries(wideResolver);
     const pricings = turnModelPricings(['wide-a', 'wide-b'], wideResolver);
-    const guess = turnMaxOutputTokens(budget, pricings!);
+    const guess = physicalAnswerCeiling(budget, pricings!);
     expect(typeof guess).toBe('number');
     const built = buildMultiModelTurn({
       models: ['wide-a', 'wide-b'],
@@ -931,7 +903,9 @@ describe('regular turn answer cap fits payer funds via the ONE estimator', () =>
     const stamped = withStorageStamp(built, budget, CHAT_TURN_HOOKS);
     const fitted = reconcileAnswerCeiling(stamped, wideResolver, budget, guess);
     expect(estimate(fitted)._unsafeUnwrap() <= spendable).toBe(true);
-    // Every sibling carries the SAME fitted cap (legacy applied one value to all).
+    // Both siblings have the same physical room here, so the shared money-derived
+    // headroom lands identically on each; the heterogeneous case below is what shows
+    // the clamp is per sibling rather than one tightest-sibling value.
     const caps = modelCallCaps(fitted);
     expect(caps).toHaveLength(2);
     expect(new Set(caps).size).toBe(1);
@@ -939,12 +913,51 @@ describe('regular turn answer cap fits payer funds via the ONE estimator', () =>
     expect(typeof cap === 'number' && cap <= guess! && cap >= 1).toBe(true);
   });
 
-  it('floors the cap at 1 and stays over funds when even a one-token answer over-reserves', () => {
-    // Pins the fail-closed money-safety floor (`fitAnswerCapToCeiling` `!fits(1)` branch):
-    // a free-tier payer has no cushion, so 1 nano-USD of balance is 1 nano-USD spendable —
-    // below even a one-token answer's estimator ceiling. The fit cannot shrink the cap enough
-    // to fit, so it floors at 1 rather than under-reserve, and the sized definition is STILL
-    // priced above the payer's funds → admission's balance gate refuses the run.
+  it('gives a heterogeneous pair each sibling its own cap, so the tight one cannot truncate the wide one', () => {
+    // §Multi-Model 3. Rich purchased payer, so the money term does not bind and only
+    // the physical bounds decide: 400 chars at 4 chars/token = 100 input tokens, so
+    // wide-a keeps 128,000 − 100 = 127,900 while the tight sibling keeps
+    // min(4,000 cap, 4,000 − 100) = 3,900. One shared tightest-sibling cap would have
+    // stamped 3,900 on both and truncated the wide sibling by 124,000 tokens.
+    const mixedLimits = new Map<string, ModelDescriptor['limits']>([
+      ['wide-a', { contextLength: 128_000 }],
+      ['tight-a', { contextLength: 4000, maxOutputTokens: 4000 }],
+    ]);
+    const mixedResolver: ModelPricingResolver = (id) => {
+      const limits = mixedLimits.get(id);
+      return limits === undefined ? undefined : { ...descriptorFor(id), limits };
+    };
+    const richBudget: TurnBudget = {
+      promptCharacterCount: 400,
+      funding: { remainingNanoUsd: 5_000_000_000n, kind: 'purchased' },
+    };
+    const { nodes, constraints } = createTurnCompileRegistries(mixedResolver);
+    const models = ['wide-a', 'tight-a'];
+    const guess = physicalAnswerCeiling(richBudget, turnModelPricings(models, mixedResolver)!);
+    // The search's upper bound is the WIDEST room, not the tightest.
+    expect(guess).toBe(127_900);
+    const built = buildMultiModelTurn({
+      models,
+      nodes,
+      constraints,
+      maxOutputTokens: guess!,
+      promptInputTokens: promptInputTokensFor(richBudget),
+    })._unsafeUnwrap();
+    const stamped = withStorageStamp(built, richBudget, CHAT_TURN_HOOKS);
+    const fitted = reconcileAnswerCeiling(stamped, mixedResolver, richBudget, guess);
+    expect(modelCallCaps(fitted)).toEqual([127_900, 3900]);
+    // And the hold still fits: per-sibling clamping only ever lowers a cap.
+    const priced = createEstimateRun(mixedResolver)(fitted)._unsafeUnwrap();
+    expect(priced <= payerSpendableNanoUsd(richBudget)).toBe(true);
+  });
+
+  it('floors the cap at a minimum viable answer and stays over funds when even that over-reserves', () => {
+    // Pins the fail-closed money-safety floor: a free-tier payer has no cushion, so
+    // 1 nano-USD of balance is 1 nano-USD spendable — below even the smallest useful
+    // answer's estimator ceiling. §Affordability 6 makes a minimum viable answer THE
+    // minimum, so the fit stops there rather than offering a shorter one, and the
+    // sized definition is STILL priced above the payer's funds → admission's balance
+    // gate refuses the run.
     const { nodes, constraints } = createTurnCompileRegistries(wideResolver);
     const brokeBudget: TurnBudget = {
       promptCharacterCount: 400,
@@ -961,97 +974,10 @@ describe('regular turn answer cap fits payer funds via the ONE estimator', () =>
     })._unsafeUnwrap();
     const stamped = withStorageStamp(built, brokeBudget, CHAT_TURN_HOOKS);
     const fitted = reconcileAnswerCeiling(stamped, wideResolver, brokeBudget, guess);
-    // The cap floored at the minimum...
-    expect(modelCallCaps(fitted)[0]).toBe(1);
+    // The cap floored at the minimum viable answer...
+    expect(modelCallCaps(fitted)[0]).toBe(MINIMUM_OUTPUT_TOKENS);
     // ...and even that floored ceiling exceeds the payer's funds — fail closed, not silently under-reserved.
     expect(estimate(fitted)._unsafeUnwrap() > spendableBroke).toBe(true);
-  });
-});
-
-describe('answerHeadroomTokens', () => {
-  // Same rate fixture as `turnMaxOutputTokens`: fee-inclusive 2300 / 11_500,
-  // purchased variable 12_100 (output rate + 2 chars/token × 300 storage).
-  const MODEL = pricingEntry(2000n, 10_000n, 1_000_000);
-  const LOW_B = REASONING_BUDGET_TOKENS_BY_EFFORT.low;
-  const purchased: TurnBudget = {
-    promptCharacterCount: 400,
-    funding: { remainingNanoUsd: 100_000_000n, kind: 'purchased' },
-  };
-
-  it('subtracts the reasoning budget from the affordable output tokens (H = T − B)', () => {
-    // budgetMaxTokens = 56_573 (the turnMaxOutputTokens fixture); context
-    // headroom 999_900 does not bind → H = 56_573 − 4096 = 52_477.
-    expect(answerHeadroomTokens(purchased, [MODEL], LOW_B)).toBe(56_573 - LOW_B);
-  });
-
-  it('bounds B+H by the remaining context window for a rich payer (explicit cap, never dropped)', () => {
-    // context 10_000 − estInput 100 = 9900 remaining < the 56_573 budget →
-    // total 9900, H = 9900 − 4096 = 5804. (`turnMaxOutputTokens` drops the cap
-    // here; a reasoning call must keep an explicit one — G2.)
-    const result = answerHeadroomTokens(purchased, [pricingEntry(2000n, 10_000n, 10_000)], LOW_B);
-    expect(result).toBe(9900 - LOW_B);
-  });
-
-  it('returns undefined when the payer cannot afford B plus the minimum answer', () => {
-    // free minimum = 520_000 + (4096+1000)×11_200 ≈ 57.6M > 10M remaining.
-    const result = answerHeadroomTokens(
-      { promptCharacterCount: 400, funding: { remainingNanoUsd: 10_000_000n, kind: 'free' } },
-      [MODEL],
-      LOW_B
-    );
-    expect(result).toBeUndefined();
-  });
-
-  it('returns undefined when the context window cannot hold B plus one answer token', () => {
-    const result = answerHeadroomTokens(purchased, [pricingEntry(2000n, 10_000n, 4000)], LOW_B);
-    expect(result).toBeUndefined();
-  });
-
-  it('returns undefined for an empty model list', () => {
-    expect(answerHeadroomTokens(purchased, [], LOW_B)).toBeUndefined();
-  });
-
-  it('bounds B+H jointly by the provider completion cap (B + H ≤ maxOutputTokens)', () => {
-    // ceiling = min(budget 56_573, context headroom 999_900, cap 8192) = 8192
-    // → H = 8192 − 4096 = 4096, so the wire cap B+H lands exactly on the cap.
-    const result = answerHeadroomTokens(
-      purchased,
-      [pricingEntry(2000n, 10_000n, 1_000_000, 8192)],
-      LOW_B
-    );
-    expect(result).toBe(8192 - LOW_B);
-  });
-
-  it('keeps the budget bound when the provider completion cap is looser', () => {
-    const result = answerHeadroomTokens(
-      purchased,
-      [pricingEntry(2000n, 10_000n, 1_000_000, 100_000)],
-      LOW_B
-    );
-    expect(result).toBe(56_573 - LOW_B);
-  });
-
-  it('returns undefined when the provider completion cap cannot hold B plus one answer token', () => {
-    const result = answerHeadroomTokens(
-      purchased,
-      [pricingEntry(2000n, 10_000n, 1_000_000, LOW_B)],
-      LOW_B
-    );
-    expect(result).toBeUndefined();
-  });
-
-  it('bounds by the tightest sibling completion cap on a multi-model turn', () => {
-    // Two capped siblings: the tighter cap (6000) is the joint output
-    // ceiling → H = 6000 − 4096 = 1904.
-    const result = answerHeadroomTokens(
-      purchased,
-      [
-        pricingEntry(2000n, 10_000n, 1_000_000, 6000),
-        pricingEntry(2000n, 10_000n, 1_000_000, 8192),
-      ],
-      LOW_B
-    );
-    expect(result).toBe(6000 - LOW_B);
   });
 });
 
@@ -1219,14 +1145,15 @@ describe('reasoning answer cap fitting (B constant, H sized)', () => {
 
   it('fits the definition within the payer funds while preserving B and the wire', () => {
     const pricings = turnModelPricings(['wide-a'], reasoningResolver);
-    const guess = answerHeadroomTokens(budget, pricings!, LOW_B);
-    expect(typeof guess).toBe('number');
+    // The physical room LESS the constant reasoning budget: the searched quantity
+    // is the answer headroom H, and the wire cap is B + H.
+    const guess = physicalAnswerCeiling(budget, pricings!)! - LOW_B;
     const entry: TurnReasoningEntry = {
       effort: 'low',
       wire: ReasoningWire.parse({ effort: 'low' }),
       reasoningBudgetTokens: LOW_B,
     };
-    const stamped = builtWith(entry, guess!);
+    const stamped = builtWith(entry, guess);
     const fitted = reconcileAnswerCeiling(stamped, reasoningResolver, budget, guess);
     const estimate = createEstimateRun(reasoningResolver);
     const spendable = payerSpendableNanoUsd(budget);
@@ -1234,20 +1161,20 @@ describe('reasoning answer cap fitting (B constant, H sized)', () => {
     const cap = capOf(fitted);
     // B rides the cap as a constant term; only H shrank (or held).
     expect(cap - LOW_B).toBeGreaterThanOrEqual(1);
-    expect(cap - LOW_B).toBeLessThanOrEqual(guess!);
+    expect(cap - LOW_B).toBeLessThanOrEqual(guess);
     const answer = fitted.nodes.find((node) => node.type === 'modelCall');
     expect(answer?.type === 'modelCall' && answer.params['reasoning']).toEqual({ effort: 'low' });
   });
 
-  it('floors the answer headroom at 1 above B when even one answer token over-reserves', () => {
+  it('floors the answer headroom at a minimum viable answer above B when even that over-reserves', () => {
     const entry: TurnReasoningEntry = {
       effort: 'low',
       wire: ReasoningWire.parse({ effort: 'low' }),
       reasoningBudgetTokens: LOW_B,
     };
     const stamped = builtWith(entry, 1000);
-    const floored = fitAnswerCapToCeiling(stamped, reasoningResolver, 1000, 1n);
-    expect(capOf(floored)).toBe(LOW_B + 1);
+    const floored = fitAnswerCapToCeiling(stamped, reasoningResolver, 1000, 1n).definition;
+    expect(capOf(floored)).toBe(LOW_B + MINIMUM_OUTPUT_TOKENS);
   });
 
   it('re-derives B from a budget-native max_tokens wire when refitting', () => {
@@ -1257,8 +1184,8 @@ describe('reasoning answer cap fitting (B constant, H sized)', () => {
       reasoningBudgetTokens: LOW_B,
     };
     const stamped = builtWith(entry, 1000);
-    const floored = fitAnswerCapToCeiling(stamped, reasoningResolver, 1000, 1n);
-    expect(capOf(floored)).toBe(LOW_B + 1);
+    const floored = fitAnswerCapToCeiling(stamped, reasoningResolver, 1000, 1n).definition;
+    expect(capOf(floored)).toBe(LOW_B + MINIMUM_OUTPUT_TOKENS);
   });
 
   it('re-derives B as 0 from the hard-off wire when refitting', () => {
@@ -1268,8 +1195,8 @@ describe('reasoning answer cap fitting (B constant, H sized)', () => {
       reasoningBudgetTokens: 0,
     };
     const stamped = builtWith(entry, 1000);
-    const floored = fitAnswerCapToCeiling(stamped, reasoningResolver, 1000, 1n);
-    expect(capOf(floored)).toBe(1);
+    const floored = fitAnswerCapToCeiling(stamped, reasoningResolver, 1000, 1n).definition;
+    expect(capOf(floored)).toBe(MINIMUM_OUTPUT_TOKENS);
   });
 
   it('re-derives B positionally from a native non-canonical effort wire when refitting', () => {
@@ -1290,18 +1217,24 @@ describe('reasoning answer cap fitting (B constant, H sized)', () => {
       reasoningBudgetTokens: HIGH_B,
     };
     const stamped = builtWith(entry, 1000);
-    const floored = fitAnswerCapToCeiling(stamped, xhighResolver, 1000, 1n);
-    expect(capOf(floored)).toBe(HIGH_B + 1);
+    const floored = fitAnswerCapToCeiling(stamped, xhighResolver, 1000, 1n).definition;
+    expect(capOf(floored)).toBe(HIGH_B + MINIMUM_OUTPUT_TOKENS);
   });
 });
 
 describe('trialReasoningSelection', () => {
-  // Cheap-model rates on the 1¢ trial ceiling: only `low` leaves the minimum
-  // answer affordable on top of B (fee-inclusive variable ≈ 1203 nano/token).
+  // A trial turn persists nothing, so §Trial Usage gives it no storage term at all
+  // and the 1¢ ceiling buys purely provider tokens. Rates are therefore chosen so the
+  // MONEY term actually binds: at 1,500 billable nano per output token,
+  // `low` costs 3 × 1,000 + (4,096 + 1,000) × 1,500 = 7,647,000 nano and fits the
+  // 10,000,000-nano ceiling, while `medium` costs
+  // 3 × 1,000 + (12,288 + 1,000) × 1,500 = 19,935,000 and does not. A 2–3 nano
+  // fixture cannot tell the two apart — every level fits — so it would pin nothing.
   function trialDescriptor(reasoning?: ModelDescriptor['reasoning']): ModelDescriptor {
     return {
       ...descriptorFor('trial-model'),
       limits: { contextLength: 1_000_000 },
+      pricing: { inputPerToken: nanoUSD(1000n), outputPerToken: nanoUSD(1500n) },
       ...(reasoning === undefined ? {} : { reasoning }),
     };
   }
@@ -1390,19 +1323,19 @@ describe('reasoning budget re-derivation defensives', () => {
   }
 
   function flooredCap(resolver: ModelPricingResolver): unknown {
-    const floored = fitAnswerCapToCeiling(reasoningStamped(), resolver, 1000, 1n);
+    const floored = fitAnswerCapToCeiling(reasoningStamped(), resolver, 1000, 1n).definition;
     const answer = floored.nodes.find((node) => node.type === 'modelCall');
     return answer?.type === 'modelCall' ? answer.params['maxOutputTokens'] : undefined;
   }
 
   it('treats an unresolvable model as B=0 when refitting', () => {
     // The shared KNOWN_MODELS resolver does not know 'wide-a'.
-    expect(flooredCap(resolver)).toBe(1);
+    expect(flooredCap(resolver)).toBe(MINIMUM_OUTPUT_TOKENS);
   });
 
   it('treats an effort wire on a non-reasoning descriptor as B=0 when refitting', () => {
     expect(flooredCap((id) => ({ ...descriptorFor(id), limits: { contextLength: 128_000 } }))).toBe(
-      1
+      MINIMUM_OUTPUT_TOKENS
     );
   });
 });

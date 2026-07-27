@@ -218,10 +218,17 @@ function fullLadder(wireFor: (label: CanonicalReasoningEffort) => ReasoningWire)
  * - Enumerated `supportedEfforts` (upstream DESCENDING order): count N =
  *   non-`none` entries; the N-rung label ladder zips against the reversed
  *   (ascending) natives, so High is always the strongest offered word.
- *   N=0 → nothing; N=1 with `mandatory` → nothing (single option, no off —
- *   no choice exists); a vocabulary beyond five rungs keeps the strongest
+ *   N=0 → nothing; a vocabulary beyond five rungs keeps the strongest
  *   five (the ruling defines ladders only to five; truncation drops the
  *   weakest extras so Max stays the true top).
+ *
+ * A model with ONE native word and mandatory reasoning offers that one rung
+ * here — no choice to make, but a rung with a real budget. It must be priced,
+ * because the provider will spend that budget whether or not a menu shows it:
+ * grading such a model at the minimum-answer floor sells a turn whose entire
+ * ceiling goes to thinking (§Predicates' "never on an unreachable zero"). The
+ * absence of a CHOICE is derived where it matters — a one-option dimension buys
+ * no classifier call (§Reasoning Effort 5) — never by hiding the rung.
  * - `null` (every effort accepted, none enumerated) → the full ladder over
  *   the gateway's universal effort words.
  * - Absent `supportedEfforts` (budget-native) → the full ladder as clamped
@@ -245,7 +252,6 @@ export function offeredLevels(model: ReasoningPlanModel): readonly OfferedLevel[
   }
   const natives = supportedEfforts.filter((effort) => effort !== 'none');
   if (natives.length === 0) return [];
-  if (natives.length === 1 && reasoning.mandatory === true) return [];
   const shown = natives.slice(0, CANONICAL_REASONING_EFFORTS.length);
   const ascending = shown.toReversed();
   return ladderFor(shown.length).map((label, position) => ({

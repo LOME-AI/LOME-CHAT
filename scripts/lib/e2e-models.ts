@@ -31,6 +31,7 @@
  * a seeded turn always references a model the live catalog exposes and the
  * picker can render.
  */
+import { and, isNull } from 'drizzle-orm';
 import { ModelDescriptor, callShapeFamilyFor } from '@hushbox/shared';
 import { modelCatalog, type Database } from '@hushbox/db';
 import { E2E_MODELS, E2E_SEEDED_IMAGE_MODEL_ID } from './e2e-model-ids.js';
@@ -70,9 +71,13 @@ function isExposed(descriptor: ModelDescriptor, family: CallShapeFamily | undefi
  */
 function validateE2eModel(id: string, bucket: keyof E2eModelSet, raw: unknown): string | undefined {
   if (raw === undefined) {
+    // Two causes now reach here: no row at all, and a row the catalog read
+    // filtered as unsellable. Naming both keeps a soft-deleted id from being
+    // debugged as a failed refresh.
     return (
-      `e2e model '${id}' is not in the live OpenRouter catalog — ` +
-      'update E2E_MODELS, or the catalog refresh failed'
+      `e2e model '${id}' is not sellable in the live OpenRouter catalog — either ` +
+      'absent, or soft-deleted (excluded_reason) or admin-disabled — update ' +
+      'E2E_MODELS, or the catalog refresh failed'
     );
   }
   const parsed = ModelDescriptor.safeParse(raw);
@@ -97,18 +102,28 @@ function validateE2eModel(id: string, bucket: keyof E2eModelSet, raw: unknown): 
   return undefined;
 }
 
-/** Whole-table read of `model_catalog`, folded to the stored descriptor per id. */
-async function readCatalogDescriptors(db: Database): Promise<Map<string, unknown>> {
+/**
+ * The SELLABLE rows of `model_catalog`, folded to the stored descriptor per id.
+ * The two unsellable authorities are filtered in the QUERY, not in `isExposed`:
+ * both are row columns rather than descriptor fields, so a marked row keeps a
+ * perfectly valid descriptor — ZDR-reachable, priced, strict-family — and would
+ * otherwise satisfy every predicate below while `/models` hid it. Filtering here
+ * also keeps the filter off `isExposed`, which is already a replica.
+ */
+async function readSellableDescriptors(db: Database): Promise<Map<string, unknown>> {
   const rows = await db
     .select({ modelId: modelCatalog.modelId, descriptor: modelCatalog.descriptor })
-    .from(modelCatalog);
+    .from(modelCatalog)
+    .where(and(isNull(modelCatalog.excludedReason), isNull(modelCatalog.adminDisabledAt)));
   return new Map(rows.map((row) => [row.modelId, row.descriptor]));
 }
 
 /**
- * Fail-loud guard: every `E2E_MODELS` id must be a row in `model_catalog` whose
- * stored descriptor is (1) EXPOSED (the `isExposed` predicate above — mere row
- * presence let a hidden model slip through) AND (2) in the call-shape family its
+ * Fail-loud guard: every `E2E_MODELS` id must be a SELLABLE row of `model_catalog`
+ * (the query filter in the read above — a soft-deleted or admin-disabled row is
+ * hidden from `/models` while its descriptor stays valid) whose stored descriptor
+ * is (1) EXPOSED (the `isExposed` predicate above — mere row presence let a hidden
+ * model slip through) AND (2) in the call-shape family its
  * bucket requires (`text`→language, `image`→image, `video`→video). Family
  * agreement catches a language-family model (e.g. `["image","text"]`) sitting in
  * the image bucket, which the send path would refuse. Any failure lists which id
@@ -116,7 +131,7 @@ async function readCatalogDescriptors(db: Database): Promise<Map<string, unknown
  * the catalog can't back.
  */
 export async function assertE2eModelsPresent(db: Database): Promise<void> {
-  const byId = await readCatalogDescriptors(db);
+  const byId = await readSellableDescriptors(db);
 
   const failures: string[] = [];
   for (const bucket of ['text', 'image', 'video'] as const) {
@@ -141,7 +156,7 @@ export async function assertE2eModelsPresent(db: Database): Promise<void> {
  * with the `image` bucket so the exposure + strict-family legs stay identical.
  */
 export async function assertSeededImageModelPresent(db: Database): Promise<void> {
-  const byId = await readCatalogDescriptors(db);
+  const byId = await readSellableDescriptors(db);
   const failure = validateE2eModel(
     E2E_SEEDED_IMAGE_MODEL_ID,
     'image',

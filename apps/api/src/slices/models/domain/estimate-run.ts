@@ -3,6 +3,7 @@ import {
   ESTIMATED_IMAGE_BYTES,
   ESTIMATED_VIDEO_BYTES_PER_SECOND,
   STORAGE_COST_PER_CHARACTER_NANO,
+  VALUE_STORE_BYTE_BUDGET_BYTES,
   callShapeFamilyFor,
   nanoUSD,
   smartModelClassifierDimensions,
@@ -218,18 +219,6 @@ interface ModelCeilingCall {
    */
   readonly promptInputTokens?: number;
 }
-
-/**
- * Mirror of the workflows engine's `VALUE_STORE_BYTE_BUDGET_BYTES` (the 20 MB
- * in-memory ValueStore ceiling, assuming a ≥3× real-memory multiplier). Kept
- * local because the models domain cannot import it: a direct reach into
- * `workflows/engine` breaks the slice boundary, and importing the workflows
- * barrel would create a bidirectional slice dependency (workflows already
- * depends on models via the injected `estimateRun`). The single-source fix is
- * to hoist the constant into `@hushbox/shared`; until then this copy MUST stay
- * in sync with the engine's value.
- */
-const VALUE_STORE_BYTE_BUDGET_BYTES = 20 * 1024 * 1024;
 
 /**
  * The minimum plausible video bitrate (bits/second) below which no realistic

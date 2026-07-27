@@ -36,8 +36,7 @@ export type {
 export { refreshCatalog } from './refresh.js';
 export { upsertCatalog } from './catalog-store.js';
 export type { UpsertCatalogParams } from './catalog-store.js';
-export { DESCRIPTOR_VERSION, EXCLUDE_REASONS } from './normalize.js';
-export type { ExcludeReason } from './normalize.js';
+export { DESCRIPTOR_VERSION } from './normalize.js';
 export { findTierLockedModel } from './tier-gate.js';
 export {
   TRIAL_MESSAGE_COST_CAP_NANO_USD,

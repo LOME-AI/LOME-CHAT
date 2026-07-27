@@ -17,7 +17,7 @@
  * identifiers only.
  */
 
-import { MINIMUM_OUTPUT_TOKENS } from './constants.js';
+import { MINIMUM_OUTPUT_TOKENS, OUTLIER_COST_MULTIPLE } from './constants.js';
 import { dimensionSupportFor } from './dimensions/derive.js';
 import { cheapestEffortOption, EFFORT_DIMENSION } from './dimensions/effort.js';
 import {
@@ -28,6 +28,7 @@ import {
 import { priceRequest } from './estimate/price-request.js';
 import { evaluateManifest } from './estimate/reducers.js';
 import { STORAGE_COST_PER_CHARACTER_NANO } from './estimate/storage-rate.js';
+import { nanoPercentile } from './percentile.js';
 import { promptCharsOf } from './turn-types.js';
 import type { OptionId } from './dimensions/index.js';
 import type { NanoLineItem } from './estimate/types.js';
@@ -128,18 +129,28 @@ export interface CostContext {
 }
 
 /**
- * One sibling's billable manifest, straight from the canonical estimator. This
- * is the ONLY construction of a per-sibling manifest in the turn producer: the
- * priced total and the line items a surface can read are two readings of this
- * one list, never two derivations of the same amount.
+ * What a cost prices against, with the tier already resolved to its storage
+ * ratio. {@link CostContext} is the tier-shaped view of the same thing: the tier
+ * is a way of NAMING a ratio, and the two callers that hold one but not the other
+ * must still price through one implementation.
+ */
+interface LineItemBasis {
+  readonly inputTokens: number;
+  readonly inputChars: number;
+  /** `outputCharsPerToken(tier)` — the output-storage ratio. */
+  readonly outputCharsPerToken: number;
+  readonly persists: boolean;
+}
+
+/**
+ * The ONE line-item construction in the turn producer, straight from the
+ * canonical estimator: the priced total and the line items a surface can read are
+ * two readings of this one list, never two derivations of the same amount.
  *
  * Storage items are dropped outright on a turn that does not persist — the
  * `kind !== 'storage'` filter is the mechanism, and nothing else.
  */
-export function siblingLineItems(
-  model: PriceableModel,
-  context: CostContext
-): readonly NanoLineItem[] {
+function lineItemsFor(model: PriceableModel, basis: LineItemBasis): readonly NanoLineItem[] {
   const priced = priceRequest({
     models: [
       {
@@ -149,15 +160,28 @@ export function siblingLineItems(
         },
       },
     ],
-    inputTokens: BigInt(context.inputTokens),
-    inputChars: context.persists ? context.inputChars : 0,
-    outputCharsPerToken: outputCharsPerTokenForTier(context.tier),
+    inputTokens: BigInt(basis.inputTokens),
+    inputChars: basis.persists ? basis.inputChars : 0,
+    outputCharsPerToken: basis.outputCharsPerToken,
   });
   /* v8 ignore next -- a PriceableModel always prices: both rates are present and
      every count above is a validated non-negative integer */
   if (!priced.ok) return [];
-  if (context.persists) return priced.value.items;
+  if (basis.persists) return priced.value.items;
   return priced.value.items.filter((item) => item.kind !== 'storage');
+}
+
+/** One sibling's billable manifest, at the payer's tier. */
+export function siblingLineItems(
+  model: PriceableModel,
+  context: CostContext
+): readonly NanoLineItem[] {
+  return lineItemsFor(model, {
+    inputTokens: context.inputTokens,
+    inputChars: context.inputChars,
+    outputCharsPerToken: outputCharsPerTokenForTier(context.tier),
+    persists: context.persists,
+  });
 }
 
 /**
@@ -223,6 +247,114 @@ export interface CeilingBounds {
 export function ceilingTokens(model: PriceableModel, bounds: CeilingBounds): number {
   const providerCap = model.providerCap ?? model.contextLength;
   return Math.max(0, Math.min(providerCap, bounds.contextHeadroomTokens, bounds.sharedTokens));
+}
+
+/**
+ * The token count `maxCallCost(m)` prices: `min(providerCap(m),
+ * contextHeadroom(m))` — what the model can physically emit and what the prompt
+ * leaves free, with NO money bound. Dropping `budgetBuys` is what makes the
+ * quantity balance-independent, and therefore what makes the outlier set
+ * reproducible from the catalog and the prompt size alone.
+ */
+export function maxCallCostTokens(model: PriceableModel, inputTokens: number): number {
+  const providerCap = model.providerCap ?? model.contextLength;
+  return Math.max(0, Math.min(providerCap, contextHeadroomTokens(model, inputTokens)));
+}
+
+/**
+ * What a call's cost depends on once the funding is out of it. Deliberately NOT a
+ * full {@link CostContext} in two ways: `inputChars` has no place here, because
+ * §Cost defines `cost(m, tokens)` without a prompt-storage term — that term is a
+ * once-per-turn fixed cost, not part of what a call on `m` costs — and the
+ * storage ratio arrives directly, so a caller holding one without a tier prices
+ * through this same implementation instead of inverting the tier mapping.
+ */
+export type CallCostBasis = Omit<LineItemBasis, 'inputChars'>;
+
+/** {@link CallCostBasis} for a payer at a tier. */
+export function callCostBasisForTier(
+  inputTokens: number,
+  tier: UserTier,
+  persists: boolean
+): CallCostBasis {
+  return { inputTokens, outputCharsPerToken: outputCharsPerTokenForTier(tier), persists };
+}
+
+/**
+ * `maxCallCost(m)` = `cost(m, min(providerCap(m), contextHeadroom(m)))` — the
+ * most a call on `m` could ever cost for this prompt. Money-only,
+ * balance-independent and independent of the payer.
+ *
+ * It is the quantity the Smart Model pool is ORDERED by and the quantity the
+ * outlier test measures, and those are the same number for one reason: the hold
+ * is a `MAX` over the pool, so the most a call could cost is precisely what a
+ * candidate's presence imposes on every other candidate (§Smart Model 1, 3).
+ */
+export function maxCallCostNanoUsd(model: PriceableModel, basis: CallCostBasis): bigint {
+  return evaluateManifest(
+    { items: lineItemsFor(model, { ...basis, inputChars: 0 }) },
+    BigInt(maxCallCostTokens(model, basis.inputTokens)),
+    { scope: 'all-in' }
+  );
+}
+
+/**
+ * The priceable catalog pool of §Predicates: every model with a usable rate and
+ * a usable cap FOR THIS PROMPT. A model the prompt leaves no room for has no
+ * usable cap, so it leaves the pool rather than ranking at zero and dragging the
+ * median down. A `PriceableModel` carries both rates by construction, so the cap
+ * is the only test left to make.
+ */
+function priceablePool(
+  pool: readonly PriceableModel[],
+  basis: CallCostBasis
+): readonly PriceableModel[] {
+  return pool.filter((model) => maxCallCostTokens(model, basis.inputTokens) > 0);
+}
+
+/** The middle of the sample. Named so the percentile call reads as the median. */
+const MEDIAN_PERCENTILE = 0.5;
+
+/**
+ * `median(maxCallCost)` over the priceable catalog pool — NOT over the eligible
+ * pool. Taking it over the eligible set would make it balance-dependent: a
+ * low-balance payer would compute a different median, a different exclusion set,
+ * and a pool that is no longer reproducible from the catalog (§Smart Model 3).
+ * `undefined` when nothing in the pool prices.
+ */
+export function medianMaxCallCostNanoUsd(
+  pool: readonly PriceableModel[],
+  basis: CallCostBasis
+): bigint | undefined {
+  return nanoPercentile(
+    priceablePool(pool, basis).map((model) => maxCallCostNanoUsd(model, basis)),
+    MEDIAN_PERCENTILE
+  );
+}
+
+/**
+ * `outlier(m)` — the ids whose `maxCallCost` exceeds `OUTLIER_COST_MULTIPLE ×
+ * median(maxCallCost)`. STRICTLY greater, so a model sitting exactly at the
+ * multiple stays in.
+ *
+ * These ids leave the classifier-selectable set only. Nothing here removes a
+ * model from the product: an excluded model stays explicitly selectable, and the
+ * exclusion exists because the hold is a `MAX` over the pool — an extreme
+ * candidate is not a free option, it is an option that taxes the others
+ * (§Smart Model 3).
+ */
+export function outlierModelIds(
+  pool: readonly PriceableModel[],
+  basis: CallCostBasis
+): ReadonlySet<string> {
+  const median = medianMaxCallCostNanoUsd(pool, basis);
+  if (median === undefined) return new Set();
+  const threshold = OUTLIER_COST_MULTIPLE * median;
+  return new Set(
+    priceablePool(pool, basis)
+      .filter((model) => maxCallCostNanoUsd(model, basis) > threshold)
+      .map((model) => model.modelId)
+  );
 }
 
 /** Whether the model offers any rung of the effort dimension at all. */

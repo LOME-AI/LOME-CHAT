@@ -4,12 +4,12 @@
 // name (and dev-mode secret-shaped values) into the bundle this credential-free
 // public origin serves.
 import {
-  parseParentToFrameMessage,
   type ErrorMessage,
   type FrameToParentMessage,
-  type ReadyMessage,
   type ResultMessage,
 } from '@hushbox/shared/documents';
+import { connectToEmbedder } from '../embedder-channel.js';
+import { applyFrameTheme } from '../frame-theme.js';
 import { neutralizeWebRtc } from '../neutralize-webrtc.js';
 import { classifyPythonError, INPUT_UNSUPPORTED_MARKER } from './error-classification.js';
 
@@ -140,20 +140,15 @@ let currentRequestId = '';
 let runSettled = false;
 let loadDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
 
-/**
- * This frame's end of the channel it handed the embedder. Closure-scoped inside
- * the bundle's IIFE and never published on `window`, so untrusted document code
- * sharing this realm cannot reach it — the port is the capability, and holding
- * it is what the embedder's authority consists of.
- */
-let embedderPort: MessagePort | undefined;
+/** This page's end of the bridge, held from the handshake in `startPythonRuntime`. */
+let sendToEmbedder: ((message: FrameToParentMessage) => void) | undefined;
 
 /** Post a typed message back to the embedding app. */
 function post(message: FrameToParentMessage): void {
   // Every sender runs downstream of a message that arrived on the port, so an
-  // unset port here is a broken bootstrap, not a state to tolerate.
-  if (embedderPort === undefined) throw new Error('no embedder port: bootstrap did not run');
-  embedderPort.postMessage(message);
+  // unset sender here is a broken bootstrap, not a state to tolerate.
+  if (sendToEmbedder === undefined) throw new Error('no embedder port: bootstrap did not run');
+  sendToEmbedder(message);
 }
 
 /**
@@ -289,29 +284,22 @@ async function execute(requestId: string): Promise<void> {
   }
 }
 
-/**
- * Mint the channel, take its receiving end, and hand the other to the embedder.
- *
- * No `window` message listener is installed, and that absence is the security
- * property: the only way into this frame is the port, which reaches whoever the
- * `ready` transfer handed it to and nobody else.
- */
+/** Hand the embedder a port and answer what arrives on it. */
 export function startPythonRuntime(): void {
-  const channel = new MessageChannel();
-  embedderPort = channel.port1;
-  // Holding the other end of this channel is the embedder's authority, and it is
-  // unforgeable: a document sharing this realm has no way to obtain the port and
-  // no window listener to post at. A port event carries no sender origin to
-  // check either way (`event.origin` is always empty), so the parse below is
-  // input validation on a channel whose holder is already trusted — not the
-  // thing that decides whom to trust.
-  channel.port1.addEventListener('message', (event: MessageEvent) => {
-    const parsed = parseParentToFrameMessage(event.data);
-    if (!parsed.success) return;
-    const message = parsed.data;
+  sendToEmbedder = connectToEmbedder((message) => {
+    // A restyle applies the frame's appearance and nothing else: the stashed
+    // code and any run in flight are untouched.
+    if (message.type === 'theme') {
+      applyFrameTheme(message);
+      return;
+    }
     // Python requires an explicit Run: `init` only stashes the code, `run`
     // executes it. `stop` is handled by the parent tearing down the frame.
     if (message.type === 'init' && message.kind === 'python') {
+      // The appearance is the frame's own, so this page takes it as the renderer
+      // page does. It takes only that: this page paints no preview of its own,
+      // so the renderer's layout rules would have nothing to size here.
+      applyFrameTheme(message);
       pendingCode = message.code;
       return;
     }
@@ -319,17 +307,6 @@ export function startPythonRuntime(): void {
       void execute(message.requestId);
     }
   });
-  // A port delivers nothing until it is started, and `addEventListener` (unlike
-  // assigning `onmessage`) does not start it implicitly. Started before the
-  // transfer, so anything the embedder sends immediately is queued, not dropped.
-  channel.port1.start();
-  // The one broadcast this page makes, sent once per frame instance. It cannot
-  // be narrowed: an opaque frame genuinely cannot learn its embedder's origin
-  // (it is capacitor://localhost on mobile), and `parent` names exactly one
-  // window regardless. The payload is a bare type tag; the capability is the port.
-  const ready: ReadyMessage = { type: 'ready' };
-  // eslint-disable-next-line sonarjs/post-message -- intentional '*' to an unknowable embedder origin; payload is a bare type tag
-  parent.postMessage(ready, '*', [channel.port2]);
 }
 
 // Close the WebRTC egress channel before any document code can run. This classic

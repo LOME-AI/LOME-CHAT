@@ -2,7 +2,7 @@ import { Redis } from '@upstash/redis';
 import { LOCAL_NEON_DEV_CONFIG, createDb } from '@hushbox/db';
 import { createEnvUtilities } from '@hushbox/shared';
 import { FINGERPRINT_CODES, createRequestTelemetry } from './lib/telemetry/index.js';
-import { OPENROUTER_BASE_URL } from './slices/models/index.js';
+import { OPENROUTER_BASE_URL, createCatalogSightingRecorder } from './slices/models/index.js';
 import {
   createBillingAuditProbes,
   createLedgerConservationEntry,
@@ -97,6 +97,7 @@ export function cronEntriesFor(cron: string, deps: CronDependencies): CronEntry[
         gatewayBaseUrl: deps.gatewayBaseUrl,
         telemetry: deps.telemetry,
         now: deps.now,
+        recordSighting: createCatalogSightingRecorder(deps.db),
         jitter: deps.refreshJitter,
         // Production keeps the 6-connection cap; dev refreshes fan out wider.
         endpointConcurrency: createEnvUtilities(deps.env).isProduction ? 6 : 30,

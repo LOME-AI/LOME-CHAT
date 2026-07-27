@@ -1185,6 +1185,6 @@ describe('wire message assembly (system + history)', () => {
       now: fixedClock,
     });
     await collect(adapter.infer(textRequest('What is the capital of France?'), testDescriptor()));
-    expect(descriptorHash(await requestToDescriptor(call.request()))).toBe('db959d833936e56f');
+    expect(descriptorHash(await requestToDescriptor(call.request()))).toBe('4a56488739e04a99');
   });
 });

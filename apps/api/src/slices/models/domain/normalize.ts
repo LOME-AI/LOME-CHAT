@@ -11,7 +11,12 @@ import {
 } from '@hushbox/shared/affordability';
 import { isNonConversational } from './non-chat-exclusions.js';
 import { usdRateToNanoUsd } from './usd-rate.js';
-import type { Modality, ModelDescriptor, ParamSpec as ParameterSpec } from '@hushbox/shared';
+import type {
+  ExcludeReason,
+  Modality,
+  ModelDescriptor,
+  ParamSpec as ParameterSpec,
+} from '@hushbox/shared';
 import type {
   GatewayModelMetadata,
   ImageMetadata,
@@ -42,38 +47,6 @@ export type DescriptorContent = Omit<
  * pre-fee provider rates and are refused by the catalog read path.
  */
 export const DESCRIPTOR_VERSION = '2';
-
-/** Every reason a model is kept out of the catalog, in the order the refresh
- * summary lists them (quiet, expected exclusions first; the loud fail-closed
- * defects last). `unclassifiable-modality`, `unknown-pricing-unit`, and
- * `missing-release-date` are fail-closed defects that alert; `deprecated`,
- * `token-priced-image`, `token-priced-video`, `non-zdr` (only ZDR-reachable
- * models are persisted), `non-conversational` (specialty code-tooling and
- * moderation models — see `non-chat-exclusions.ts`), `non-runnable-shape`
- * (a merged descriptor no turn can run — multi-output, or no text input — see
- * `isRunnableModelShape`), and the three commercial reasons `zero-priced`,
- * `below-price-floor` and `too-old` (BILLING.md §Catalog Admission — a model
- * that cannot be sold profitably) are expected shapes — counted, never paged.
- * Single-sources both the {@link ExcludeReason} union and the per-reason
- * summary breakdown. */
-export const EXCLUDE_REASONS = [
-  'token-priced-image',
-  'token-priced-video',
-  'megapixel-priced-image',
-  'missing-pricing',
-  'zero-priced',
-  'below-price-floor',
-  'too-old',
-  'deprecated',
-  'non-zdr',
-  'non-conversational',
-  'non-runnable-shape',
-  'unclassifiable-modality',
-  'missing-release-date',
-  'unknown-pricing-unit',
-] as const;
-
-export type ExcludeReason = (typeof EXCLUDE_REASONS)[number];
 
 /**
  * The per-refresh inputs a single model's commercial admission depends on but

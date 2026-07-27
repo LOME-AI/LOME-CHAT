@@ -17,12 +17,10 @@ export {
   buildTurnDefinition,
   createTurnCompileRegistries,
   trialReasoningSelection,
-  turnMaxOutputTokens,
   turnModelPricings,
 } from './turn-definition.js';
 export type { MediaTurnModality, TurnBudget, TurnModelPricing } from './turn-definition.js';
 export {
-  answerMaxOutputTokens,
   buildAutoEffortTurnDefinition,
   buildSmartModelTurn,
   buildSmartModelTurnDefinition,

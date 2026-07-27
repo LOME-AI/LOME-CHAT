@@ -1,17 +1,21 @@
 import { z } from 'zod';
 
 /**
- * The wire protocol between the app (parent window) and the sandbox-origin
- * iframe that renders and runs untrusted document code. Defined once here and
- * imported by both sides: the app never re-types these shapes, and the renderer
- * pages validate every inbound message against the same schemas. Message
- * identity is carried by a `type` discriminant so a single `message` listener
- * can route without inspecting other fields.
+ * The wire protocol between the app and the sandbox-origin iframe that renders
+ * and runs untrusted document code. Defined once here and imported by both
+ * sides: the app never re-types these shapes, and the renderer pages validate
+ * every inbound message against the same schemas. Message identity is carried
+ * by a `type` discriminant so one intake can route without inspecting other
+ * fields.
  *
- * The parent origin is never trusted: the renderer validates message *shape*
- * with these schemas and does not authenticate the sender by origin string
- * (the embedding shell may be `capacitor://localhost` on mobile). Shape
- * validation is the contract; origin is not part of it.
+ * Messages ride a `MessageChannel`: the frame mints it and transfers one port
+ * to its embedder on a one-shot `ready` broadcast, and all later traffic in
+ * both directions goes over that port — the frame registers no `window` message
+ * listener. Possession of the port is therefore the authority. A port message
+ * carries no sender origin to check (`event.origin` is always empty), and an
+ * origin string could not serve as the check in any case: a sandboxed frame's
+ * origin is opaque and the embedding shell may be `capacitor://localhost` on
+ * mobile. These schemas validate payload shape; they are not authentication.
  */
 
 /**
@@ -25,6 +29,64 @@ export const RunnableDocumentKind = z.enum(RUNNABLE_DOCUMENT_KINDS);
 
 /** A document kind that executes inside the sandbox iframe. */
 export type RunnableDocumentKind = z.infer<typeof RunnableDocumentKind>;
+
+/**
+ * The two colour schemes a frame can take. This is the standard CSS
+ * `color-scheme` keyword, not an app token: it is what makes the browser draw
+ * its own furniture — form controls, scrollbars, and a document's own
+ * `Canvas`/`CanvasText` colours — to match, which no colour value can do.
+ *
+ * The embedder states it because the frame is cross-origin and cannot read
+ * which theme the app is showing; `prefers-color-scheme` reports the OS
+ * preference, which is wrong whenever the reader has overridden it in the app.
+ */
+export const DOCUMENT_THEMES = ['light', 'dark'] as const;
+
+/** Zod schema for a frame colour scheme. */
+export const DocumentTheme = z.enum(DOCUMENT_THEMES);
+
+/** The colour scheme the embedder asks the frame to take. */
+export type DocumentTheme = z.infer<typeof DocumentTheme>;
+
+/**
+ * A colour the embedder paints the frame with, as six hex digits.
+ *
+ * The frame writes these into a stylesheet, so the pattern is load-bearing
+ * rather than tidiness: `;`, `{` and `}` are what a value would need to close
+ * the declaration and open a rule of its own, and none of them is a hex digit —
+ * so a colour can only ever be a colour. The app's theme tokens are all plain
+ * six-digit hex, so the pattern is exact rather than lossy; widening it (for
+ * `oklch()`, say) is a deliberate change that must still exclude those three
+ * characters.
+ */
+export const DocumentColour = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+
+/** A resolved colour the embedder paints the frame with. */
+export type DocumentColour = z.infer<typeof DocumentColour>;
+
+/**
+ * The appearance the embedder asks the frame to take: the colour scheme plus the
+ * colours themselves.
+ *
+ * The colours cross the wire rather than being written into the frame because
+ * the frame is a separate, credential-free origin that cannot read the app's CSS
+ * custom properties. A palette compiled into its bundle would be a copy of the
+ * app's tokens that nothing keeps honest — the failure is a frame whose canvas
+ * no longer matches the panel around it, which no test can see. Its parent can
+ * read those tokens and is already sending a message, so it sends the values.
+ *
+ * Every field is optional because the app and the sandbox origin deploy
+ * separately: an embedder that predates a field must keep working, and an
+ * unstated field means "leave that part of the appearance alone".
+ */
+export const FrameAppearance = z.object({
+  theme: DocumentTheme.optional(),
+  background: DocumentColour.optional(),
+  foreground: DocumentColour.optional(),
+});
+
+/** The appearance the embedder asks the frame to take. */
+export type FrameAppearance = z.infer<typeof FrameAppearance>;
 
 /**
  * Closed set of error codes the frame reports. A closed enum lets the app switch
@@ -104,16 +166,41 @@ export type ResultOutput = z.infer<typeof ResultOutput>;
 
 // ── parent → frame ──────────────────────────────────────────────────────────
 
-/** Load a document into the frame: render html/js/react, or arm python for Run. */
+/**
+ * Load a document into the frame: render html/js/react, or arm python for Run.
+ *
+ * It carries the appearance so a frame that has just been created is painted
+ * before anything is shown in it, rather than flashing the browser's default
+ * canvas first. Changing the appearance of a frame that already holds a document
+ * is `theme` below — never a repeated `init`, which would restart the document.
+ */
 export const InitMessage = z.object({
   type: z.literal('init'),
   kind: RunnableDocumentKind,
   code: z.string(),
   requestId: z.string().min(1),
+  ...FrameAppearance.shape,
 });
 
 /** A parent→frame `init` message. */
 export type InitMessage = z.infer<typeof InitMessage>;
+
+/**
+ * Restyle the frame, leaving whatever it is running untouched.
+ *
+ * This exists as its own message because the alternative does damage: `init` is
+ * how a document is loaded, so restating the appearance through it would unmount
+ * the running document and re-execute it from the top — a reader toggling the
+ * app's theme would lose the state of whatever was on screen. This message names
+ * no request and carries no code, so there is nothing for the frame to run.
+ */
+export const ThemeMessage = z.object({
+  type: z.literal('theme'),
+  ...FrameAppearance.shape,
+});
+
+/** A parent→frame `theme` message. */
+export type ThemeMessage = z.infer<typeof ThemeMessage>;
 
 /** Explicit request to execute a previously-`init`'d python document. */
 export const RunMessage = z.object({
@@ -141,6 +228,7 @@ export const ParentToFrameMessage = z.discriminatedUnion('type', [
   InitMessage,
   RunMessage,
   StopMessage,
+  ThemeMessage,
 ]);
 
 /** A message the app sends into the frame. */
@@ -240,7 +328,8 @@ export type FrameToParentMessage = z.infer<typeof FrameToParentMessage>;
 /**
  * Validate an inbound parent→frame message. Returns a Zod safe-parse result and
  * never throws — the renderer must ignore anything it does not recognise rather
- * than fault on a stray `postMessage` from an unrelated source.
+ * than fault on it. Whoever holds the port is already the trusted embedder, so
+ * this guards against a payload the two sides disagree about, not an attacker.
  */
 export function parseParentToFrameMessage(
   data: unknown

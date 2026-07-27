@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  EXCLUDE_REASONS,
   FEEDBACK_KINDS,
   FEEDBACK_STATUSES,
   LEDGER_ENTRY_KINDS,
@@ -27,6 +28,7 @@ import {
   memberPrivilegeEnum,
   messageSenderTypeEnum,
   modalityEnum,
+  modelExcludeReasonEnum,
   newsletterConsentSourceEnum,
   newsletterDeliveryStatusEnum,
   newsletterIssueStatusEnum,
@@ -52,6 +54,7 @@ const ALL_ENUMS = [
   memberPrivilegeEnum,
   messageSenderTypeEnum,
   modalityEnum,
+  modelExcludeReasonEnum,
   newsletterConsentSourceEnum,
   newsletterDeliveryStatusEnum,
   newsletterIssueStatusEnum,
@@ -78,6 +81,10 @@ describe('pgEnums', () => {
     expect(memberPrivilegeEnum.enumValues).toEqual([...MEMBER_PRIVILEGES]);
     // Byte-identical to the deployed pg enum — a drift here would generate a migration.
     expect(memberPrivilegeEnum.enumValues).toEqual(['read', 'write', 'admin', 'owner']);
+  });
+
+  it('derives model-exclude-reason values from the single shared EXCLUDE_REASONS source', () => {
+    expect(modelExcludeReasonEnum.enumValues).toEqual([...EXCLUDE_REASONS]);
   });
 
   it('derives feedback-kind values from the single shared FEEDBACK_KINDS source', () => {

@@ -1,4 +1,4 @@
-import { MediaValue } from '@hushbox/shared';
+import { MediaValue, VALUE_STORE_BYTE_BUDGET_BYTES } from '@hushbox/shared';
 import { err, ok } from '../../../lib/result/index.js';
 import type { Result } from '../../../lib/result/index.js';
 
@@ -8,14 +8,12 @@ import type { Result } from '../../../lib/result/index.js';
  * deliberately preserved even though the in-memory implementation is a
  * passthrough — a future durable executor (R2-ref-based) plugs in here
  * without touching a single node.
+ *
+ * The metered ceiling ({@link VALUE_STORE_BYTE_BUDGET_BYTES}) assumes a ≥3×
+ * real-memory multiplier over these counted bytes (SDK base64
+ * dual-materialization, UTF-16 text, the replay buffer) inside the shared
+ * ~128 MB isolate.
  */
-
-/**
- * The metered ceiling assumes a ≥3× real-memory multiplier over these
- * counted bytes (SDK base64 dual-materialization, UTF-16 text, the replay
- * buffer) inside the shared ~128 MB isolate.
- */
-export const VALUE_STORE_BYTE_BUDGET_BYTES = 20 * 1024 * 1024;
 
 export interface ValueBudgetExceeded {
   readonly usedBytes: number;

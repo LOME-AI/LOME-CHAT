@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { E2E_MODELS, assertE2eModelsPresent, assertSeededImageModelPresent } from './e2e-models.js';
 import { E2E_SEEDED_IMAGE_MODEL_ID } from './e2e-model-ids.js';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import type { Database } from '@hushbox/db';
+import type { SQL } from 'drizzle-orm';
 
 // `assertE2eModelsPresent` reads `model_catalog` and validates every E2E id is
 // exposed and in its strict call-shape family. Here a fake `db.select().from()`
@@ -43,8 +45,30 @@ function validRows(): { modelId: string; descriptor: unknown }[] {
   );
 }
 
+/**
+ * The SQL of the WHERE clause the last catalog read applied. A fake handle
+ * cannot enforce SQL semantics, so the sellability filter is pinned on the query
+ * the guard actually builds.
+ */
+let lastWhereSql = '';
+
+/**
+ * The chain deliberately requires `.where(...)` and resolves nowhere else, so an
+ * unfiltered catalog read fails every test in this file rather than only the one
+ * asserting the clause.
+ */
 function fakeDb(rows: { modelId: string; descriptor: unknown }[]): Database {
-  return { select: () => ({ from: () => Promise.resolve(rows) }) } as unknown as Database;
+  lastWhereSql = '';
+  return {
+    select: () => ({
+      from: () => ({
+        where: (condition: SQL): Promise<typeof rows> => {
+          lastWhereSql = new PgDialect().sqlToQuery(condition).sql;
+          return Promise.resolve(rows);
+        },
+      }),
+    }),
+  } as unknown as Database;
 }
 
 describe('assertE2eModelsPresent', () => {
@@ -52,10 +76,21 @@ describe('assertE2eModelsPresent', () => {
     await expect(assertE2eModelsPresent(fakeDb(validRows()))).resolves.toBeUndefined();
   });
 
+  it('reads only sellable rows, so a soft-deleted or kill-switched id cannot pass', async () => {
+    await assertE2eModelsPresent(fakeDb(validRows()));
+    // Asserted whole, not by substring: `or(...)` renders both of these null
+    // checks too, and a disjunction would admit a soft-deleted row whose kill
+    // switch happens to be clear — the exact regression this guard exists to
+    // catch. Only the connective distinguishes them.
+    expect(lastWhereSql).toBe(
+      '("model_catalog"."excluded_reason" is null and "model_catalog"."admin_disabled_at" is null)'
+    );
+  });
+
   it('throws when an id is absent from the catalog', async () => {
     const rows = validRows().filter((row) => row.modelId !== E2E_MODELS.text[0]);
     await expect(assertE2eModelsPresent(fakeDb(rows))).rejects.toThrow(
-      'is not in the live OpenRouter catalog'
+      'is not sellable in the live OpenRouter catalog'
     );
   });
 
@@ -140,7 +175,7 @@ describe('assertSeededImageModelPresent', () => {
 
   it('throws when the seeded row is absent', async () => {
     await expect(assertSeededImageModelPresent(fakeDb([]))).rejects.toThrow(
-      'is not in the live OpenRouter catalog'
+      'is not sellable in the live OpenRouter catalog'
     );
   });
 

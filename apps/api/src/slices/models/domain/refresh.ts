@@ -1,13 +1,16 @@
+import { EXCLUDE_REASONS } from '@hushbox/shared';
 import { canonicalJson } from '../../../lib/idempotency/index.js';
 import { ResultAsync, err, ok, okAsync } from '../../../lib/result/index.js';
 import { readLatestDescriptorRows, upsertCatalog } from './catalog-store.js';
 import { fetchGatewayCatalog } from './gateway-metadata.js';
-import { EXCLUDE_REASONS, normalizeCatalog } from './normalize.js';
+import { normalizeCatalog } from './normalize.js';
 import type { Database } from '@hushbox/db';
+import type { ExcludeReason } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
+import type { RecordCatalogSighting } from '../ports/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { StoredDescriptorRow } from './catalog-store.js';
-import type { CatalogEntry, ExcludeReason } from './normalize.js';
+import type { CatalogEntry } from './normalize.js';
 import type { Result } from '../../../lib/result/index.js';
 
 /**
@@ -31,6 +34,9 @@ export interface RefreshCatalogDeps {
   readonly gatewayBaseUrl: string;
   readonly telemetry: Telemetry;
   readonly now: () => Date;
+  /** The soft-delete write: marks, unmarks, and advances `last_seen_at` on rows
+   * the descriptor upsert does not rewrite. */
+  readonly recordSighting: RecordCatalogSighting;
   readonly jitter?: RefreshJitter;
   /** Image-endpoints N+1 fan-out width. Callers set it from the environment
    * (`createEnvUtilities(env).isProduction ? 6 : 30`) — dev raises it so a cold
@@ -149,6 +155,69 @@ function alertPricingFallbacks(
 
 type ModelDisposition = 'written' | 'unchanged' | 'excluded';
 
+/**
+ * Soft-delete an id the admission rules rejected (BILLING.md §Catalog Admission
+ * 4). Marked, never created: a model that was never admissible has no row and no
+ * buildable descriptor to write one from, so there is nothing to write. Every
+ * reason still reaches the column, because any of them can newly apply to a
+ * model that already has a row — which is exactly what this marks.
+ */
+async function markExcluded(
+  deps: RefreshCatalogDeps,
+  modelId: string,
+  reason: ExcludeReason,
+  latest: ReadonlyMap<string, StoredDescriptorRow>
+): Promise<Result<void, DomainError>> {
+  if (!latest.has(modelId)) return ok();
+  const marked = await deps.recordSighting({
+    modelId,
+    seenAt: deps.now(),
+    excludedReason: reason,
+  });
+  return marked.isErr() ? err(marked.error) : ok();
+}
+
+/** Persist one admitted model: rewrite the descriptor, or — when the content and
+ * rank are unchanged — only re-sight the row, which advances `last_seen_at` and
+ * clears any stale mark so a model can return without a descriptor change. */
+async function persistAdmitted(
+  deps: RefreshCatalogDeps,
+  entry: Extract<CatalogEntry, { kind: 'normalized' }>,
+  latest: Map<string, StoredDescriptorRow>,
+  newRank: number | null
+): Promise<Result<ModelDisposition, DomainError>> {
+  const stored = latest.get(entry.modelId);
+  if (shouldSkipWrite(stored, canonicalJson(entry.content), newRank)) {
+    const seen = await deps.recordSighting({
+      modelId: entry.modelId,
+      seenAt: deps.now(),
+      excludedReason: null,
+    });
+    return seen.isErr() ? err(seen.error) : ok('unchanged');
+  }
+  const fetchedAt = deps.now();
+  const upsert = await upsertCatalog(deps.db, {
+    modelId: entry.modelId,
+    content: entry.content,
+    fetchedAt,
+    popularityRank: newRank,
+  });
+  if (upsert.isErr()) return err(upsert.error);
+  // Belt-and-suspenders: dedupe already makes every id unique here, but keep
+  // the in-memory latest coherent so a repeated id compares against the
+  // just-written content and rank, never the stale pre-refresh row.
+  latest.set(entry.modelId, {
+    catalogId: '',
+    descriptor: { ...entry.content, fetchedAt: fetchedAt.getTime() },
+    // The upsert never touches the kill switch; carry the pre-refresh value.
+    adminDisabledAt: stored?.adminDisabledAt ?? null,
+    // Writing a descriptor is an admission, so the upsert cleared the mark.
+    excludedReason: null,
+    popularityRank: newRank,
+  });
+  return ok('written');
+}
+
 async function persistCatalog(
   deps: RefreshCatalogDeps,
   entries: readonly CatalogEntry[],
@@ -162,35 +231,19 @@ async function persistCatalog(
       alertExcluded(deps.telemetry, entry.modelId, entry.reason);
       counts.excluded += 1;
       excludedByReason[entry.reason] += 1;
+      const marked = await markExcluded(deps, entry.modelId, entry.reason, latest);
+      if (marked.isErr()) return err(marked.error);
       continue;
     }
     alertPricingFallbacks(deps.telemetry, entry.modelId, entry.pricingFallbacks);
-    const contentJson = canonicalJson(entry.content);
-    const newRank = rankByModelId.get(entry.modelId) ?? null;
-    const stored = latest.get(entry.modelId);
-    if (shouldSkipWrite(stored, contentJson, newRank)) {
-      counts.unchanged += 1;
-      continue;
-    }
-    const fetchedAt = deps.now();
-    const upsert = await upsertCatalog(deps.db, {
-      modelId: entry.modelId,
-      content: entry.content,
-      fetchedAt,
-      popularityRank: newRank,
-    });
-    if (upsert.isErr()) return err(upsert.error);
-    // Belt-and-suspenders: dedupe already makes every id unique here, but keep
-    // the in-memory latest coherent so a repeated id compares against the
-    // just-written content and rank, never the stale pre-refresh row.
-    latest.set(entry.modelId, {
-      catalogId: '',
-      descriptor: { ...entry.content, fetchedAt: fetchedAt.getTime() },
-      // The upsert never touches the kill switch; carry the pre-refresh value.
-      adminDisabledAt: stored?.adminDisabledAt ?? null,
-      popularityRank: newRank,
-    });
-    counts.written += 1;
+    const persisted = await persistAdmitted(
+      deps,
+      entry,
+      latest,
+      rankByModelId.get(entry.modelId) ?? null
+    );
+    if (persisted.isErr()) return err(persisted.error);
+    counts[persisted.value] += 1;
   }
   return ok({ discovered: entries.length, ...counts, excludedByReason });
 }

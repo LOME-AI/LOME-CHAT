@@ -126,16 +126,19 @@ describe('classifierWorstCaseNanoUsd', () => {
 });
 
 describe('buildSmartModelCandidates', () => {
-  it('sorts candidates ascending by combined base price with the cheapest as classifier', () => {
+  it('orders candidates by turn cost and drops the pool`s high-cost outlier', () => {
     const result = buildSmartModelCandidates({
       descriptors: [BIG, CHEAP, MID],
       balanceNanoUsd: HUGE_BALANCE,
     });
+    // The engine is the cheapest per token, on a prompt-independent order.
     expect(result?.classifierModelId).toBe('cheap/model');
+    // big/model's `maxCallCost` is 4,000,000n against the pool median's 20,000n —
+    // 200× — so it leaves the classifier-selectable set (§Smart Model 3). It is
+    // not removed from the product: an explicit pick still runs it.
     expect(result?.candidates.map((candidate) => candidate.id)).toEqual([
       'cheap/model',
       'mid/model',
-      'big/model',
     ]);
   });
 
@@ -383,6 +386,9 @@ describe('pickEffortClassifier', () => {
       contextLength: 1000,
     });
     expect(pickEffortClassifier([tieA, tieB], BIG)?.classifierModelId).toBe('tie-a/model');
+    // The same answer from the reversed read: the tiebreak is what makes the
+    // engine independent of the order the catalog rows arrive in.
+    expect(pickEffortClassifier([tieB, tieA], BIG)?.classifierModelId).toBe('tie-a/model');
   });
 
   it('returns null when no priceable engine-text model exists to classify with', () => {

@@ -4,6 +4,30 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>HushBox document renderer</title>
+    <!--
+      The panel gives this frame its size, and the document has to be able to
+      fill it. Without an unbroken height chain from the root down, every
+      percentage height below resolves against nothing and the document collapses
+      to its own content — a strip at the top of an otherwise empty panel, which
+      the renderer still reports as a successful render.
+
+      `min-height` on the root, never `height`: a document taller than the frame
+      has to scroll rather than be cut off at the fold. The colours are not here
+      — they are the embedder's, which this cross-origin page cannot read, so it
+      is sent them and the bootstrap paints them; that is also what lets a
+      restyle land on a live frame without disturbing what is running in it.
+    -->
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+
+      #document-root {
+        min-height: 100%;
+      }
+    </style>
   </head>
   <body>
     <!--

@@ -13,12 +13,19 @@ import type {
 /**
  * The Smart Model candidate menu for one paid send: the ELIGIBLE subset of the
  * exposed text catalog for this payer, each entry carrying its OWN affordable
- * answer cap `cap(m)`, sorted ascending by combined per-token base price, with the
- * cheapest doubling as the classifier model (and the runtime fallback). Pure over
+ * answer cap `cap(m)`, ordered ascending by `maxCallCost`, with the cheapest model
+ * PER TOKEN running the classification. Pure over
  * an exposed-catalog snapshot plus the payer's effective balance. The affordability
  * gate lives ONCE in the shared money layer ({@link admitSmartModel}), so the
  * client affordability preflight and this server admission builder can never
  * disagree (the biconditional).
+ *
+ * The menu carries the pool MINUS its high-cost outliers (`outlier(m)`, BILLING.md
+ * §Smart Model 3): the hold is a MAX over the candidates, so one extreme candidate
+ * would set the hold for every turn the pool appears in and shrink what every other
+ * candidate can do. An excluded model is not removed from the product — an explicit
+ * pick still runs it, and the exclusion is balance-independent, taken over the
+ * priceable catalog pool rather than the eligible subset.
  *
  * The menu is BALANCE-DEPENDENT: a candidate is eligible iff it can afford at least
  * `MINIMUM_OUTPUT_TOKENS` of answer at its own rate after the classifier reserve
@@ -82,11 +89,14 @@ export interface SmartModelCandidateEntry {
 }
 
 export interface SmartModelCandidates {
-  /** The cheapest text candidate — the classifier model and runtime fallback. */
+  /** The cheapest text model per token — the model that RUNS the classification.
+   * Not necessarily one of `candidates`: the two ride different orders, and an
+   * enormous-capacity model can be both the cheapest per token and an outlier. */
   readonly classifierModelId: string;
-  /** The ELIGIBLE subset (each affords ≥ MINIMUM answer), ascending by price,
-   * each carrying its own `maxOutputTokens = cap(m)`. The classifier can only
-   * route among these, so no unaffordable model is ever reachable. */
+  /** The ELIGIBLE subset (each affords ≥ MINIMUM answer) minus the pool's
+   * outliers, ascending by `maxCallCost`, each carrying its own
+   * `maxOutputTokens = cap(m)`. The classifier can only route among these, so no
+   * unaffordable model is ever reachable. */
   readonly candidates: readonly SmartModelCandidateEntry[];
   /** The classifier reserve every candidate's cap was sized against. */
   readonly classifierWorstCaseNanoUsd: bigint;
@@ -136,12 +146,19 @@ export function classifierWorstCaseNanoUsd(
   return items?.find((item) => item.kind === 'provider')?.fixedNano;
 }
 
+/**
+ * The engine order: combined per-token rate, IDENTIFIER tiebreak. The tiebreak is
+ * load-bearing rather than tidy — the catalog read is a whole-table select, so
+ * without it two equally cheap models would let database row order decide which
+ * model classifies every `auto` turn (§Smart Model 1).
+ */
 export function ascendingByPrice(a: ModelDescriptor, b: ModelDescriptor): number {
   const left = combinedRate(a);
   const right = combinedRate(b);
   if (left < right) return -1;
   if (left > right) return 1;
-  return 0;
+  if (a.id < b.id) return -1;
+  return a.id > b.id ? 1 : 0;
 }
 
 /** One descriptor → the id/description candidate entry the trial derivation stamps. */

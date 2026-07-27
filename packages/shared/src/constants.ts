@@ -31,6 +31,17 @@ export const MEDIA_DOWNLOAD_URL_TTL_SECONDS = 300;
 /** Maximum bytes for a single-PUT R2 upload via the Worker. Multipart is not supported. */
 export const MAX_MEDIA_OBJECT_BYTES = 250_000_000; // 250 MB
 
+/**
+ * Byte budget for the workflow engine's in-memory ValueStore — the ceiling every
+ * mid-flow value of one run shares, assuming a ≥3× real-memory multiplier over the
+ * metered size. It lives here because two slices must agree on it: the engine
+ * meters against it, and admission's media size gate refuses a declaration that
+ * could not possibly fit it. Neither may reach into the other (the models domain
+ * cannot import `workflows/engine`, and a workflows-barrel import would make the
+ * dependency bidirectional), so the shared package is the one home.
+ */
+export const VALUE_STORE_BYTE_BUDGET_BYTES = 20 * 1024 * 1024;
+
 /** Minimum video duration users can request, in seconds. */
 export const MIN_VIDEO_DURATION_SECONDS = 1;
 

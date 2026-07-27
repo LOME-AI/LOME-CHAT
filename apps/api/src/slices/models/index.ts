@@ -8,7 +8,6 @@ export {
   createModelPricingResolver,
   DESCRIPTOR_VERSION,
   dispatchFamilyFor,
-  EXCLUDE_REASONS,
   estimateRunCeilingNanoUsd,
   findAdminDisabledModel,
   findTierLockedModel,
@@ -36,7 +35,6 @@ export type {
   CallShapeFamily,
   CallUsage,
   DeclaredCeiling,
-  ExcludeReason,
   EstimateRun,
   ListDescriptorsDeps,
   ModelPricingResolver,
@@ -65,6 +63,7 @@ export {
   parseMockDirectives,
 } from './adapters/mock-provider.js';
 export type { MockDirectives } from './adapters/mock-provider.js';
+export { createCatalogSightingRecorder } from './adapters/catalog-lifecycle.js';
 export { disableModelWithinTx, enableModelWithinTx } from './adapters/catalog-admin.js';
 export type { DisableModelOutcome, EnableModelOutcome } from './adapters/catalog-admin.js';
 export { OPENROUTER_BASE_URL } from './adapters/openrouter-provider.js';
@@ -77,9 +76,11 @@ export {
 export type { CallShape, CreateModelProviderOptions, DispatchTable } from './adapters/dispatch.js';
 export type { InferenceErrorCode } from './adapters/inference-error.js';
 export type {
+  CatalogSighting,
   InferOptions,
   ModelProvider,
   ProviderToolSpec,
+  RecordCatalogSighting,
   ToolDefinition,
   ToolLoopOptions,
   ToolRegistry,

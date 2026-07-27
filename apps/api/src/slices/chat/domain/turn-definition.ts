@@ -9,7 +9,6 @@ import {
   spendableFundsNanoUsd,
   textTag,
 } from '@hushbox/shared';
-import { computeSafeMaxTokens } from '@hushbox/shared/affordability/budget';
 import { MINIMUM_OUTPUT_TOKENS } from '@hushbox/shared/affordability/constants';
 import { turnEffortOptions } from '@hushbox/shared/affordability/estimate/effort-options';
 import {
@@ -31,10 +30,14 @@ import {
   createEstimateRun,
   createModelPricingResolver,
 } from '../../models/index.js';
-import { STORAGE_COST_PER_CHARACTER_NANO } from '../../billing/index.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
-import { CHAT_TURN_HOOKS, CHAT_TURN_INPUT, CHAT_TURN_NODE_ID } from './constants.js';
+import {
+  CHAT_TURN_HOOKS,
+  CHAT_TURN_INPUT,
+  CHAT_TURN_NODE_ID,
+  TRIAL_TURN_HOOKS,
+} from './constants.js';
 import { requiredReasoningEntryFor, resolveTurnReasoning } from './turn-reasoning.js';
 import type { TurnReasoningByModel, TurnReasoningEntry } from './turn-reasoning.js';
 import type { PayerFunding } from './turn-context.js';
@@ -143,58 +146,6 @@ export interface TurnModelPricing {
 }
 
 /**
- * The per-turn affordable output-token ceiling — the legacy budget derivation
- * (`calculateBudget` → `computeSafeMaxTokens`) replicated in nano-USD bigint:
- *   - input tokens = ceil(chars / charsPerToken), 4 chars/token for a
- *     purchased payer (legacy paid) and 2 for a free payer (legacy
- *     conservative), zero for zero chars;
- *   - fixed cost = input tokens × Σ billable input rates + chars ×
- *     storage rate; variable cost/token = Σ billable output rates +
- *     output-storage chars/token (tier-inverted: 2 paid, 4 free) × storage
- *     rate × model count;
- *   - effective funds = remaining + the $0.50 cushion (purchased only);
- *   - below the 1000-token minimum-output threshold the ceiling is omitted —
- *     legacy denied such sends upstream; here the uncapped full-context hold
- *     makes admission refuse, the new tree's one balance gate;
- *   - `computeSafeMaxTokens` drops the cap when it covers the remaining
- *     context window (the model default applies).
- * Rates arrive BILLABLE from the catalog (fees baked at ingestion) and sum
- * as-is — the same fee-inclusive prices legacy fed the same math, with no
- * fee application here. Multi-model sums rates across
- * models and caps against the MIN context length — legacy computed ONE shared
- * value for all slots. The quotient is a token count, never money.
- */
-/** The billable rate sums plus the tightest context window and tightest
- * provider completion cap across the turn's models. */
-interface SummedTurnPricing {
-  readonly sumInputRate: bigint;
-  readonly sumOutputRate: bigint;
-  readonly minContextLength: number;
-  /** The tightest sibling `maxOutputTokens`; undefined when no model carries
-   * one (each capless model is already bounded by `minContextLength`). */
-  readonly minMaxOutputTokens: number | undefined;
-}
-
-function summedTurnPricing(models: readonly TurnModelPricing[]): SummedTurnPricing {
-  let sumInputRate = 0n;
-  let sumOutputRate = 0n;
-  let minContextLength = models[0]?.contextLength ?? 0;
-  let minMaxOutputTokens: number | undefined;
-  for (const model of models) {
-    sumInputRate += model.inputPerTokenNanoUsd;
-    sumOutputRate += model.outputPerTokenNanoUsd;
-    if (model.contextLength < minContextLength) minContextLength = model.contextLength;
-    if (
-      model.maxOutputTokens !== undefined &&
-      (minMaxOutputTokens === undefined || model.maxOutputTokens < minMaxOutputTokens)
-    ) {
-      minMaxOutputTokens = model.maxOutputTokens;
-    }
-  }
-  return { sumInputRate, sumOutputRate, minContextLength, minMaxOutputTokens };
-}
-
-/**
  * The user tier the shared token estimators key on, from the payer's funding
  * kind: 'purchased' → paid (4 chars/token input), everything else → free (the
  * conservative 2 chars/token). Single-sourced so the output-ceiling and the
@@ -254,8 +205,8 @@ export function withStorageStamp(
 }
 
 /**
- * The turn's estimated prompt input-token count — the exact figure
- * `turnMaxOutputTokens` prices the input leg at — stamped onto language nodes so
+ * The turn's estimated prompt input-token count — the same figure the answer
+ * ceiling measures its context headroom against — stamped onto language nodes so
  * admission bounds the input leg at the actual prompt rather than the full
  * context window.
  */
@@ -263,95 +214,57 @@ export function promptInputTokensFor(budget: TurnBudget): number {
   return estimateTokensForTier(tierForFunding(budget.funding), budget.promptCharacterCount);
 }
 
-/** The per-turn cost basis both output-token derivations price against. */
-interface TurnCostBasis {
-  readonly estimatedInputTokens: number;
-  readonly fixedCost: bigint;
-  readonly variableCostPerToken: bigint;
-  readonly minContextLength: number;
-  readonly minMaxOutputTokens: number | undefined;
-  readonly effective: bigint;
+/**
+ * One model's PHYSICAL answer room: `min(providerCap, contextHeadroom)` — what it
+ * can emit and what the prompt leaves free (BILLING §Model bounds). An absent
+ * catalog completion cap falls back to the context window, per the same section.
+ * Floored at one token so a prompt that overruns the window still yields a
+ * searchable bound and the balance gate is what refuses the run.
+ */
+function modelAnswerRoom(model: TurnModelPricing, inputTokens: number): number {
+  const providerCap = model.maxOutputTokens ?? model.contextLength;
+  return Math.max(1, Math.min(providerCap, model.contextLength - inputTokens));
 }
 
-function turnCostBasis(budget: TurnBudget, models: readonly TurnModelPricing[]): TurnCostBasis {
-  const tier = tierForFunding(budget.funding);
-  const chars = budget.promptCharacterCount;
-  const estimatedInputTokens = estimateTokensForTier(tier, chars);
-  const outputCharsPerToken = outputCharsPerTokenForTier(tier);
-  const { sumInputRate, sumOutputRate, minContextLength, minMaxOutputTokens } =
-    summedTurnPricing(models);
-  const fixedCost =
-    BigInt(estimatedInputTokens) * sumInputRate + BigInt(chars) * STORAGE_COST_PER_CHARACTER_NANO;
-  const variableCostPerToken =
-    sumOutputRate +
-    BigInt(outputCharsPerToken) * STORAGE_COST_PER_CHARACTER_NANO * BigInt(models.length);
-  return {
-    estimatedInputTokens,
-    fixedCost,
-    variableCostPerToken,
-    minContextLength,
-    minMaxOutputTokens,
-    effective: payerSpendableNanoUsd(budget),
-  };
-}
-
-export function turnMaxOutputTokens(
+/**
+ * The WIDEST sibling's physical room — the upper bound of the fit's search on a
+ * turn whose nodes each clamp themselves. It must be the widest, not the
+ * tightest: a shared tightest-sibling bound would let a small-context sibling
+ * truncate a large-context one, which §Multi-Model 3 forbids. Each node's own
+ * room is applied by {@link withAnswerCap}, so nothing here caps one sibling by
+ * another's limits.
+ *
+ * There is NO money term. The money bound is whatever the canonical admission
+ * estimator accepts, applied by {@link fitAnswerCapToCeiling}, so there is
+ * exactly one cost formula on the money path. A rate-bearing bound here would be
+ * a second one, and at integer nano rates the two rounded differently — the drift
+ * that caused live 402 refusals.
+ *
+ * Undefined for an empty model set: nothing to bound.
+ */
+export function physicalAnswerCeiling(
   budget: TurnBudget,
   models: readonly TurnModelPricing[]
 ): number | undefined {
   if (models.length === 0) return undefined;
-  const basis = turnCostBasis(budget, models);
-  const minimumCost = basis.fixedCost + BigInt(MINIMUM_OUTPUT_TOKENS) * basis.variableCostPerToken;
-  if (basis.effective < minimumCost) return undefined;
-
-  const budgetMaxTokens = Number((basis.effective - basis.fixedCost) / basis.variableCostPerToken);
-  return computeSafeMaxTokens({
-    budgetMaxTokens,
-    modelContextLength: basis.minContextLength,
-    estimatedInputTokens: basis.estimatedInputTokens,
-    ...(basis.minMaxOutputTokens === undefined
-      ? {}
-      : { modelMaxOutputTokens: basis.minMaxOutputTokens }),
-  });
+  const inputTokens = promptInputTokensFor(budget);
+  return Math.max(...models.map((model) => modelAnswerRoom(model, inputTokens)));
 }
 
 /**
- * The answer headroom H a reasoning turn can afford: total affordable output
- * tokens (budget-bounded AND context-bounded) minus the reasoning budget B —
- * the completion cap the call carries is then `B + H` (the shared plan's
- * `maxTokens`), so admission prices the output leg at exactly `B + H`.
- *
- * Two deliberate divergences from {@link turnMaxOutputTokens}: the context
- * bound is applied EXPLICITLY (never dropped for a rich payer — a reasoning
- * call always sends `max_tokens`, G2), and the minimum-output affordability
- * gate counts B on top of the minimum answer (the reasoning tokens are billed
- * output too). Undefined = the level does not fit this payer's ceiling; the
- * caller decides the refusal (trial refuses the level, the paid path holds
- * `B + MINIMUM_OUTPUT_TOKENS` and lets admission's balance gate refuse).
+ * The TIGHTEST room across the models — the bound for one cap that must fit every
+ * one of them. That is the Smart Model slot's shape: a single composite node
+ * carries one answer cap that rides whichever candidate the classifier picks, so
+ * it cannot exceed any candidate's own limits. Distinct from
+ * {@link physicalAnswerCeiling}, whose consumers clamp per node.
  */
-export function answerHeadroomTokens(
+export function sharedAnswerCeiling(
   budget: TurnBudget,
-  models: readonly TurnModelPricing[],
-  reasoningBudgetTokens: number
+  models: readonly TurnModelPricing[]
 ): number | undefined {
   if (models.length === 0) return undefined;
-  const basis = turnCostBasis(budget, models);
-  const minimumCost =
-    basis.fixedCost +
-    BigInt(reasoningBudgetTokens + MINIMUM_OUTPUT_TOKENS) * basis.variableCostPerToken;
-  if (basis.effective < minimumCost) return undefined;
-  const budgetMaxTokens = Number((basis.effective - basis.fixedCost) / basis.variableCostPerToken);
-  const contextHeadroom = basis.minContextLength - basis.estimatedInputTokens;
-  // B and H share the model's completion pool, so the provider completion cap
-  // bounds B + H JOINTLY (BILLING §Affordability 5): the total output ceiling
-  // is min(budget, context headroom, tightest sibling cap), and H is what
-  // remains after the constant B.
-  const totalOutputCeiling =
-    basis.minMaxOutputTokens === undefined
-      ? Math.min(budgetMaxTokens, contextHeadroom)
-      : Math.min(budgetMaxTokens, contextHeadroom, basis.minMaxOutputTokens);
-  const headroom = totalOutputCeiling - reasoningBudgetTokens;
-  return headroom >= 1 ? headroom : undefined;
+  const inputTokens = promptInputTokensFor(budget);
+  return Math.min(...models.map((model) => modelAnswerRoom(model, inputTokens)));
 }
 
 /**
@@ -376,14 +289,19 @@ function nodeReasoningBudgetTokens(node: Node, resolveModel: ModelPricingResolve
 /**
  * Clones a turn definition with a new answer output-token cap on every
  * answer-producing node — the sizing probe's single mutation point, shared by
- * the single-model, multi-model, and Smart Model turns (a multi-model turn's
- * siblings all take the SAME cap, as legacy applied one value to every slot; the
- * Smart Model turn's one composite node takes it on its answer leg). Only the
+ * the single-model, multi-model, and Smart Model turns. Only the
  * `maxOutputTokens` param changes; every other node field and the definition's
  * storage stamp are preserved, so the probe prices exactly the run that will be
  * admitted. A definition is homogeneous in its answer nodes, so a media turn
  * (whose modelCall nodes carry generation params, never an output-token cap) is
  * never fit — the fit runs only for the text single/multi and Smart turns.
+ *
+ * The shared money-derived answer headroom lands on every sibling, but each
+ * `modelCall` node then CLAMPS it by its own physical room (§Multi-Model 3: a
+ * tight-context sibling must not constrain a large-context one). A `smartModel`
+ * node has no single model to clamp against — its one cap rides whichever
+ * candidate the classifier picks — so its bound arrives already tightened to the
+ * narrowest candidate (`sharedAnswerCeiling`).
  */
 function withAnswerCap(
   definition: WorkflowDefinition,
@@ -398,15 +316,32 @@ function withAnswerCap(
             ...node,
             params: {
               ...node.params,
-              // The wire cap is the node's constant reasoning budget plus the
-              // sized answer headroom (B + H); B is 0 on a reasoning-free node,
-              // so the cap is the answer tokens exactly as before.
-              maxOutputTokens: answerTokens + nodeReasoningBudgetTokens(node, resolveModel),
+              maxOutputTokens: nodeAnswerCap(node, answerTokens, resolveModel),
             },
           }
         : node
     ),
   };
+}
+
+/**
+ * One node's wire cap: its constant reasoning budget B plus the shared answer
+ * headroom H, clamped by the node's own physical room. B is 0 on a reasoning-free
+ * node, so the cap is the answer tokens alone there.
+ */
+function nodeAnswerCap(
+  node: Node,
+  answerTokens: number,
+  resolveModel: ModelPricingResolver
+): number {
+  const requested = answerTokens + nodeReasoningBudgetTokens(node, resolveModel);
+  if (node.type !== 'modelCall') return requested;
+  // The node's own limits, read through the ONE catalog reader, so a clamp here
+  // and a bound derived at build time cannot disagree. An unpriceable model has
+  // no room to read — the estimator refuses that definition outright.
+  const [pricing] = turnModelPricings([node.model], resolveModel) ?? [];
+  if (pricing === undefined) return requested;
+  return Math.min(requested, modelAnswerRoom(pricing, node.promptInputTokens ?? 0));
 }
 
 /**
@@ -417,20 +352,23 @@ function withAnswerCap(
  * authority for answer sizing (there is no second turn cost formula).
  *
  * DURABLE COUPLING (do not remove without re-checking `estimate-run.ts`): the
- * per-rate/inverse-solve guess (`turnMaxOutputTokens`, and `answerMaxOutputTokens`
- * for Smart Model) sizes its guess with PER-RATE markup and — for Smart Model — a
- * STORAGE-EXCLUDED classifier reserve, whereas admission prices the run with
- * SUBTOTAL markup and STORAGE-INCLUSIVE reserves. At integer nano rates per-rate
- * markup rounds the 15% away, and any storage-inclusive reserve is larger — so a
- * guess the payer "can afford" can still push admission's ceiling past the
- * allowance (the drift that caused both the Smart-Model and regular-turn 402s).
- * The guess is therefore only an UPPER BOUND; the authoritative cap is whatever
- * the ONE estimator admission uses accepts, which makes "sized-to-fit" provably
- * imply "ceiling ≤ funds" and removes the second cost computation that drifted.
- * The ceiling is monotonic in the cap, so a binary search over `[1, guessCap]`
- * returns the largest fitting cap; when even a one-token answer over-reserves, the
- * cap floors at 1 and admission refuses the run (the balance gate does its job)
- * rather than any silent under-reserve.
+ * supplied `guessCap` is a PHYSICAL bound only — what the models can emit and
+ * what the prompt leaves free. It carries no rate, because a rate-bearing guess
+ * priced the run a second way: per-rate markup rounds the 15% away at integer
+ * nano rates while admission marks up the subtotal, so a cap the payer "can
+ * afford" could still push admission's ceiling past the allowance (the drift that
+ * caused both the Smart-Model and regular-turn 402s). The authoritative cap is
+ * therefore whatever the ONE estimator admission uses accepts, which makes
+ * "sized-to-fit" provably imply "ceiling ≤ funds" with no second cost formula to
+ * keep aligned.
+ * The ceiling is monotonic in the cap, so a binary search returns the largest
+ * fitting cap. The search FLOOR is a minimum viable answer
+ * (`MINIMUM_OUTPUT_TOKENS`, or the whole physical bound when that is smaller):
+ * BILLING §Affordability 6 makes that floor THE minimum, so a shorter answer is
+ * not a cheaper option the fit may take. When even the floor over-reserves the
+ * definition carries it anyway and `withinFunds` is false — the caller's own gate
+ * refuses (admission's balance gate on a paid turn, the per-message ceiling on a
+ * trial one) rather than any silent under-reserve.
  *
  * REASONING TURNS: the searched cap is the ANSWER headroom H; each answer
  * node's wire cap is its own reasoning budget B plus H (`withAnswerCap`
@@ -439,38 +377,64 @@ function withAnswerCap(
  * fit never shrinks the thinking budget, only the answer — and the admission
  * estimator therefore prices the output leg at exactly B + H.
  */
+export interface AnswerCapFit {
+  /**
+   * The definition carrying the cap that was PRICED. Returning the priced one is
+   * load-bearing: pricing one definition and returning another is only sound
+   * while every caller happens to have built with the same cap, and it fails in
+   * the under-reserving direction the moment a definition carries an uncapped
+   * `modelCall`.
+   */
+  readonly definition: WorkflowDefinition;
+  /** The answer-token headroom the returned definition is capped at. */
+  readonly answerTokens: number;
+  /** Whether the estimator prices that cap within the payer's funds. */
+  readonly withinFunds: boolean;
+}
+
 export function fitAnswerCapToCeiling(
   definition: WorkflowDefinition,
   resolveModel: ModelPricingResolver,
   guessCap: number,
   spendableNanoUsd: bigint
-): WorkflowDefinition {
+): AnswerCapFit {
   const estimate = createEstimateRun(resolveModel);
   const fits = (cap: number): boolean => {
     const priced = estimate(withAnswerCap(definition, cap, resolveModel));
     return priced.isOk() && priced.value <= spendableNanoUsd;
   };
-  if (fits(guessCap)) return definition;
-  if (!fits(1)) return withAnswerCap(definition, 1, resolveModel);
-  let lo = 1;
+  const at = (answerTokens: number, withinFunds: boolean): AnswerCapFit => ({
+    definition: withAnswerCap(definition, answerTokens, resolveModel),
+    answerTokens,
+    withinFunds,
+  });
+  if (fits(guessCap)) return at(guessCap, true);
+  const floor = Math.min(MINIMUM_OUTPUT_TOKENS, guessCap);
+  if (!fits(floor)) return at(floor, false);
+  let lo = floor;
   let hi = guessCap;
   while (lo < hi) {
     const mid = lo + Math.ceil((hi - lo) / 2);
     if (fits(mid)) lo = mid;
     else hi = mid - 1;
   }
-  return withAnswerCap(definition, lo, resolveModel);
+  return at(lo, true);
 }
 
 /**
  * Reconciles a compiled turn definition's answer cap against the canonical
- * admission estimator. Only the persisting (storage-stamped) turn is balance-gated,
- * so only there must the admission ceiling fit the payer's funds — the per-rate
- * guess is re-fit against the ONE estimator (see {@link fitAnswerCapToCeiling}). A
- * trial (quota-gated, unstamped) or budget-less build, or a build with no derivable
- * guess cap, keeps the definition untouched: a single-model turn whose budget
- * covers its full context needs no cap, and admission then prices the full window
- * the budget already covers.
+ * admission estimator, on EVERY tier.
+ *
+ * The stamp is deliberately not a condition. A trial turn is quota-gated and
+ * unstamped, so leaving it unfit left its wire cap with no money term at all —
+ * and trial has no balance gate behind it, which made the physical bound the only
+ * bound (measured at 126× the per-message ceiling). Pricing an unstamped
+ * definition through the estimator carries no storage term by construction, which
+ * is exactly §Math & Terms' `trialTurnCost`: the trial cap comes out storage-free
+ * without a second formula computing it.
+ *
+ * A budget-less build, or one with no derivable bound, keeps the definition
+ * untouched — there is nothing to price it against.
  */
 export function reconcileAnswerCeiling(
   stamped: WorkflowDefinition,
@@ -478,10 +442,9 @@ export function reconcileAnswerCeiling(
   budget: TurnBudget | undefined,
   guessCap: number | undefined
 ): WorkflowDefinition {
-  if (budget === undefined || guessCap === undefined || stamped.storage === undefined) {
-    return stamped;
-  }
-  return fitAnswerCapToCeiling(stamped, resolveModel, guessCap, payerSpendableNanoUsd(budget));
+  if (budget === undefined || guessCap === undefined) return stamped;
+  return fitAnswerCapToCeiling(stamped, resolveModel, guessCap, payerSpendableNanoUsd(budget))
+    .definition;
 }
 
 /**
@@ -893,16 +856,18 @@ export interface TurnDefinitionOptions {
 }
 
 /**
- * The answer sizing for a text turn build: the answer cap the nodes carry and
- * the reconcile guess (one figure — the reconcile re-fits it against the ONE
- * admission estimator). Reasoning-free turns keep the legacy derived ceiling.
- * A reasoning turn sizes the answer headroom H so the wire cap is B + H; it
- * fails closed when the payer budget or any model's pricing basis is missing —
- * a reasoning call must always carry an explicit, affordably-derived
- * completion cap (G2), so there is no capless reasoning build. An undefined
- * headroom (the level does not fit the payer's ceiling) builds with the
- * minimum answer allocation and no reconcile guess: admission's balance gate
- * then refuses the run rather than any silent effort downgrade (G3).
+ * The answer sizing for a text turn build: the physical upper bound the nodes
+ * carry and the reconcile hands to the fit (one figure — the fit sizes the
+ * authoritative cap against the ONE admission estimator).
+ *
+ * A reasoning turn's searched quantity is the answer headroom H, so its bound is
+ * the physical room LESS the constant reasoning budget B, leaving the wire cap
+ * B + H. It fails closed when the payer budget or any model's pricing basis is
+ * missing — a reasoning call must always carry an explicit, affordably-derived
+ * completion cap, so there is no capless reasoning build. When B leaves less
+ * than a minimum viable answer inside the physical room the bound floors there and
+ * the fit reports it does not fit: the caller's own gate refuses rather than any
+ * silent effort downgrade.
  */
 function turnAnswerSizing(
   models: readonly string[],
@@ -925,7 +890,10 @@ function turnAnswerSizing(
   if (pricings === undefined) {
     return err(validationError('a reasoning turn requires priceable models'));
   }
-  return ok(answerHeadroomTokens(budget, pricings, maxReasoningBudget));
+  const room = physicalAnswerCeiling(budget, pricings);
+  /* v8 ignore next -- `pricings` is non-empty here, so the room always resolves */
+  if (room === undefined) return err(validationError('a reasoning turn requires priceable models'));
+  return ok(Math.max(MINIMUM_OUTPUT_TOKENS, room - maxReasoningBudget));
 }
 
 export function buildTurnDefinition(
@@ -938,8 +906,12 @@ export function buildTurnDefinition(
   );
 }
 
-/** The synchronous compile of a single-model turn against a loaded pricing snapshot. */
-function compileSingleTurn(
+/**
+ * The synchronous compile of a single-model turn against a loaded pricing snapshot.
+ * Exported as the sizing seam: the answer-cap sweep prices exactly the definition
+ * a request compiles, so nothing re-derives the build's own sizing to test it.
+ */
+export function compileSingleTurn(
   pricingResolver: ModelPricingResolver,
   model: string,
   options: TurnDefinitionOptions
@@ -980,9 +952,10 @@ function compileSingleTurn(
 }
 
 /**
- * The affordable output-token ceiling for a text turn's model set, or
- * undefined when no budget was supplied (trial) or no cap is derivable — the
- * param is then omitted and the model default applies.
+ * The physical answer ceiling for a text turn's model set, or undefined when no
+ * budget was supplied (trial) or no pricing basis is derivable — the param is
+ * then omitted and the model default applies. The money bound is the canonical
+ * admission estimator's, applied downstream by {@link reconcileAnswerCeiling}.
  */
 function derivedCeiling(
   budget: TurnBudget | undefined,
@@ -992,7 +965,7 @@ function derivedCeiling(
   if (budget === undefined) return undefined;
   const pricings = turnModelPricings(models, resolve);
   if (pricings === undefined) return undefined;
-  return turnMaxOutputTokens(budget, pricings);
+  return physicalAnswerCeiling(budget, pricings);
 }
 
 export interface MultiModelTurnDefinitionOptions {
@@ -1020,8 +993,9 @@ export function buildMultiModelTurnDefinition(
   );
 }
 
-/** The synchronous compile of a multi-model turn against a loaded pricing snapshot. */
-function compileMultiModelTurn(
+/** The synchronous compile of a multi-model turn against a loaded pricing snapshot
+ * (the multi-model half of the sizing seam — see {@link compileSingleTurn}). */
+export function compileMultiModelTurn(
   pricingResolver: ModelPricingResolver,
   models: readonly string[],
   options: MultiModelTurnDefinitionOptions
@@ -1059,19 +1033,57 @@ function compileMultiModelTurn(
 
 /**
  * The trial route's reasoning acceptance (G9/R3): a trial send may run only
- * effort levels whose shared-plan token cost fits the fixed trial ceiling —
- * COMPUTED via the same plan and headroom math the paid path prices with,
- * never a hardcoded level list. An explicit level that does not fit is
- * refused (`accepted: false` → the trial's over-cap 402); `auto` takes the
- * turn's SOLE real choice when exactly one exists (deterministic — no
- * classifier, no reserve) and otherwise runs reasoning-free (auto is the
- * server's choice — degrading it is honest, unlike downgrading an explicit
- * ask); `none` passes through so the build owns the mandatory-reasoning
+ * effort levels whose cost fits the fixed trial ceiling — decided by
+ * COMPILE-THEN-PRICE through the same canonical estimator every other money
+ * decision uses, never a second cost formula and never a hardcoded level list.
+ * An explicit level that does not fit is refused (`accepted: false` → the trial's
+ * over-cap 402); `auto` takes the turn's SOLE real choice when exactly one exists
+ * (deterministic — no classifier, no reserve) and otherwise runs reasoning-free
+ * (auto is the server's choice — degrading it is honest, unlike downgrading an
+ * explicit ask); `none` passes through so the build owns the mandatory-reasoning
  * refusal.
  */
 export type TrialReasoningDecision =
   | { readonly accepted: true; readonly selection: ReasoningEffortSelection | undefined }
   | { readonly accepted: false };
+
+/**
+ * Whether one reasoning level's smallest useful trial turn fits the per-message
+ * ceiling: compile the turn at that level, price it UNSTAMPED (a trial turn
+ * persists nothing, so §Trial Usage gives it no storage term — the unstamped
+ * definition carries none by construction), and ask whether `B + a minimum viable
+ * answer` is within the ceiling.
+ *
+ * The build has to happen before the price because there is nothing else to price;
+ * that ordering is what lets this decision share `createEstimateRun` with every
+ * other money decision instead of re-deriving a cost from rates.
+ */
+function trialLevelFits(
+  descriptor: ModelDescriptor,
+  budget: TurnBudget,
+  entry: TurnReasoningEntry
+): boolean {
+  const resolve: ModelPricingResolver = () => descriptor;
+  const registries = createTurnCompileRegistries(resolve);
+  const built = buildSingleModelTurn({
+    model: descriptor.id,
+    nodes: registries.nodes,
+    constraints: registries.constraints,
+    hooks: TRIAL_TURN_HOOKS,
+    promptInputTokens: promptInputTokensFor(budget),
+    reasoning: entry,
+    maxOutputTokens: MINIMUM_OUTPUT_TOKENS,
+  });
+  /* v8 ignore next -- the descriptor resolves by construction (it IS the
+     resolver), so the graph compile cannot fail on an unknown model here */
+  if (built.isErr()) return false;
+  return fitAnswerCapToCeiling(
+    built.value,
+    resolve,
+    MINIMUM_OUTPUT_TOKENS,
+    payerSpendableNanoUsd(budget)
+  ).withinFunds;
+}
 
 export function trialReasoningSelection(
   descriptor: ModelDescriptor,
@@ -1079,10 +1091,8 @@ export function trialReasoningSelection(
   selection: ReasoningEffortSelection
 ): Result<TrialReasoningDecision, DomainError> {
   if (selection === 'off') return ok({ accepted: true, selection });
-  const pricings = turnModelPricings([descriptor.id], () => descriptor);
   const fitsCeiling = (entry: TurnReasoningEntry): boolean =>
-    pricings !== undefined &&
-    answerHeadroomTokens(budget, pricings, entry.reasoningBudgetTokens) !== undefined;
+    trialLevelFits(descriptor, budget, entry);
   if (selection === 'auto') {
     // Exactly one real choice ⇒ the deterministic pick (BILLING §Effort 5):
     // no classifier call and no reserve. The only single-choice catalog

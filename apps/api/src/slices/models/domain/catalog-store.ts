@@ -4,6 +4,7 @@ import { unavailableError } from '../../../lib/errors/index.js';
 import { idempotent } from '../../../lib/idempotency/index.js';
 import { fromPromise } from '../../../lib/result/index.js';
 import type { Database } from '@hushbox/db';
+import type { ExcludeReason } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Idempotent } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -31,6 +32,13 @@ export interface StoredDescriptorRow {
    * survives refresh.
    */
   readonly adminDisabledAt: Date | null;
+  /**
+   * Catalog admission's soft delete (BILLING.md §Catalog Admission 4): non-null
+   * means the model is no longer sellable and every exposure surface hides it.
+   * DERIVED — recomputed by each refresh — which is why it is a separate
+   * authority from the asserted `adminDisabledAt`.
+   */
+  readonly excludedReason: ExcludeReason | null;
   /** OpenRouter top-weekly usage rank, 0-based (lower = more used); `null` when
    * the model is unranked (media, or absent from the sorted `/models` set).
    * Lives only in this column — never in the descriptor jsonb — and is injected
@@ -52,6 +60,11 @@ export interface UpsertCatalogParams {
  * the stale row in place — there is no versioning. Idempotent by the unique
  * constraint: a racing writer overwrites with identical content, so the row
  * converges either way.
+ *
+ * Writing a descriptor is by definition an admission, so this clears the soft
+ * delete (BILLING.md §Catalog Admission 4) — that is one of the two halves that
+ * make a model's return automatic. `adminDisabledAt` is never in the set clause:
+ * a human's decision survives every refresh.
  */
 export function upsertCatalog(
   db: Database,
@@ -78,17 +91,35 @@ export function upsertCatalog(
           modelId: params.modelId,
           descriptor: wireDescriptor,
           popularityRank: params.popularityRank,
+          excludedReason: null,
+          excludedAt: null,
+          lastSeenAt: params.fetchedAt,
         })
         .onConflictDoUpdate({
           target: modelCatalog.modelId,
-          set: { descriptor: wireDescriptor, popularityRank: params.popularityRank },
+          set: {
+            descriptor: wireDescriptor,
+            popularityRank: params.popularityRank,
+            excludedReason: null,
+            excludedAt: null,
+            lastSeenAt: params.fetchedAt,
+          },
         }),
       (cause) => unavailableError('model catalog upsert failed', cause)
     )
   );
 }
 
-/** The stored descriptor per model id, folded from a whole-table read. */
+/**
+ * The stored descriptor per model id, folded from a whole-table read, in
+ * `model_id` order.
+ *
+ * The order is part of the contract, not a convenience: every exposure surface
+ * derives its catalog list from this map's insertion order, and a plain select has
+ * no defined row order at all. What this guarantees is that the same table yields
+ * the same list twice — which is what lets a pool be reproducible from the catalog
+ * (BILLING.md §Smart Model 1) instead of from whatever order Postgres returned.
+ */
 export function readLatestDescriptorRows(
   db: Database
 ): ResultAsync<Map<string, StoredDescriptorRow>, DomainError> {
@@ -96,11 +127,15 @@ export function readLatestDescriptorRows(
     unavailableError('model catalog read failed', cause)
   ).map((rows) => {
     const byModel = new Map<string, StoredDescriptorRow>();
-    for (const row of rows) {
+    // Sorted in memory rather than by the query: this is already a whole-table
+    // read folded in memory, and keeping the ordering here means no caller has to
+    // know the read is ordered by anything but the identifier.
+    for (const row of rows.toSorted((left, right) => (left.modelId < right.modelId ? -1 : 1))) {
       byModel.set(row.modelId, {
         catalogId: row.id,
         descriptor: row.descriptor,
         adminDisabledAt: row.adminDisabledAt,
+        excludedReason: row.excludedReason,
         popularityRank: row.popularityRank,
       });
     }

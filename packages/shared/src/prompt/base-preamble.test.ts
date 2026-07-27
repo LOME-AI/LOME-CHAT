@@ -44,6 +44,16 @@ describe('RUNNABLE_DOCUMENTS_GUIDANCE', () => {
     expect(RUNNABLE_DOCUMENTS_GUIDANCE).toContain('auto-install');
   });
 
+  it('names only the scientific packages the sandbox actually vendors', () => {
+    expect(RUNNABLE_DOCUMENTS_GUIDANCE).toContain('numpy, matplotlib');
+  });
+
+  it('declares compiled packages uninstallable so the model does not reach for them', () => {
+    expect(RUNNABLE_DOCUMENTS_GUIDANCE).toContain('pandas');
+    expect(RUNNABLE_DOCUMENTS_GUIDANCE).toContain('scipy');
+    expect(RUNNABLE_DOCUMENTS_GUIDANCE).toContain('cannot be installed');
+  });
+
   it('pins the runtime constraints a document must respect', () => {
     expect(RUNNABLE_DOCUMENTS_GUIDANCE).toContain('exactly ONE file');
     expect(RUNNABLE_DOCUMENTS_GUIDANCE).toContain('no network at runtime');

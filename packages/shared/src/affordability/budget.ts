@@ -1,10 +1,9 @@
 /**
- * Pre-send notification and max-tokens helpers.
+ * Pre-send notification vocabulary.
  *
  * `generateNotifications` maps a client billing decision + context onto the
- * user-facing notice vocabulary; `computeSafeMaxTokens` picks the AI-Gateway
- * `max_tokens` for a turn. Cost/affordability math lives in the canonical
- * nano-USD estimator (this directory's `estimate/`), not here.
+ * user-facing notices. Cost/affordability math lives in the canonical nano-USD
+ * estimator (this directory's `estimate/`), not here.
  */
 
 import { CAPACITY_RED_THRESHOLD, LOW_BALANCE_OUTPUT_TOKEN_THRESHOLD } from './constants.js';
@@ -242,48 +241,4 @@ export function generateNotifications(input: NotificationInput): BudgetError[] {
   );
 
   return notifications;
-}
-
-export interface ComputeMaxTokensParams {
-  /** Max output tokens based on user's budget */
-  budgetMaxTokens: number;
-  /** Model's maximum context length in tokens */
-  modelContextLength: number;
-  /** Estimated input tokens (system prompt + history + user message) */
-  estimatedInputTokens: number;
-  /**
-   * The model's provider completion ceiling (`descriptor.limits
-   * .maxOutputTokens`, ingested from the gateway catalog). Bounds the output
-   * ceiling together with the remaining context — strict tightening; absent
-   * means the context alone bounds (the fallback for uncapped models).
-   */
-  modelMaxOutputTokens?: number;
-}
-
-/**
- * Compute safe max_tokens value for the AI Gateway request.
- *
- * No headroom reduction — the budget max-tokens already floors the token
- * calculation, guaranteeing `worstCaseCents ≤ availableCents`.
- *
- * The output ceiling is the tighter of the remaining context and the model's
- * provider completion cap; a budget at or past it omits the param safely —
- * the provider enforces its own cap, and admission bounds the hold by the
- * same catalog cap.
- *
- * @returns undefined if budget covers the output ceiling (omit max_tokens, let model use default)
- * @returns budgetMaxTokens if budget is the limiting factor
- */
-export function computeSafeMaxTokens(params: ComputeMaxTokensParams): number | undefined {
-  const remainingContext = params.modelContextLength - params.estimatedInputTokens;
-  const outputCeiling =
-    params.modelMaxOutputTokens === undefined
-      ? remainingContext
-      : Math.min(remainingContext, params.modelMaxOutputTokens);
-
-  if (params.budgetMaxTokens >= outputCeiling) {
-    return undefined;
-  }
-
-  return params.budgetMaxTokens;
 }

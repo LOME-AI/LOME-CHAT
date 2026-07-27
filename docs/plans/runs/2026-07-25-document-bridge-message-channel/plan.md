@@ -1,6 +1,7 @@
 # Document bridge: frame-minted MessageChannel
 
-**Tier 2.** Five tasks. Fixes a live product bug and closes the test-harness gap that let it ship.
+**Tier 2.** Seven tasks — T1–T5 planned up front, T6 and T7 added mid-run (§T6 and §T7 below). Fixes a
+live product bug and closes the test-harness gap that let it ship.
 
 ## The bug
 
@@ -374,6 +375,19 @@ Consequences, binding on the rest of the run:
 - The only execution that can prove the line lives is the founder-run
   `e2e/chat/runnable-documents.spec.ts`.
 
+**A5 FINAL SCOPE — measured, not asserted.** The close-out work narrowed this. Each site below was tested
+by removal where removal was possible:
+
+| `port.start()` site | Gated by `pnpm test`? |
+| --- | --- |
+| `apps/sandbox/src/embed-harness.ts` (embedder page) | **Yes** — removing it fails two transport tests in real Chromium at 15s each. Gated only because the close-out moved this harness onto the product's `addEventListener` shape; under the old auto-starting `onmessage` it was gated by nothing. |
+| `apps/sandbox/src/embedder-channel.ts` (frame side) | **Yes, in effect** (Inferred, not removal-tested — that would mean writing to the repo). The browser tests drive the built bundle and the drift tests force the bundle to match source, so a dropped frame-side call fails the same delivery tests. |
+| `apps/web/.../document-sandbox.tsx` (the product parent) | **No** — verified by removal: 53/53 still pass, because happy-dom hands out Node's auto-starting `MessagePort`. |
+| `e2e/helpers/sandbox-harness.ts` | **No**, not within `pnpm test`; only the founder-run E2E exercises it. |
+
+So "no test can pin `start()`" is now true of **two of four** sites, not all four. The product parent
+remains the dangerous one.
+
 ### A6 — correction: the plan's test counts for T3 were wrong
 
 §T3 criterion 7 says "all 105 tests in `document-sandbox.test.tsx`". The real count was **44** before the
@@ -384,10 +398,16 @@ judge against the real counts.
 
 ### A7 — the audit baseline is the working tree at run start, NOT git HEAD
 
-This run began on a dirty tree. A large uncommitted body of prior work is already present — the entire
+> **A7 IS NOW HISTORICAL — DO NOT APPLY IT TO NEW WORK.** The founder committed mid-run at `ada0341c`.
+> T1–T5 are in `HEAD`; only T6, T7, the docs edit and the close-out fixes are not. So `git diff HEAD` is
+> today the *cleanest available* baseline, and an auditor told to distrust it would be misled in the
+> opposite direction. Everything below describes the conditions T1–T5 were audited under, and the rulings
+> it records (especially the `reportReactFailure` one) stand.
+
+This run began on a dirty tree. A large uncommitted body of prior work was present — the entire
 runnable-documents feature from the 2026-07-23 run, plus unrelated concurrent workstreams. **Nothing in
-this repository is committed, so `git diff HEAD` attributes months of other people's work to whichever
-task an auditor happens to be reviewing.**
+this repository was committed at that point, so `git diff HEAD` attributed months of other people's work
+to whichever task an auditor happened to be reviewing.**
 
 Binding on every auditor for the rest of this run:
 
@@ -440,8 +460,9 @@ founder rather than fixed by this run:
 - `dev-server.ts:88-90`'s `v8 ignore` justification says a real HTTP request "can never reach here". The
   same `%2f` evidence falsifies that claim. The guard itself holds and returns 403 — only the stated
   reason is wrong.
-- `embed-harness.ts`'s clamp mixes `path.posix.normalize` with platform `path.join`, which would diverge
-  on Windows. The repo does not run there.
+- ~~`embed-harness.ts`'s clamp mixes `path.posix.normalize` with platform `path.join`, which would
+  diverge on Windows.~~ **Closed by T2**, which deleted that clamp entirely when it routed containment
+  through the shared `resolveWithinDir`. No longer open.
 
 ### A9 — the accurate wildcard inventory (correcting the orchestrator)
 
@@ -461,15 +482,139 @@ The accurate inventory, which **T5 must document rather than the version I asser
 So: two wildcards ship (one per bootstrap, each carrying only a type tag and the port), and one lives in
 test infrastructure whose entire purpose is to be ignored. The product parent has none.
 
+**A9 addendum — the table above went stale when T6 landed.** It attributes a `parent.postMessage` source
+site to each bootstrap. After the collapse there is **one source site** — `embedder-channel.ts` — compiled
+into both bundles; **neither bootstrap contains `parent.postMessage` at all** (verified: one match per
+built bundle, zero in either bootstrap source). The shipped count is unchanged (two, one per bundle); what
+changed is that they are two compilations of one source, not two sources. T5 caught this and documented
+the accurate version, which is what anyone grepping `bootstrap.ts` will actually find.
+
+### T6 — collapse the duplicated frame-side handshake (founder-approved, added mid-run)
+
+**Objective.** Extract the port handshake both bootstraps now carry into one shared helper they both call.
+
+**Design context.** T2's conventions auditor found the handshake exists twice in near-verbatim form —
+the `embedderPort` docblock, `post()`, and the `MessageChannel` / `addEventListener` / `start()` /
+`parent.postMessage(ready, '*', [port2])` tail — differing only in the handler body and one article.
+`jscpd` misses it because interleaved comments push it under the token threshold.
+
+This is a genuine **One Implementation, Shared** case, not a stylistic one: **the parent has a single
+handshake implementation, so the two frame copies must agree to be correct.** If one drifts — a dropped
+`start()`, a changed transfer list — that runtime silently stops delivering, which is precisely the bug
+this entire run exists to fix, and precisely the failure A5 says no test in this repo can see. One copy of
+the line no test can pin is worth more than two audited ones.
+
+The duplication was **the plan's fault, not any implementer's**: Global Constraint 2 specified the
+`ready` broadcast "in each of the two bootstraps". Precedent for the fix already exists in-package —
+both bootstraps share `neutralize-webrtc.ts`, so a shared module bundles into both IIFEs cleanly.
+
+**Acceptance criteria.**
+
+1. One shared module in `apps/sandbox/src/` exports a helper that mints the channel, registers the
+   caller's handler on `port1`, calls `start()`, transfers `port2` on the `ready` broadcast, and returns
+   the send function. Both bootstraps use it; neither retains its own copy of any of those steps.
+2. Every Global Constraint still holds in **both** built bundles: exactly one wildcard each, no `window`
+   message listener, port unreachable from `window`/`globalThis` (both bundles are esbuild IIFEs — the
+   shared module must not break that), and `neutralizeWebRtc()` still running before the messaging setup.
+3. `port.start()` exists exactly once in the tree after this task, on the shared path, unskippable.
+4. Python's intake shape is untouched: `init` stashes, `run` executes, no `stop` branch.
+5. All 161 package tests pass with assertions intact — including both transport regression tests, both
+   forgery tests, the mocked-clock `timed_out` test, and the WebRTC probe. No test weakened or deleted.
+6. Both `public/render.js` and `public/python.js` regenerated; all four drift tests byte-exact.
+7. Coverage: `bootstrap.ts` files are coverage-excluded today. Decide deliberately whether the new shared
+   module is excluded with them or covered, and justify it — do not let it land in whichever state
+   happens to make the gate pass.
+
+**File ownership.** `apps/sandbox/src/render/bootstrap.ts` · `apps/sandbox/src/python/bootstrap.ts` ·
+the new shared module · `apps/sandbox/public/render.js` · `apps/sandbox/public/python.js` ·
+`apps/sandbox/vitest.config.ts` if criterion 7 requires it.
+
+**Depends on** T1, T2 (both clean).
+
+**Scoped checks.** `pnpm --filter @hushbox/sandbox test` ·
+`turbo typecheck lint --filter=@hushbox/sandbox` · `jscpd --threshold 2` over owned files.
+
+**Sensitive?** Yes — it rewrites the security boundary's handshake in both runtimes. 3-lens panel.
+
+**Explicitly out of scope.** The *parent-side* handshake also exists three times
+(`document-sandbox.tsx`, `embed-harness.ts`, and the e2e harness). Those are independent embedders in
+different packages, and the e2e one is a classic-script string served over HTTP that cannot import a
+module at all. Collapsing them is a separate architecture question, not this task's.
+
+### A10 — T6 criterion 3 was worded wrong (correcting the orchestrator, again)
+
+Criterion 3 says `port.start()` must exist "exactly once in the tree". T6 flagged that as literally false
+rather than quietly satisfying it: `render/bootstrap.ts`'s `settleTick` macrotask-clock channel,
+`document-sandbox.tsx`, and `e2e/helpers/sandbox-harness.ts` all legitimately call `.start()`, and none of
+them is the handshake. **The criterion should have read: exactly one frame-side HANDSHAKE `start()`.**
+That is satisfied — `apps/sandbox/src/embedder-channel.ts`. Auditors judge against the corrected wording.
+
+### A11 — the python realm probe has no standing test; render's does
+
+Twice now the "can a document reach the port from inside the frame's realm?" question has been answered
+for python by a throwaway script — once by T2's security auditor, once by T6. Both got the right answer
+(`reachableMessagePorts: []`). But render carries a **standing** test for this invariant and python does
+not, so nothing re-checks python's on any future change.
+
+**Ruling: close the asymmetry.** A standing test belongs in `python-core.browser.test.ts` asserting no
+`MessagePort` is reachable from the Python realm via the Pyodide FFI. It is queued as follow-on work
+rather than folded into T6, whose ownership does not include that file — batching it here would also have
+moved the test count mid-audit.
+
+### T7 — a standing test for python's realm unreachability (added mid-run)
+
+**Objective.** Pin, with a standing test, that no `MessagePort` is reachable from the Pyodide realm.
+
+**Design context.** Recorded retroactively — T7 was implemented and audited against amendment A11's prose
+rather than a task section, which was a defect in this record. Its criteria are below as executed.
+
+Three separate times this run — T2's security audit, T6's implementer, T6's security audit — the question
+"can a document reach the port from inside the frame's realm?" was answered by a throwaway script that was
+then deleted. Render carried a **standing** test for the equivalent invariant; python did not, so nothing
+re-checked it on any future change. Python is the harder case: Pyodide loads into that realm and Python
+code reaches JS through the FFI.
+
+**Acceptance criteria.**
+
+1. A standing test in `python-core.browser.test.ts` asserting no `MessagePort` **instance** is reachable
+   from the Pyodide realm via the FFI. The `MessagePort` constructor itself is legitimately present and is
+   not a hit.
+2. It runs against the shipped `public/python.js` in a real opaque-origin frame through the shared harness.
+3. Non-vacuous by construction, not only by a one-off check: a control object holding a port must register
+   as a hit, and the scan must read a floor number of constructor names so a regression that made the FFI
+   throw on everything fails rather than passing on emptiness.
+4. Falsified once against a deliberately leaked port (scratchpad route override, never a repo edit).
+5. No hard-coded property count — environment-dependent and brittle.
+6. No existing test altered; the file stays under the pole threshold.
+
+**File ownership.** `apps/sandbox/src/python/python-core.browser.test.ts` — that file only.
+
+**Depends on** T2.
+
+**Scoped checks.** `pnpm --filter @hushbox/sandbox test` · `turbo typecheck lint --filter=@hushbox/sandbox`.
+
+**Sensitive?** Security invariant, but test-only and additive — single auditor.
+
+**Depth ruling.** The scan covers own properties of `globalThis` only. A deeper object-graph walk was
+measured and rejected: it reports `globalThis.MessagePort.prototype` as a hit at every depth (that
+prototype's `constructor.name` is `"MessagePort"`), so it would require an exclusion list — and an
+exclusion list inside a negative test is the rot vector this run exists to remove. The failure mode being
+guarded is an accidental **global assignment** of the closure-held port, which lands at depth 1; the
+closure itself is unreachable at any depth. If depth is ever wanted, the bounded form is depth 2 with an
+explicit prototype skip and a per-depth read floor.
+
 ## Dependency graph
 
 ```
-T1 ──┬── T2 ──┬── T4 ── T5
-     │        │
-T3 ──┴────────┘
+T1 ──┬── T2 ──┬── T4 ──┬── T6 ──┬── T5
+     │        │        │        │
+T3 ──┴────────┘        └── T7 ──┘
 ```
 
-T1 and T3 start together. T2 follows T1 (shared harness). T4 follows T1+T2. T5 last.
+T1 and T3 start together. T2 follows T1 (shared harness). T4 follows T1+T2. T6 follows T1+T2 (it rewrites
+both bootstraps). T7 follows T2. **T5 is last and depends on T6** — the docs must describe the collapsed
+handshake, not the two-copy state. The §T5 header's "Depends on T1, T2, T3, T4" is from the original
+five-task plan and is superseded by this graph.
 
 ## Related E2E
 

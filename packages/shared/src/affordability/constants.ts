@@ -178,3 +178,15 @@ export const MAX_MODEL_AGE_MS = 2 * 365 * 24 * 60 * 60 * 1000;
  * rule.
  */
 export const TOP_CONTEXT_PERCENTILE = 0.95;
+
+/**
+ * Smart Model's high-cost-outlier test: a candidate whose `maxCallCost` exceeds
+ * this multiple of the pool median is dropped from the classifier-selectable set
+ * (`docs/BILLING.md` §Smart Model 3). A RATIO to the median rather than a quota,
+ * so it fires only when a tail genuinely exists and never trims a tight
+ * distribution.
+ *
+ * Nano-USD bigint rather than a number, because the comparison it feeds
+ * multiplies a nano-USD median.
+ */
+export const OUTLIER_COST_MULTIPLE = 20n;

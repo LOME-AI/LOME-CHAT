@@ -1,5 +1,12 @@
 import { match } from 'ts-pattern';
-import { ContentValue, DEADLINE_CLASS_MS, END_NODE_ID, ERROR_CODES, zodFor } from '@hushbox/shared';
+import {
+  ContentValue,
+  DEADLINE_CLASS_MS,
+  END_NODE_ID,
+  ERROR_CODES,
+  VALUE_STORE_BYTE_BUDGET_BYTES,
+  zodFor,
+} from '@hushbox/shared';
 import { domainWireCode } from '../../../lib/errors/index.js';
 import { FINGERPRINT_CODES } from '../../../lib/telemetry/index.js';
 import { compileDefinition } from '../compile/compile-definition.js';
@@ -11,7 +18,7 @@ import {
 } from '../compile/conventions.js';
 import { channelValueOf, contentValueOf, inputTagOf } from './channel-values.js';
 import { circuitReadoutOf } from './hooks.js';
-import { createValueStore, VALUE_STORE_BYTE_BUDGET_BYTES } from './value-store.js';
+import { createValueStore } from './value-store.js';
 import {
   AllBranchesFailedError,
   SettlementConflictError,

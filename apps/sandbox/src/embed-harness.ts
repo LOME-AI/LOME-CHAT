@@ -65,6 +65,15 @@ interface BridgeState {
  * frame's `ready` is one-shot and does not queue, so a listener installed after
  * the frame has begun loading can miss the handshake, and with it the
  * transferred port, permanently.
+ *
+ * The handshake is written in the app's shape, gate for gate — sender, message
+ * type, first-ready-wins, `addEventListener` plus `start()`. A stand-in that
+ * takes an easier route stops standing in: this is the only embedder of a real
+ * sandboxed frame inside `pnpm test`, so the app's own pattern is exercised in a
+ * real browser here or nowhere. `port.start()` is the line that costs: an
+ * `onmessage` assignment auto-starts a port, while a listener added the app's
+ * way leaves it paused until `start()`, and no unit test in the repo can see the
+ * difference because Node's `MessagePort` starts on either.
  */
 function embedderHtml(framePath: string): string {
   return `<!doctype html>
@@ -77,15 +86,25 @@ function embedderHtml(framePath: string): string {
     <script>
       globalThis.__bridge = { messages: [], port: null };
       window.addEventListener('message', function (event) {
-        globalThis.__bridge.messages.push(event.data);
-        var port = event.ports[0];
+        var frame = document.getElementById(${JSON.stringify(FRAME_ELEMENT_ID)});
+        if (!frame || event.source !== frame.contentWindow) return;
+        // The window carries the handshake and nothing else; everything the
+        // frame reports about a request comes back over the port.
+        if (!event.data || event.data.type !== 'ready') return;
         // First port wins, matching the app: a later 'ready' must not be able to
         // redirect parent→frame traffic onto a channel a document minted.
-        if (!port || globalThis.__bridge.port) return;
+        if (globalThis.__bridge.port) return;
+        var port = event.ports[0];
+        if (!port) return;
+        globalThis.__bridge.messages.push(event.data);
         globalThis.__bridge.port = port;
-        port.onmessage = function (portEvent) {
+        port.addEventListener('message', function (portEvent) {
           globalThis.__bridge.messages.push(portEvent.data);
-        };
+        });
+        // A listener added this way leaves the port paused, unlike an
+        // 'onmessage' assignment; without this nothing the frame reports after
+        // the handshake is ever delivered.
+        port.start();
       });
     </script>
     <iframe

@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { nanoUSD } from './nano-usd.js';
 import {
+  MIN_POOL_FOR_PRICE_PERCENTILE,
   PREMIUM_PRICE_PERCENTILE,
   PREMIUM_RECENCY_MS,
   TRIAL_AFFORDABILITY_MULTIPLIER,
   combinedRateNanoUsd,
   exceedsTrialBudget,
   isPremiumModel,
+  premiumPriceThresholdNanoUsd,
 } from './premium.js';
 import type { PriceableModel } from './priceable-model.js';
 
@@ -135,7 +137,7 @@ describe('isPremiumModel — the recency leg', () => {
 });
 
 describe('exceedsTrialBudget', () => {
-  const systemPromptChars = 400;
+  const promptChars = 400;
 
   it('refuses a model whose worst case runs past the trial per-message cap', () => {
     // $0.0000092/output token billable ⇒ 2000 tokens alone is ~1.8¢.
@@ -143,12 +145,12 @@ describe('exceedsTrialBudget', () => {
       inputRateNanoUsd: nanoUSD(2300n),
       outputRateNanoUsd: nanoUSD(9200n),
     });
-    expect(exceedsTrialBudget(model, systemPromptChars)).toBe(true);
+    expect(exceedsTrialBudget(model, promptChars)).toBe(true);
   });
 
   it('admits a model whose worst case fits the cap', () => {
     const model = modelFor({ inputRateNanoUsd: nanoUSD(1n), outputRateNanoUsd: nanoUSD(1n) });
-    expect(exceedsTrialBudget(model, systemPromptChars)).toBe(false);
+    expect(exceedsTrialBudget(model, promptChars)).toBe(false);
   });
 
   it('charges the input leg, so a longer system prompt can push a model over', () => {
@@ -170,5 +172,38 @@ describe('exceedsTrialBudget', () => {
 
   it('rejects a negative system-prompt length rather than pricing it', () => {
     expect(() => exceedsTrialBudget(modelFor(), -1)).toThrow(RangeError);
+  });
+});
+
+describe('premiumPriceThresholdNanoUsd — the pool percentile the price leg compares', () => {
+  function poolOf(rates: readonly bigint[]): readonly PriceableModel[] {
+    return rates.map((rate, index) =>
+      modelFor({
+        modelId: `vendor/m${String(index)}`,
+        inputRateNanoUsd: nanoUSD(0n),
+        outputRateNanoUsd: nanoUSD(rate),
+      })
+    );
+  }
+
+  it('is the combined rate at floor(n × 0.75) of the ascending pool', () => {
+    // floor(4 × 0.75) = 3, so a four-model pool ranks its threshold at the top
+    // rate — the same index the shipped trial gate selected.
+    expect(premiumPriceThresholdNanoUsd(poolOf([10n, 20n, 30n, 40n]))).toBe(40n);
+  });
+
+  it('is order-independent — the pool is a set, not a row order', () => {
+    expect(premiumPriceThresholdNanoUsd(poolOf([40n, 10n, 30n, 20n]))).toBe(40n);
+  });
+
+  it('has no threshold below the minimum pool, so a tiny catalog cannot mark itself premium', () => {
+    expect(premiumPriceThresholdNanoUsd(poolOf([10n, 20n, 30n]))).toBeUndefined();
+    expect(MIN_POOL_FOR_PRICE_PERCENTILE).toBe(4);
+  });
+
+  it('leaves the recency leg deciding when there is no threshold', () => {
+    const model = modelFor();
+    expect(isPremiumModel({ model, releasedAtMs: NOW_MS - 1000, nowMs: NOW_MS })).toBe(true);
+    expect(isPremiumModel({ model, releasedAtMs: OLD_RELEASE_MS, nowMs: NOW_MS })).toBe(false);
   });
 });

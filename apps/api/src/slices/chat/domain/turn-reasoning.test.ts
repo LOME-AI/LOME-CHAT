@@ -236,11 +236,15 @@ describe("resolveTurnReasoning — deterministic 'auto' (no static preference or
     });
   });
 
-  it("resolves 'auto' to no entry when the model offers no choice (single-level mandatory)", () => {
+  it("picks the sole rung deterministically on a single-level mandatory model ('auto' → that rung)", () => {
+    // No CHOICE exists, so no classifier is bought — but the rung carries a real
+    // budget the provider will spend, so it is wired and priced explicitly
+    // instead of being left to the provider default.
     const resolve = resolverFor({
       m: descriptorFor('m', { mandatory: true, supportedEfforts: ['high'] }),
     });
-    expect(resolveTurnReasoning(['m'], resolve, 'auto')._unsafeUnwrap().size).toBe(0);
+    const entries = resolveTurnReasoning(['m'], resolve, 'auto')._unsafeUnwrap();
+    expect(entries.get('m')).toMatchObject({ effort: 'high', wire: { effort: 'high' } });
   });
 
   it('applies the sole union choice per model on a multi-model turn', () => {

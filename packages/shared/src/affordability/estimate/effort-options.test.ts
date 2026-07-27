@@ -187,9 +187,13 @@ describe('resolveEffortForModel', () => {
     expect(resolved).toMatchObject({ kind: 'level', level: { label: 'low' } });
   });
 
-  it('resolves everything to default on a mandatory no-choice model', () => {
-    expect(resolveEffortForModel(mandatoryOneLevel, 'off')).toEqual({ kind: 'default' });
-    expect(resolveEffortForModel(mandatoryOneLevel, 'high')).toEqual({ kind: 'default' });
+  it('resolves to the one rung of a mandatory single-level model, never to default', () => {
+    // Its budget is spent by the provider either way, so the wire says so and
+    // pricing can see it. `off` resolves UP to that rung — the mandatory
+    // carve-out — because downward is impossible for such a model.
+    const expected = { kind: 'level', level: { label: 'high' } };
+    expect(resolveEffortForModel(mandatoryOneLevel, 'off')).toMatchObject(expected);
+    expect(resolveEffortForModel(mandatoryOneLevel, 'high')).toMatchObject(expected);
   });
 
   it('resolves everything to default on a non-reasoning model', () => {

@@ -317,14 +317,27 @@ async function seedGateModel(
 // dear fixture at `dearId` priced just under the quartile — so the dear model
 // stays non-premium and the intended cost gate fires, regardless of run order.
 // Per-test re-seeding (every test seeds the models it needs) makes the wipe safe.
-async function withDearTrialCatalog<T>(dearId: string, postSend: () => Promise<T>): Promise<T> {
+async function withPinnedTrialCatalog<T>(
+  fixtureId: string,
+  descriptorOverrides: Record<string, unknown>,
+  postSend: () => Promise<T>
+): Promise<T> {
   return withSuiteCatalogLock(async () => {
     await db.delete(modelCatalog);
     await seedModel();
     await seedTrialDecoys();
-    await seedGateModel(dearId, { pricing: { inputPerToken: '1000', outputPerToken: '0' } });
+    await seedGateModel(fixtureId, descriptorOverrides);
     return postSend();
   });
+}
+
+/** The dear-fixture case of {@link withPinnedTrialCatalog}: priced just under the quartile. */
+async function withDearTrialCatalog<T>(dearId: string, postSend: () => Promise<T>): Promise<T> {
+  return withPinnedTrialCatalog(
+    dearId,
+    { pricing: { inputPerToken: '1000', outputPerToken: '0' } },
+    postSend
+  );
 }
 
 async function seedUser(): Promise<string> {
@@ -1673,7 +1686,12 @@ describe('chat route: POST /chat', () => {
     // ordering invariants, never an exact list).
     const candidateIds = node.candidates.map((candidate) => candidate.id);
     expect(candidateIds).toEqual(expect.arrayContaining([MODEL, MODEL_B]));
-    expect(node.classifierModelId).toBe(candidateIds[0]);
+    // The engine is chosen on a prompt-independent combined rate while the pool is
+    // ordered on turn cost and has its high-cost outliers removed, so the engine is
+    // neither the first candidate nor necessarily a candidate at all — the cheapest
+    // model per token can be an enormous-capacity outlier. Nothing depends on the
+    // coincidence: the classifier's own fallback resolves within `candidates`.
+    expect(node.classifierModelId).not.toBe(SMART_MODEL_ID);
     expect(candidateIds).not.toContain(SMART_MODEL_ID);
   });
 
@@ -3698,29 +3716,59 @@ describe('chat route: POST /chat/trial', () => {
   });
 
   /**
-   * The trial 1¢-derived output cap over the seeded cheap-model basis — the
-   * documented `turnCostBasis` arithmetic: free 1¢ budget (10_000_000n), base
-   * rates 2/3 (marked 2/3), storage 300 nano/char, trial tier 2 chars/token
-   * both ways. Chars are the ONE shared prompt measurement (system prompt
-   * included), so the oracle moves with the wire prompt.
+   * Rates at which the 1¢ ceiling is genuinely the binding term for a reasoning
+   * level: `medium` (B = 12,288) plus a minimum viable answer costs
+   * 13,288 × 1,500 ≈ 19.9M nano and overruns the ceiling, while `low` (B = 4,096)
+   * plus one fits. The suite's default 2/3 nano rates cannot tell the two apart —
+   * storage-free, every level fits a 1¢ ceiling there — so a refusal pinned on that
+   * basis would pin nothing. Determinism comes from the seeding, not the rates —
+   * see {@link REASONING_TRIAL_FIXTURE}.
    */
-  function trialOutputCap(prompt: string): number {
+  const REASONING_TRIAL_RATES = { inputPerToken: '1000', outputPerToken: '1500' } as const;
+
+  /**
+   * The reasoning fixture's descriptor. Seeded through `withPinnedTrialCatalog`
+   * rather than `seedGateModel` alone: the premium gate ranks a model against a
+   * percentile of the whole exposed pool, so a re-rated fixture landing beside
+   * enough cheap rows reads as PREMIUM and the send answers 403 instead of the
+   * intended cost verdict — with nothing wrong in the code under test.
+   */
+  const REASONING_TRIAL_FIXTURE = {
+    reasoning: { supportedEfforts: null },
+    limits: { contextLength: 1_000_000 },
+    pricing: REASONING_TRIAL_RATES,
+  } as const;
+
+  /** What the 1¢ ceiling buys at {@link REASONING_TRIAL_RATES}, storage-free. */
+  function trialBuysTokens(prompt: string): number {
+    return Math.floor((10_000_000 - trialInputTokens(prompt) * 1000) / 1500);
+  }
+
+  /**
+   * The trial turn's input-token count: the ONE shared prompt measurement (system
+   * prompt included, so the oracle moves with the wire prompt) at the trial tier's
+   * 2 chars per token.
+   */
+  function trialInputTokens(prompt: string): number {
     const chars = promptCharacterCount({
       systemPrompt: buildTurnSystemPrompt({ now: new Date() }),
       historyCharacters: 0,
       prompt,
     });
-    const estimatedInputTokens = Math.ceil(chars / 2);
-    const fixed = estimatedInputTokens * 2 + chars * 300;
-    const variablePerToken = 3 + 4 * 300;
-    return Math.floor((10_000_000 - fixed) / variablePerToken);
+    return Math.ceil(chars / 2);
   }
 
-  it('caps a trial single-model answer at the 1¢-derived output ceiling', async () => {
-    // A cheap (trial-eligible) text model with a large context window, so the 1¢
-    // budget derives a concrete cap rather than being swallowed by the window.
+  it('caps a trial single-model answer at its context headroom when the money does not bind', async () => {
+    // BILLING §Model bounds: ceiling = min(providerCap, contextHeadroom, budgetBuys).
+    // The seeded model has no provider cap, and at 3 nano per output token the 1¢
+    // ceiling buys ~3.3M tokens — far past this 1M window — so the PROMPT is what
+    // binds and the cap is the context headroom.
+    //
+    // Recorded because it is the trap in this fixture: the spec-conformant cap here
+    // equals what an entirely UNBOUNDED cap would also produce, so this case pins the
+    // physical bound and proves nothing about the money term. The companion below is
+    // the one that binds on money.
     const bigCtx = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
-    await seedGateModel(bigCtx, { limits: { contextLength: 1_000_000 } });
     const captured: WorkflowDefinition[] = [];
     const realtime = fakeRealtime(STARTED, {
       startRun: (_conversationId, body) => {
@@ -3728,14 +3776,48 @@ describe('chat route: POST /chat/trial', () => {
         return okAsync(STARTED);
       },
     });
-    const res = await postTrial(realtime, trialHeaders(), { model: bigCtx, prompt: 'hi' });
+    const res = await withPinnedTrialCatalog(bigCtx, { limits: { contextLength: 1_000_000 } }, () =>
+      postTrial(realtime, trialHeaders(), { model: bigCtx, prompt: 'hi' })
+    );
     expect(res.status).toBe(201);
     const definition = captured[0];
     if (definition === undefined) throw new Error('expected a captured definition');
     const answer = definition.nodes.find((node) => node.type === 'modelCall');
     expect(answer?.type === 'modelCall' && answer.params).toEqual({
-      maxOutputTokens: trialOutputCap('hi'),
+      maxOutputTokens: 1_000_000 - trialInputTokens('hi'),
     });
+  });
+
+  it('caps a trial single-model answer at what the 1¢ ceiling buys when the money binds', async () => {
+    // The companion case, on a window wide enough that the MONEY term is tightest.
+    // The oracle is §Model bounds' `budgetBuys` on a turn that never persists, so
+    // §Trial Usage gives it no storage term at all:
+    //   floor((1¢ − inputTokens × inputRate) / outputRate), at the seeded 2/3 rates.
+    // Storage would have swallowed ~99.8% of this ceiling — the old cap was 7,909
+    // tokens on the 1M-window fixture — and a trial turn does not pay it.
+    const wideCtx = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await withPinnedTrialCatalog(
+      wideCtx,
+      { limits: { contextLength: 5_000_000 } },
+      () => postTrial(realtime, trialHeaders(), { model: wideCtx, prompt: 'hi' })
+    );
+    expect(res.status).toBe(201);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    const inputTokens = trialInputTokens('hi');
+    const buys = Math.floor((10_000_000 - inputTokens * 2) / 3);
+    // The money term is genuinely the binding one here, which is what the other
+    // fixture cannot show.
+    expect(buys).toBeLessThan(5_000_000 - inputTokens);
+    const answer = definition.nodes.find((node) => node.type === 'modelCall');
+    expect(answer?.type === 'modelCall' && answer.params).toEqual({ maxOutputTokens: buys });
   });
 
   it('refuses a trial reasoning level whose plan exceeds the 1¢ ceiling with 402 (G9)', async () => {
@@ -3743,25 +3825,19 @@ describe('chat route: POST /chat/trial', () => {
     // budget plus the minimum answer overruns the 1¢ ceiling — computed via the
     // shared plan, never a hardcoded level list.
     const bigCtx = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
-    await seedGateModel(bigCtx, {
-      reasoning: { supportedEfforts: null },
-      limits: { contextLength: 1_000_000 },
-    });
-    const res = await postTrial(fakeRealtime(STARTED), trialHeaders(), {
-      model: bigCtx,
-      prompt: 'hi',
-      reasoningEffort: 'medium',
-    });
+    const res = await withPinnedTrialCatalog(bigCtx, REASONING_TRIAL_FIXTURE, () =>
+      postTrial(fakeRealtime(STARTED), trialHeaders(), {
+        model: bigCtx,
+        prompt: 'hi',
+        reasoningEffort: 'medium',
+      })
+    );
     expect(res.status).toBe(402);
     expect(await res.json()).toEqual({ code: 'TRIAL_MESSAGE_TOO_EXPENSIVE' });
   });
 
   it('runs a ceiling-fitting trial reasoning level with the wire and explicit B+H cap (201)', async () => {
     const bigCtx = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
-    await seedGateModel(bigCtx, {
-      reasoning: { supportedEfforts: null },
-      limits: { contextLength: 1_000_000 },
-    });
     const captured: WorkflowDefinition[] = [];
     const realtime = fakeRealtime(STARTED, {
       startRun: (_conversationId, body) => {
@@ -3769,18 +3845,21 @@ describe('chat route: POST /chat/trial', () => {
         return okAsync(STARTED);
       },
     });
-    const res = await postTrial(realtime, trialHeaders(), {
-      model: bigCtx,
-      prompt: 'hi',
-      reasoningEffort: 'low',
-    });
+    const res = await withPinnedTrialCatalog(bigCtx, REASONING_TRIAL_FIXTURE, () =>
+      postTrial(realtime, trialHeaders(), {
+        model: bigCtx,
+        prompt: 'hi',
+        reasoningEffort: 'low',
+      })
+    );
     expect(res.status).toBe(201);
     const answer = captured[0]?.nodes.find((node) => node.type === 'modelCall');
-    // The 1¢ budget affords `trialOutputCap('hi')` total output tokens; low
-    // reserves B=4096 of them, leaving the rest as H — the wire cap stays B+H
-    // and is ALWAYS explicit on a reasoning call (G2), trial included.
+    // The 1¢ ceiling buys `trialBuysTokens` total output tokens storage-free; low
+    // reserves B=4096 of them, leaving the rest as H — the wire cap stays B+H and is
+    // ALWAYS explicit on a reasoning call, trial included. B is never shrunk, so
+    // the level either fits with a minimum viable answer beside it or is refused.
     expect(answer?.type === 'modelCall' && answer.params).toEqual({
-      maxOutputTokens: trialOutputCap('hi'),
+      maxOutputTokens: trialBuysTokens('hi'),
       reasoning: { effort: 'low' },
     });
   });

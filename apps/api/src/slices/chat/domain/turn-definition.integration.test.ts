@@ -203,20 +203,26 @@ async function builtAnswerParams(balanceNanoUsd: bigint): Promise<Record<string,
 }
 
 describe('the chat turn path output-token ceiling', () => {
-  it('builds a low-balance payer a capped modelCall (the legacy budget derivation)', async () => {
+  it('builds a low-balance payer a capped modelCall bound by what the money buys', async () => {
     // $0.10 balance: estInput = ceil(11/4) = 3; billable rates 2500/10_000;
     // fixed = 3×2500 + 11×300 = 10_800; variable = 10_000 + 600 = 10_600;
     // effective = 100_000_000 + 500_000_000 cushion →
-    // maxOutputTokens = floor(599_989_200/10_600) = 56_602.
+    // maxOutputTokens = floor(599_989_200/10_600) = 56_602. The figure is unchanged
+    // from the derivation that used to compute it directly: where money binds, the
+    // canonical estimator's own fit lands on the same token count.
     const params = await builtAnswerParams(100_000_000n);
     expect(params).toEqual({ maxOutputTokens: 56_602 });
   });
 
-  it('omits the ceiling for a rich payer whose budget covers the context window', async () => {
-    // $10_000 balance: the affordable output budget exceeds the remaining
-    // 128_000-token context, so the model default applies (no param).
+  it('caps a rich payer at the context headroom, the tightest bound left once money is loose', async () => {
+    // $10,000 balance, so `budgetBuys` is far past this model's room and the PROMPT
+    // is what binds: BILLING §Model bounds' ceiling = min(providerCap,
+    // contextHeadroom, budgetBuys) = 128_000 − ceil(11/4) = 127_997. The cap used to
+    // be omitted here, which left admission pricing the full 128,000-token window —
+    // three tokens more than the ceiling the specification names, and a wire cap with
+    // no money term behind it on the trial arm of the same code path.
     const params = await builtAnswerParams(10_000_000_000_000n);
-    expect(params).toEqual({});
+    expect(params).toEqual({ maxOutputTokens: 128_000 - Math.ceil('hello world'.length / 4) });
   });
 });
 

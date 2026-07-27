@@ -253,6 +253,301 @@ Orchestrator-only. Append-terse, one line per transition.
   embedder still surfaces CHILD-frame exceptions now that the runtime is nested. Standalone Playwright
   script, frame script throws → `["Error: boom-from-frame"]` captured. So `runs without any uncaught page
   errors` still means what it meant.
+- T2 security lens → PASS, ZERO findings (security 0.97). Answered the python-specific realm question
+  EMPIRICALLY: a Python document enumerating `js.Object.getOwnPropertyNames(js.globalThis)` in the real
+  frame sees 1225 globals and ZERO MessagePort/MessageChannel instances — the port survives only in the
+  IIFE closure. The one indirect vector (prototype-hooking `MessagePort.prototype.postMessage` to capture
+  `this`) is closed by the sandbox CSP: both `js.eval` and `pyodide.code.run_js` fail on `unsafe-eval`.
+  Inbound forgery is closed independently — `port2` left the realm with the transfer.
+- It also proved A8's collapse STRENGTHENED containment rather than merely deduplicating it:
+  `resolveWithinDir` returns null for payloads the deleted clamp would have silently rewritten into an
+  in-tree path (`/../package.json` → clamp gave `/srv/public/package.json`; helper gives null), and the
+  third implementation — `browser-harness.ts`'s `path.join(publicDir, '.' + pathname)` with NO containment
+  check at all — is deleted outright rather than repaired. 19 traversal payloads, all 404.
+- Ruled on the 404-vs-403 nit, agreeing with my view and sharpening it: the property CODE-RULES demands is
+  one containment DECISION, which `resolveWithinDir` now is; the status code is presentation belonging to
+  each server's role, and 404 discloses strictly less than 403. The helper's contract is "null = do not
+  serve", not "null = 403", and both callers honour it. No change.
+- **T2 → CLEAN.** 3/3 lenses, zero findings.
+- T4 → PASS, ZERO findings. The auditor converted all three of the implementer's reasoning-not-measurement
+  claims into measurement via a Chromium probe of the byte-exact parent template against a stub frame:
+  the WindowProxy gate admits the opaque frame's ready; recreate reaches ready:2 AND the new frame is
+  drivable; and deleting `p.start()` leaves ready:1 with nothing ever delivered — A5's failure mode
+  reproduced directly.
+- It ruled the deliberate non-close of the old port SOUND, by counterfactual: shipped behaviour lets a
+  surviving frame keep delivering (beacons 10→34) so the zombie assertion can see it; adding
+  `port.close()` gives 10→10, making a real zombie invisible and the test vacuously green. The retention
+  is the assertion's teeth, not a leak.
+- Refined the founder-facing failure guidance: a HANDSHAKE failure fails early and legibly inside `open()`
+  at `waitForReady(1)`; a captured-but-undelivered port fails later as a timeout on the first
+  `toContainText` that reads like containment but is transport. Also: the spec declares EIGHT test entries
+  (the frame-src pair is a two-iteration loop), six of which drive the harness — the plan's "seven" was my
+  count, not the runner's.
+- **T4 → CLEAN.**
+- CORRECTION TO MY OWN CLAIM → amendment A9. I stated repo-wide that the e2e harness held the last
+  wildcard `contentWindow.postMessage`. Wrong — I generalised a T3 auditor's statement that was correctly
+  scoped to the product path. `embed-harness.ts` also posts `'*'`, but it is T1's deliberate forgery probe
+  whose purpose is to be ignored. Accurate inventory now in A9 for T5 to document instead of my version.
+- FOUNDER RULED: collapse the duplicated frame-side handshake. → T6 added to the plan and dispatched.
+  The duplication was MY plan's fault (GC2 said "in each of the two bootstraps"), surfaced by T2's
+  conventions lens, which correctly declined to score it against T2.
+- T6 → implementing. Parent-side triplication explicitly OUT of scope: independent embedders in different
+  packages, and the e2e copy is a classic-script string served over HTTP that cannot import a module.
+- T6 → implemented. One shared `apps/sandbox/src/embedder-channel.ts`; both bootstraps call it. Gates
+  green (161 tests, 8/8 drift, 39/39 browser, eslint 0, jscpd 0 clones owned / 0.99% package).
+- The evidence that makes this real rather than cosmetic: deleting the SHARED `start()` killed delivery in
+  BOTH runtimes in real Chromium, and restoring it rebuilt both bundles byte-identically. One deletion,
+  two runtimes — which is exactly the coupling the collapse was meant to create.
+- MY CRITERION WAS WORDED WRONG, flagged rather than quietly satisfied → A10. Criterion 3 said `start()`
+  must exist "exactly once in the tree"; that is false and unachievable — `settleTick`'s macrotask clock,
+  `document-sandbox.tsx`, and the e2e harness all legitimately call it. What I meant, and what holds, is
+  exactly one frame-side HANDSHAKE `start()`.
+- Coverage decision, made deliberately and defended rather than defaulted: the shared module is excluded
+  like the bootstraps, because a Node-level test of it would PASS with `start()` deleted — false assurance
+  of exactly the kind this run exists to eliminate. Including it failed the gate at 0%, so this was a real
+  choice, not the path of least resistance. Sent to the security lens for a view, my agreement stated but
+  explicitly not binding.
+- Residue flagged, not decided unilaterally: each bootstrap keeps a ~5-line send guard because criterion 1
+  specifies the helper RETURNS a send function. My view — acceptable, it is an unset-port invariant check
+  rather than correctness-coupled logic — sent to the correctness lens with the specific question of
+  whether the two guards could drift in a way that matters.
+- 161 → 161, no test added or edited. Unusual for a refactor this size; I asked the correctness lens to
+  judge whether the Chromium deletion experiment is adequate pinning or whether a test is missing.
+- QUEUED → A11: python has no STANDING test for port-unreachability from the Pyodide realm, while render
+  does. Twice now (T2's security auditor, T6) the answer came from a throwaway script. Follow-on task,
+  deliberately not folded into T6 — it does not own `python-core.browser.test.ts`, and adding it would
+  have moved the test count mid-audit.
+- T6 → auditing. 3-lens panel.
+- T6 conventions lens → PASS, ZERO findings. Confirmed the duplication is genuinely gone rather than
+  merely under jscpd's threshold: the mint/register/start/transfer/send tail exists once, and each bundle
+  carries exactly one minified copy with no shared runtime object and no new global surface.
+- It reached MY view on the residue independently, blind, before reading the report — applying the rule's
+  own test ("if these two drift, does something break?" → no) and noting that every line whose drift is
+  invisible and fatal (`start()`, the transfer list, the wildcard target, the parse) is now single. It
+  called it not worth the orchestrator's time. Blind-first working as intended: agreement that was reached
+  independently, not inherited from my framing.
+- Verified the comment migration landed all three load-bearing facts and that the A5 `start()` fact sits
+  directly above the call with its lint-corollary intact — "the strongest part of this change", in its
+  words, since that is the line most likely to be deleted as dead.
+- Confirmed neither bootstrap docblock now over- or under-claims: render attributes the port to the shared
+  helper, python describes what its own page does.
+- T6 correctness lens → PASS, ZERO findings (correctness 1.0, security 1.0, conventions 1.0). Verified
+  both intakes stayed genuinely different (python's `init`-stashes/`run`-executes/no-`stop` quoted from
+  the minified artifact) — the helper did NOT homogenise two intentionally different handler bodies.
+- It caught an ordering change neither I nor the implementer had named: `sendToEmbedder` is now assigned
+  AFTER the `ready` broadcast rather than before. Ruled safe, with the mechanism — port delivery is
+  task-queued so nothing can dispatch inside the synchronous start call, and render's error/rejection
+  listeners reach `post()` only via `reportUncaught`, which returns early while `captureRequestId` is null.
+  No new window where `post()` can throw.
+- IMPORTANT CLARIFICATION OF MY OWN A5 FRAMING: A5's "no test in this repo can see a missing `start()`" is
+  scoped to the Node/happy-dom PARENT side. The FRAME side is self-protecting — `render.browser.test.ts`
+  and `python-core.browser.test.ts` run in real Chromium against the SHIPPED bundles, so a dropped
+  `start()`, changed transfer list, lost return value, or leaked global all fail existing tests. That is
+  why 161→161 with no new test is adequate here and would not be elsewhere. The deletion experiment
+  corroborates rather than substitutes.
+- Ruled with me on the residue, with the structural reason: each guard reads only its own module-scoped
+  state and has no third party requiring the two to agree — unlike the handshake, whose other side the
+  PARENT implements once, making divergence a protocol mismatch. It also noted the alternative would force
+  a singleton into the helper for no correctness gain.
+- T6 security lens → PASS, ZERO findings. It did not re-run the implementer's experiment; it built a
+  stronger one that never touched the repo — served the SHIPPED bundles through the real harness with the
+  handshake `start()` stripped from the served bytes only. Render: no delivery in 12s. Python: none in
+  60s. Both with `ready` and the port transfer still succeeding. One line, two runtimes, silent.
+- Re-established python realm unreachability against the NEW shape rather than carrying the prior result
+  forward: from inside Python via the FFI, 1225 own properties of `js.globalThis` enumerated by
+  constructor name, PORT_HITS empty; plus a depth-3 object-graph walk in both realms. Structural reason it
+  cannot leak — esbuild inlines the shared module into each IIFE under a DIFFERENT minified name, so there
+  is no shared runtime object and no new global surface: two closures, one source.
+- Corrected a claim in the implementer's report without it being a finding: "globalThis assignments: 0" is
+  true for the literal pattern grepped, but both bundles carry Zod's `__zod_globalConfig` /
+  `__zod_globalRegistry` writes. Pre-existing, holds no port, no exploit path — recorded so a future
+  auditor running the same grep does not read "zero global writes" as literal.
+- Agreed on the coverage exclusion with a stronger reason than mine, and named the residual cost nobody
+  else would: a Node test here would be ACTIVELY MISLEADING (green with `start()` deleted, sitting in the
+  report as a covered file named after the handshake), and the exclusion is classification-preserving
+  since both bootstraps are excluded for the identical reason. The cost: pure logic added to that file
+  later goes uncovered silently. Instrument if wanted is a standing realm probe plus keeping the module
+  small — not a Node unit test.
+- **T6 → CLEAN.** All five implementation tasks (T1, T2, T3, T4, T6) now clean.
+- T7 → implementing (A11's standing python realm test; owns only `python-core.browser.test.ts`).
+- T5 → implementing (docs). Told to use A9's corrected wildcard inventory rather than my earlier wrong
+  assertion, and to carry T6's A5 scoping clarification: frame side self-protected by real-Chromium tests,
+  parent side not.
+- T5 → implemented (docs). Verified its claims against the shipped bundles and tests rather than lifting
+  them from the plan — which was right, because it caught my A9 table going stale the moment T6 landed.
+- MY A9 TABLE WAS STALE, caught by T5 → addendum written. A9 attributes a `parent.postMessage` source site
+  to each bootstrap; after T6's collapse there is ONE source site (`embedder-channel.ts`) compiled into
+  both bundles, and NEITHER bootstrap contains `parent.postMessage` at all. Shipped count unchanged (two,
+  one per bundle) — what changed is that they are two compilations of one source. The doc states the
+  version a reader grepping `bootstrap.ts` will actually find.
+- FOR THE FOUNDER'S DOC BATCH: `docs/ARCHITECTURE.md:201` says "Parent↔frame traffic is a Zod-typed
+  postMessage bridge shared from packages/shared". Schema half true, transport half now false. T5 grepped
+  every loaded doc and nested CLAUDE.md and reports it is the ONLY falsified transport claim. Not touched
+  — outside T5's ownership and docs need founder approval. Its auditor is re-verifying that the grep was
+  exhaustive, since an incomplete list would make the batch wrong.
+- T5 → auditing. Told explicitly NOT to verify the doc against the plan — the plan has itself been wrong
+  twice this run (A9 addendum, A10) — but against the code as it stands.
+- T7 → implemented. 11→12 in file, 161→162 package, no existing test altered, no pole (3237ms, 20.9%).
+  Falsified properly: RED naming `['__leakedPort']` against a scratchpad-served leak, GREEN after revert,
+  plus by-construction guards (an in-run control port must register as a hit; the scan must read >100
+  constructor names). 1226 own props observed, count deliberately NOT asserted to avoid brittleness.
+- Honest limitation the implementer volunteered: the scan covers own properties of `globalThis` only, so a
+  port behind a prototype, nested object, or closure is out of reach — same shape as render's existing
+  test, but WEAKER than the depth-3 object-graph walk T6's security auditor ran ad-hoc. Put to T7's
+  auditor as a judgement call with a recommendation demanded, not just an observation.
+- T7 → auditing.
+- T7 audit → PASS, ZERO findings. Reproduced the falsification independently rather than trusting it
+  (GLOBAL_HITS `['__leakedPort']` under injection, `[]` clean) and matched the implementer's numbers
+  exactly (1226 names, 1063 read). Confirmed `git diff` is +40/−0 — nothing reverted imperfectly.
+- It verified the by-construction guards are load-bearing, which is what protects the test after the
+  one-off falsification is forgotten: 163 of 1226 names legitimately throw on read, so the `read > 100`
+  floor genuinely catches a regression that made the FFI throw on everything and would otherwise pass by
+  emptiness.
+- DEPTH QUESTION RULED — keep depth-1, on the auditor's recommendation, which it earned by RUNNING the
+  deeper walk rather than reasoning about it:
+  (1) a deeper walk has a structural false positive at every depth — `globalThis.MessagePort.prototype`'s
+  `constructor.name` is "MessagePort", so the standing version would need a prototype exclusion list, and
+  exclusion lists in a negative test are exactly the rot vector this run exists to remove;
+  (2) the extra reach misses the actual failure mode — GC4's risk is an accidental global assignment (a
+  debug line, or the bundle ceasing to be `iife`), which lands at depth 1, while the closure being
+  defended is unreachable at ANY depth, so deeper is a bigger sample of an already-indirect proxy, not a
+  closer proof;
+  (3) ~670ms vs ~65ms, file 3.2s→4.0s — not a pole problem, but paying a maintenance hazard for a
+  ruled-out shape. Plus symmetry: deepening python alone re-creates A11's asymmetry pointing the other way.
+  If ever wanted, the bounded version is depth 2 (which caught everything depth 3 did) with an explicit
+  prototype skip and a per-depth read floor.
+- **T7 → CLEAN.** Six of seven tasks clean; only T5's audit outstanding.
+- T5 audit → PASS with one Minor. Independently verified the wildcard inventory and confirmed the
+  IMPLEMENTER was right and MY earlier version wrong: one wildcard source site repo-wide
+  (`embedder-channel.ts:74`), neither bootstrap containing `parent.postMessage` at all, one per built
+  bundle. Also corrected the implementer's own framing — it reported relocating a paragraph; the diff
+  shows no move, the paragraph is unchanged context. End state right, description wrong.
+- RULING — `DOCUMENTS.md:83-84` (Minor): VALID. The doc says the shared schemas "name no window, origin,
+  or port", which is false of the file it cites — `bridge.ts` comments mention the parent window, a single
+  `message` listener, authenticating the sender by origin, and a stray `postMessage`. The load-bearing
+  half (transport can change without touching the schemas) is true and this run proved it; only the
+  parenthetical over-claims. A checkable statement a reader disproves by opening the cited file costs the
+  doc its credibility. → fix.
+- THE DOC BATCH I WAS ABOUT TO HAND THE FOUNDER WAS INCOMPLETE, caught by this auditor. Beyond
+  `ARCHITECTURE.md:201` (which is misleading rather than false — `port.postMessage` IS a postMessage — so
+  the fix is precision), the same falsified transport prose survives in CODE COMMENTS no task owns:
+  `packages/shared/src/documents/bridge.ts:4, :8, :11-14, :243` still describe a parent-window
+  `message` listener and origin-string authentication. Wrong-comment class under CODE-RULES, and falsified
+  BY THIS RUN — so they are ours to fix, not a founder doc proposal. Global Constraint 1 froze the
+  SCHEMAS, not their prose.
+- **T5 → PASS**, fix pending. Phase 4 close pass started: typecheck, lint, duplication, unused running
+  repo-wide with `--force` (warm turbo cache has masked real failures here before).
+- CLOSE PASS results so far: typecheck 16/16 packages, 0 errors, 0 cached (forced). Duplication 0.99%
+  against a 2% threshold — PASS. Lint and the sandbox/web suites still running.
+- CLOSE PASS — `pnpm lint:unused` (knip) FAILS. Attributed: **pre-existing, not this run.** Two items:
+  (a) `packages/config/vitest.package.config.ts` reported unused — the file is unmodified by this run and
+  is still referenced from `packages/config/package.json:15`, which knip cannot resolve because the path
+  is a CLI arg to a custom runner; (b) a `wrangler`/`ignoreDependencies` config hint for `apps/sandbox` —
+  neither `knip.jsonc` nor any dependency list was touched here. Corroborated independently: a T1 auditor
+  observed these exact two items early in the run and reached the same attribution. Nothing this run did
+  adds or removes a dependency or a config reference. Flagged to the founder, not fixed — and worth their
+  attention because knip is a CI gate, so it is red on the tree independently of this work.
+- CLOSE PASS: lint 16/16 packages clean, 0 cached (forced). So typecheck PASS, lint PASS, duplication
+  PASS, unused FAIL-but-pre-existing. Sandbox and web suites still running.
+- Completeness critic dispatched, pointed at the question single-task audits structurally cannot answer.
+  The sharpest instance: T6 rewrote the handshake in BOTH bootstraps AFTER T1 and T2 had already been
+  audited clean, so their criteria were verified against a state that no longer exists — asked whether
+  every criterion still holds on the tree AS IT STANDS. Also asked to check the parent, two frames, two
+  test harnesses and the e2e harness against EACH OTHER rather than each against the protocol, since that
+  seam is exactly what no per-task audit could see. Told plainly that I have been wrong at least three
+  times in the plan and to assume more, and that a clean answer is a real answer — no manufactured items.
+- CLOSE PASS COMPLETE. typecheck 16/16 · lint 16/16 · duplication 0.99%/2% · sandbox suite · web suite —
+  all green, every one cache-bypassed. Sole failure is knip, attributed pre-existing above.
+- Close fix batch dispatched (one fixer, both items): the `DOCUMENTS.md` over-claim, and the falsified
+  transport comments in `bridge.ts`. Told explicitly that Global Constraint 1 froze the SCHEMAS, not their
+  prose — Zod definitions, exported types and both parse functions must not change, and if a comment
+  cannot be made true without a code change, escalate instead. `ARCHITECTURE.md:201` deliberately withheld
+  from this batch: it is a loaded doc outside the run's approved scope and belongs to the founder.
+- Close fix batch → done. `DOCUMENTS.md` keeps the true, run-proven half and narrows the checkable
+  parenthetical to the Zod definitions. `bridge.ts`'s header now states the real model, and the
+  "stray `postMessage` from an unrelated source" line is replaced with the accurate reason to ignore an
+  unrecognised payload: the port's holder is already the trusted embedder, so the guard is against SKEW
+  between the two sides, not an attacker. Gates green (shared suite 2970 tests, bridge.ts 100%).
+- Global Constraint 1 confirmed MECHANICALLY, not by assertion: `git diff -U0` on bridge.ts filtered to
+  non-comment lines is empty. No comment turned out to need a code change, so nothing escalated.
+- The fixer left one comment deliberately unchanged and said so — `parseFrameToParentMessage`'s
+  ignore-as-noise note — reasoning it is still true because the PARENT does keep a window listener for the
+  handshake. Sent to the re-auditor as a judgement call rather than accepted, along with the related risk
+  that "the frame keeps no window listener" could be misread as "no window listener exists anywhere".
+- Close fix batch → re-auditing.
+- Close fix batch re-audit → PASS, ZERO findings, 1.0 across every dimension. Reproduced the schema freeze
+  with a STRICTER filter than the implementer's (dropping any line starting `*`, `//`, `/*` — zero lines
+  remain) and cross-confirmed via the byte-exact bundle drift test, which could not pass if compiled
+  output had moved. Verified `event.origin === ""` in real Chromium rather than on spec recall.
+- It endorsed the fixer's decision NOT to touch `parseFrameToParentMessage`, with the reason that makes it
+  more than a style call: the app parses through that function on TWO intakes — the window handshake AND
+  the port — and on the window path the "unrelated source" case it describes is STILL LIVE, because
+  document code can `parent.postMessage` with a matching `event.source` and first-ready-wins is what
+  contains it. The parent→frame counterpart became unreachable when the window intake disappeared. A less
+  careful pass would have rewritten both "consistently" and introduced a falsehood.
+- COMPLETENESS CRITIC → FAIL, and it earned it. No shipped-behaviour defect, every re-checkable criterion
+  still holding after T6 rewrote both bootstraps, but three real gaps no per-task audit could see:
+  (1) **the product parent has the exact race both harnesses were rebuilt to avoid** — it registers the
+  one-shot `ready` listener in a PASSIVE `useEffect` while committing the iframe in the same render. My
+  own "Verified facts" section asserted this ordering was safe; that was Inferred reasoning I labelled
+  Verified, and it did not consider Capacitor, where sandbox assets are local files with no network round
+  trip — the fastest frame load and the least tested. Losing `ready` means no port, which is "Working…"
+  forever: the exact symptom this run exists to eliminate.
+  (2) the three parent-side handshakes have DIVERGED on the run's most dangerous line — `embed-harness.ts`
+  uses auto-starting `port.onmessage` with no source gate and no ready-type gate, and it is the only
+  real-Chromium embedder inside a `pnpm test` gate, so the product's `addEventListener`+`start()` pattern
+  is exercised in a real browser nowhere at all.
+  (3) the product silently drops a parent→frame send when no port is captured, where both harnesses throw
+  — unreachable today, but it is the guard that turns a future regression into an error instead of a hang.
+  All three dispatched as a close-gap fix.
+- Critic also caught MY run record: T7 had no task section at all (implemented and audited against A11's
+  prose), the plan still said "Five tasks", the dependency graph omitted T6/T7, and §T5's depends-on was
+  wrong — T5 ran after T6 and depends on it. All fixed; §T7 written retroactively with its criteria as
+  executed plus the depth ruling.
+- A7 SUPERSEDED and marked historical: the founder committed mid-run at `ada0341c`. T1–T5 are in HEAD;
+  only T6/T7/docs/close-fixes are not. `git diff HEAD` is now the CLEANEST baseline, so A7's instruction
+  to distrust it would mislead in the opposite direction. Verified directly rather than taken from the
+  critic. A8's Windows path-mixing observation struck through — T2 deleted that clamp.
+- Close-gap fixes → done. FIX 1 `useEffect` → `useLayoutEffect` (iframe mount point untouched, so no
+  observable behaviour change); FIX 2 the parent→frame send now throws instead of silently dropping;
+  FIX 3 the embed harness moved to the product's handshake shape. Gates green: web 6411 tests
+  (document-sandbox 52→53), sandbox 162, all four drift tests byte-exact, eslint 0 on all three files.
+- THE RACE WAS REAL AND NOTHING WOULD HAVE CAUGHT IT. RED was `Number of calls: 0` — `ready` genuinely
+  lost. The implementer confirmed plainly that none of the 52 existing tests could have seen it: they all
+  dispatch `ready` after `render()` returns, by which point `act()` has already flushed passive effects.
+- METHODOLOGICAL TRAP, recorded because it nearly produced a false all-clear: the first RED attempt used
+  `flushSync(() => root.render(…))` and PASSED against the UNFIXED code — `flushSync` flushes passive
+  effects, so it never opens the window the bug lives in. A naive reproduction would have "proved" there
+  was no bug. The kept test dispatches `ready` from a sibling's `useLayoutEffect`, inside the commit that
+  inserted the iframe. Sent to the re-auditor as the single most important check in the audit.
+- FIX 2 ships ONE untested line and says so rather than manufacturing coverage: the throw is unreachable
+  today (readyRef/portRef set and cleared together, python controls disabled while booting, re-drive gated
+  on readyRef, `stop()` has no render-view caller), and testing it would need a backdoor in the component,
+  so it carries a `v8 ignore` matching the file's two existing markers. Put to the auditor to rule on.
+- FIX 3 MATERIALLY NARROWS A5: with the harness on `addEventListener` + `start()`, deleting that
+  `start()` now FAILS the port-delivery test in real Chromium (15s timeout). That parent-side `start()`
+  was gated by nothing before and is gated by `pnpm test` now. Asked the auditor to state precisely which
+  parent-side `start()` calls are gated and which remain unpinnable.
+- Close-gap re-audit → PASS, ZERO findings. It reproduced BOTH REDs itself rather than accepting them:
+  probe A ran the kept test against a `useLayoutEffect`→`useEffect` source transform (vite plugin, no repo
+  file touched) — 1 failed / 52 passed with `Number of calls: 0`, 2/2 both directions. Probe B stripped
+  the harness `start()` — two transport tests fail at 15s each, and the implementer had UNDERSTATED it as
+  one. Probe C stripped the product's `start()` — 53/53 still pass, confirming it stays unpinnable.
+- It confirmed the kept FIX 1 test is not a `flushSync` variant: the sibling `useLayoutEffect` dispatch
+  runs inside the commit that inserted the iframe, strictly earlier than a passive effect, so the window
+  the bug lives in is genuinely open. Also confirmed `useLayoutEffect` is safe here (createRoot only, no
+  `renderToString`/`hydrateRoot` anywhere in apps/web) and that the remove/add pair on `code` change is now
+  synchronous — strictly safer than before, not merely different.
+- It traced FIX 2's unreachability independently BEFORE reading the report and reached the same
+  conclusion, including the one theoretical leak (a pending re-drive timer surviving `stop()`), which
+  cannot occur because the re-drive effect returns early for python and `stop` is wired only into the
+  python view. Ruled the untested throw correct: fake coverage would be worse, and leaving the silent drop
+  worse still.
+- **A5 FINALISED BY MEASUREMENT** — recorded as a table in the plan. Gated: the embed harness (only
+  because the close-out moved it onto the product's shape) and, in effect, the frame side. Unpinnable: the
+  product parent and the e2e harness. "No test can pin `start()`" is now true of two of four sites, not
+  all four — and the product parent is the dangerous one.
+- **RUN COMPLETE.** T1–T7 clean, close pass green, two close-out fix batches clean. Nothing committed.
 - Weekly API limit killed three agents mid-flight: the T1 fixer (during fix 1), the T3 correctness lens
   (entering Phase B), the T3 conventions lens (entering Phase A). All three resumed from their own
   transcripts rather than respawned, so no context was lost.

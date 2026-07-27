@@ -772,6 +772,366 @@ container. The founder expected it in the sidebar. The horizontal layout cannot 
 **Scoped checks:** `pnpm test:web`; `npx turbo lint typecheck --filter=@hushbox/web --force`.
 **Sensitive:** no → 1 auditor.
 
+## Proof-hardening tasks (18–21) — raise external-boundary coverage
+
+Context: an honest proof audit rated the server decision logic and the web delivery
+surface as prod-equivalent, but found the two EXTERNAL boundaries unproven — no test in
+this repo has ever made a real call to FCM or to any push service. Research on 2026-07-26
+(seven parallel researchers + one empirical analyst) answered every unknown these tasks
+carried; the spikes originally planned inside Tasks 18 and 20 are DELETED as answered,
+and Task 21 is killed as scoped. Tasks 18–20 are independent and run in parallel.
+
+### FOUNDER RULINGS 2026-07-26 (binding)
+
+- **R-A — Resend's false evidence row is fixed by DELETION, not by a real call.** New Task 22.
+- **R-B — Task 18 lands without a local real-call verification.** No agent may hold the
+  credential; the real call first executes in the founder's CI. The audit CANNOT verify the
+  real call and must not treat that as a failure — see Task 18's audit note.
+- **R-C — Task 21 stays killed.** Firefox + autopush is declined; Task 19 is the proof.
+- **R-D — the CI FCM service account uses a CUSTOM IAM role holding exactly
+  `cloudmessaging.messages.create`**, not the predefined `roles/firebasecloudmessaging.admin`.
+
+### Research findings binding on all four tasks (authoritative — do not re-derive)
+
+**F1 — Evidence rows must prove a real call, and two of ours do not.** `service_evidence`
+is a Postgres table; `recordServiceEvidence(db, isCI, service)` no-ops unless `isCI`;
+`pnpm verify:evidence --require=<svc>` exits 1 and hard-fails the CI job on a missing row
+(`scripts/verify-evidence.ts:86-91`). Honest writers record only after a real call
+succeeded: Helcim after an approved sandbox charge (`payment-helcim.ts:159-164`), Linear
+after a real GraphQL call (`linear-real.integration.test.ts:134-137`), R2 after a real S3
+PUT (`storage-r2.ts:207-209`). `push-fcm` does NOT: `push-fcm.integration.test.ts:82-103`
+lands the row with `fetchImpl` mocked, and `ci.yml:222-224` admits it in a comment. The
+FOUNDER RULE for this work is: **an evidence row is written only when a real network call
+to the real external service actually happened.**
+
+**F2 — FCM credentials must follow the Linear pattern, not the env registry.** Declaring
+a `secret()` for `Mode.CiVitest` makes `generate-env.ts:246-248` throw
+`Missing required secrets in process.env` and hard-fails CI the moment the code lands.
+Linear avoids this: the secret is a raw job env var (`ci.yml:142`) read directly via
+`process.env['LINEAR_API_KEY_READ']` (`linear-real.integration.test.ts:37-39`) behind
+`describe.skipIf(!shouldRun)`, with `verify:evidence` as the real guard
+(`linear-real.integration.test.ts:23-24`). Gating derives from ONE `createEnvUtilities()`
+call plus explicit key/db-presence terms — never raw `process.env['CI']` sniffing, and
+never key-presence alone. Fork PRs already cannot run CI at all (OPENROUTER's ciVitest
+`secret()` already fail-fasts), so forks impose no new constraint.
+
+**F3 — FCM `validate_only` semantics are settled; NO SPIKE IS NEEDED.** It is a
+top-level snake_case sibling of `message` in the POST body to
+`https://fcm.googleapis.com/v1/projects/{projectId}/messages:send` (Google REST
+reference). The documented ErrorCode taxonomy separates the token cases: fabricated →
+400 `INVALID_ARGUMENT`; real-but-other-project → 403 `SENDER_ID_MISMATCH`; real-but-lapsed
+→ 404 `UNREGISTERED`; each carries `details[].@type` of
+`type.googleapis.com/google.firebase.fcm.v1.FcmError` (or `google.rpc.BadRequest`).
+UNVERIFIED and therefore NEVER to be asserted: the exact success placeholder (community
+reports `projects/{id}/messages/fake_message_id`; absent from Google's docs) and any one
+specific status for a fabricated token. Google's throttling page never mentions
+`validate_only` (zero matches) — assume it debits normal send quota. Scope required:
+`https://www.googleapis.com/auth/firebase.messaging`.
+
+**F4 — CDP `ServiceWorker.deliverPushMessage` bypasses RFC 8291 entirely.** Its `data`
+parameter is a plain string with no `p256dh`, no `auth`, no VAPID input; it injects
+plaintext after the point where decryption would occur. Our existing notifications E2E
+therefore proves the service worker's handling logic and NOTHING about our encryption —
+which is exactly the gap Task 19 closes.
+
+**F5 — Task 13's focus finding does NOT transfer to the page's own attention state.**
+`push-harness.ts:238-240` concluded focus emulation is unusable — but that is about the
+service worker's `clients.matchAll({focused:true})`, a browser-process-wide view outside
+the CDP target. The page's own `document.hasFocus()` is inside it and IS deterministically
+controllable. Measured on this machine, Playwright 1.60.0 / chromium-1223:
+- second tab + `bringToFront()`: **0/26 away** across same-context, cross-context, both
+  headless modes, with and without focus emulation — the state is UNREACHABLE, and it
+  fails silently (count stays 0), so this approach is a defect, not a risk.
+- `Emulation.setPageVisibilityOverride`: command does not exist in modern Chrome.
+  `Page.setWebLifecycleState('frozen')`: accepted, zero effect. `page.emulateMedia`:
+  cannot touch visibility.
+- `Emulation.setFocusEmulationEnabled({enabled:false})` **+**
+  `Browser.setWindowBounds({windowId, bounds:{windowState:'minimized'}})` — BOTH required,
+  neither works alone (0/6 each): **6/6 away, 7/7 at CI's exact worker count of 7, 0 extra
+  polls, real `blur` event, real `focus` event on restore 7/7.** `visibilityState` stays
+  `"visible"`; timers keep full rate; title writes still land. Fails under `--headed`
+  (0/4 under bare Xvfb) — acceptable, since CI and every `e2e:*` script are headless.
+- `navigator.setAppBadge` IS callable and RESOLVES in a plain headless tab on
+  `http://localhost` (secure context), so `app-badge.ts:11`'s guard passes and the real
+  API really runs. There is **no `getAppBadge`** — a wrap-and-delegate spy is the only
+  possible observation, and that unavoidable leaf spy is honest.
+
+**F6 — real Web Push against Chrome is not achievable, on three independent grounds.**
+(a) A genuine `pushManager.subscribe()` needs headed Chromium + `launchPersistentContext`;
+our auth is entirely `storageState` (`playwright.config.ts:212`, `fixtures.ts:36-39`), and
+Push in incognito is unsupported by design (open Chromium feature request). (b)
+`--host-resolver-rules` can redirect only `fcm.googleapis.com`, the SEND-side endpoint;
+browser delivery rides a separate persistent MCS connection to `mtalk.google.com:5228`
+speaking a proprietary protocol — no evidence anyone has made this work. (c) The only tool
+that ever did this, `GoogleChromeLabs/web-push-testing-service`, was archived 2021-08-31.
+The one evidenced real path is **Firefox + Mozilla autopush** (`dom.push.serverURL` +
+`dom.push.testing.allowInsecureServerURL`, Playwright `firefoxUserPrefs`, `autopush-rs`
+containerized) — which requires a new docker-compose service and is an INFRASTRUCTURE
+decision reserved to the founder.
+
+## Task 18 — Prove the FCM send path against Google, and make its evidence row honest
+
+**Objective:** make one real, authenticated call to FCM HTTP v1 in CI, and ensure the
+`push-fcm` evidence row is written only when that real call happened.
+
+**Design context:** two defects are being fixed at once, and they are inseparable —
+fixing the call without fixing the evidence row would leave a mocked row satisfying
+`ci.yml:227-228`. Per F3 no spike is needed; per F2 the credential rides the Linear
+pattern; per F1 the row must follow a real call. The strongest part of this proof is the
+OAuth leg: a real POST to `https://oauth2.googleapis.com/token` with an RS256-signed
+service-account JWT proves `packages/crypto/src/rs256-jwt.ts` produces a signature Google
+itself accepts against a real RSA key — nothing verifies that today.
+
+**Acceptance criteria:**
+- `push-fcm.ts` supports a validate-only send. Production sends are byte-identical to
+  today: when the flag is off, the request body must contain no `validate_only` key at
+  all. Pin that with a unit test asserting the key's absence in the default body.
+- One CI-gated integration test makes the real two-leg call (OAuth exchange, then
+  `messages:send` with `validate_only: true` and a fabricated token) and asserts:
+  (a) the OAuth exchange returned an access token — a failure here fails the test;
+  (b) the send returned a parsed FCM response: EITHER 200 with a `name` string, OR an
+  error whose `details[]` carries `@type` ending in `google.firebase.fcm.v1.FcmError` or
+  `google.rpc.BadRequest`. A `401` fails the test.
+  Do NOT assert a specific HTTP status, a specific errorCode, or the success placeholder
+  string (F3 — those are unverified and Google may change them).
+- The test also asserts our OWN classifier against Google's real error body: feed the
+  actual response body to `collectFcmErrorCodes` and assert it returns the codes present.
+  This is the part that replaces mock-shaped error handling with reality.
+- Gating follows `deriveLinearGate` exactly: one `createEnvUtilities()` call, `isCI &&
+  !isE2E && hasCredentials`, expressed as a named pure function with its own unit test,
+  behind `describe.skipIf`. Credentials read from `process.env` directly. NO new
+  `env.config.ts` entry, and no `secret()` for any CI mode (F2).
+- `recordServiceEvidence(..., SERVICE_NAMES.PUSH_FCM)` is called as the LAST statement of
+  that test, only after every assertion passed — mirroring
+  `gateway-metadata.integration.test.ts:75`.
+- The pre-existing mocked evidence write is GONE: delete the row-fabricating test at
+  `push-fcm.integration.test.ts:82-103`, and remove the evidence write from `push-fcm.ts`
+  itself (the adapter's real path never runs in CI — the factory returns mocks for
+  `isLocalDev || isCI` — so its only consumer was that mocked test). Removing the seam is
+  what makes the rule structural rather than a convention. Drop the now-unused `db`/`isCI`
+  config fields if nothing else uses them; if the factory passes them, update it.
+- `ci.yml` passes the two credentials as raw job env vars on the `test` job, alongside
+  `LINEAR_API_KEY_READ`. The existing `--require=push-fcm` step is UNCHANGED — it now
+  guards a real call instead of a mock.
+- The misleading comment at `ci.yml:222-224` is corrected: it currently claims FCM's
+  evidence is a mocked-seam code-path assertion. After this task that is true only of
+  Resend. Narrow it, do not delete it.
+- Not on the hot test path: `*.integration.test.ts`, skipped locally.
+
+**Founder-provisioned credential (R-D):** a service account whose ONLY permission is
+`cloudmessaging.messages.create`, via a custom IAM role — not
+`roles/firebasecloudmessaging.admin`. Exposed to CI as two GitHub secrets named
+`FCM_PROJECT_ID_CI` and `FCM_SERVICE_ACCOUNT_JSON_CI` — distinct from the production
+`FCM_PROJECT_ID`/`FCM_SERVICE_ACCOUNT_JSON` so a production credential can never be the
+thing CI reads. The test reads both from `process.env` directly (F2).
+
+**AUDIT NOTE (R-B) — what the auditor CAN and CANNOT verify.** The credential does not
+exist in any agent's environment, so the real two-leg call CANNOT be executed during
+implementation or audit, and its absence is NOT a finding. What the auditor MUST verify:
+the gate function's unit test; that the suite skips (not fails) with no credential; that
+the default request body contains no `validate_only` key; that the classifier assertion
+consumes a real response body rather than a fixture the test itself authored; that the
+evidence write is the last statement after all assertions; that the mocked evidence write
+and its test are gone; and that no `env.config.ts` `secret()` was added for a CI mode.
+The real call is proven by the founder's next CI run, not by this audit.
+
+**CAVEATS (state in the report):** proves OAuth/JWT signing, project id, scope, request
+shape and error classification against Google — NOT delivery to a device. Requires a
+founder-provisioned service account; without it the test skips and
+`verify:evidence --require=push-fcm` fails loudly, which is the intended guard.
+
+**Files:** `apps/api/src/slices/notifications/adapters/push-fcm.ts`, its unit test, a new
+`push-fcm-live.integration.test.ts`, deletion of the mocked evidence test in
+`push-fcm.integration.test.ts`, `push-sender-factory.ts` if the config shape changes,
+`.github/workflows/ci.yml`.
+**Scoped checks:** `pnpm test:api`; `turbo lint typecheck --filter=@hushbox/api --force`.
+**Sensitive:** no → 1 auditor, but see the coordination note: this task edits CI.
+
+## Task 19 — Prove our Web Push ciphertext is decryptable by something that is not us
+
+**Objective:** close the gap where our aes128gcm output matches one RFC vector but no
+independent implementation has ever decrypted arbitrary output of ours.
+
+**Design context:** `encrypt.test.ts:39` pins the full body (header ‖ ciphertext) byte-exact
+to RFC 8291 Appendix A. That proves we reproduce ONE fixed case with a caller-supplied
+salt and ephemeral key. It does not prove a real receiver can decrypt output generated
+from random keys — and per F4 our E2E push path cannot prove it either, because CDP
+injects plaintext. The deterministic seam already exists and needs no production change:
+`encryptWebPushPayload` takes `salt` and `ephemeral` as plain parameters
+(`encrypt.ts:58-69`); production randomness lives one layer up in `send.ts:70-72`.
+
+**The decryptor must have its own external anchor.** Written from RFC 8291/8188 text, NOT
+by mirroring our encrypt code — and verified against the RFC vector in the DECRYPT
+direction BEFORE it is trusted as an oracle. A decryptor derived from the same reasoning
+as the encryptor would share its bugs and prove nothing. Concretely it must independently
+parse the aes128gcm header (salt(16) ‖ rs(4, big-endian) ‖ idlen(1) ‖ keyid), redo the ECDH,
+rebuild the `WebPush: info` IKM and both `Content-Encoding: aes128gcm` / `nonce` HKDF
+derivations, AES-GCM-decrypt, and strip the 0x02 delimiter — reading the RFC, not
+`encrypt.ts`.
+
+**Acceptance criteria:**
+- The decryptor is verified against RFC 8291 Appendix A in the decrypt direction first
+  (vector body in → vector plaintext out), then used as the oracle.
+- Round-trip proven over freshly generated P-256 subscription keypairs, random auth
+  secrets and random salts — several independent iterations, not one — so it covers
+  arbitrary output rather than one fixed case.
+- At least one negative control: a deliberately corrupted body (flipped ciphertext byte,
+  or a mismatched auth secret) must FAIL to decrypt. A round-trip test with no negative
+  control cannot distinguish a working oracle from one that returns the input.
+- Test-only; no production code changes; no new dependency (WebCrypto only, as
+  `encrypt.ts` already uses).
+- Any new fixed test secret is added to `.gitleaks.toml` as an AND-pinned path+value
+  allowlist entry matching the four existing webpush entries. Run gitleaks on the new
+  files before declaring done — a prior task in this run shipped a gitleaks failure by
+  scanning only config and not its own tests.
+
+**CAVEATS (state in the report):** proves the CRYPTO and wire format only — NOT that a
+push service accepts our HTTP request (headers, TTL, Topic, VAPID audience). Say so plainly.
+
+**Files:** `apps/api/src/slices/notifications/adapters/webpush/**` (a test-only decryptor
+helper + its test), `.gitleaks.toml` if a new fixed secret is introduced.
+**Scoped checks:** `pnpm test:api`; `turbo lint typecheck --filter=@hushbox/api --force`;
+gitleaks over the changed paths.
+**Sensitive:** YES (crypto) → 2 auditors.
+
+## Task 20 — Prove the unread title and app badge in a real browser, on the real journey
+
+**Objective:** prove end-to-end, in a real browser, that a real message from another user
+arriving while the user is genuinely not focused raises the tab title to `(1) HushBox`,
+drives `navigator.setAppBadge(1)`, and that returning to the app clears both.
+
+**Design context:** this supersedes the earlier, weaker scoping of this task, which
+assumed (from Task 13) that a real unfocused state was unreachable. F5 disproves that:
+Task 13's finding is about the service worker's view, not the page's own. The lever is
+deterministic — 7/7 at CI's worker count with zero added polls — so the real journey is
+available at no flake cost, and every unit in the chain is already unit-covered
+(`use-activity-sinks.test.ts`, `app-badge.test.ts`, `app-attention.test.ts`,
+`use-conversation-activity.test.ts`). The ONLY marginal proof an E2E can add is the seam,
+so the test must keep that seam real end to end.
+
+**Three constraints that are load-bearing — do not deviate:**
+- The **group conversation fixture is mandatory**, not a convenience: `use-group-chat.ts:75,86`
+  opens a socket only when `members > 1`, so a 1:1 conversation emits no `message:new` at all.
+- **Bob turns AI off before sending** (the `getAiToggleButton()` pattern already in
+  `realtime.spec.ts`). With AI on, the assistant reply is a second countable event and
+  `(n)` becomes racy. This is for determinism, not speed.
+- **Both CDP calls are required** — `Emulation.setFocusEmulationEnabled({enabled:false})`
+  AND `Browser.setWindowBounds({windowState:'minimized'})`. Each alone measured 0/6.
+
+**Acceptance criteria:**
+- Extends `e2e/group/realtime.spec.ts` (Pillar 4.1 — the fixtures and WS-ready helpers are
+  already there); tagged `@chromium-only`, since `newCDPSession` is Chromium-only.
+- The badge spy is installed via `context.addInitScript` BEFORE any navigation and is
+  **wrap-and-delegate**, not replace: `'setAppBadge' in navigator` must stay true and the
+  real API must still be invoked. Record both `setAppBadge` arguments and `clearAppBadge`
+  calls.
+- The test asserts its own precondition after going away —
+  `expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(false)` — so a lever
+  regression or a `--headed` run fails loudly and self-explainingly instead of producing a
+  mystery assertion failure. Measured to need zero extra polls, so it costs nothing.
+- Title asserted with the web-first retrying `expect(page).toHaveTitle('(1) HushBox')`
+  (rule 2.8), never a bare `page.title()` read. Base title is `HushBox`
+  (`apps/web/index.html:154`); format from `use-activity-sinks.ts:28-31`.
+- Restoring the window (`windowState:'normal'`) fires a real `focus` event; assert the
+  title returns to bare `HushBox` and that the spy recorded `clearAppBadge` — covering
+  `use-activity-reset.ts:9-23` and `app-badge.ts:12`'s zero-routes-through-clear rule in
+  the same journey.
+- Both raw CDP mechanisms live in ONE named helper pair in `e2e/helpers/` (rule 3.3 — raw
+  mechanisms live in helpers, never specs). Name them so they cannot be confused with
+  `push-harness.ts`'s existing `leaveApp`/`returnToApp`, which mean "navigate to
+  about:blank" — these are genuinely different states (no window at all vs. window present
+  but unfocused) and both are needed.
+- The doc comment at `push-harness.ts:229-243` is NARROWED, not deleted: it currently
+  asserts focus emulation is unusable, which as written would mislead the next agent into
+  rejecting this approach. It must say it is unusable *for the service worker's view*.
+- Green at `--retries=0`. No `waitForTimeout`, no sleeps.
+- Test-only; no production code changes.
+
+**CAVEATS (state in the report):** the badge is observed through a wrap-and-delegate spy
+because no `getAppBadge` exists — the call is real, the observation is a spy. The lever is
+Chromium-only and uses a Playwright-unsupported CDP surface; it does not work `--headed`.
+
+**Files:** `e2e/group/realtime.spec.ts`, a new helper in `e2e/helpers/`,
+`e2e/notifications/push-harness.ts` (comment narrowing only).
+**Scoped checks:** `turbo lint typecheck --filter=@hushbox/e2e --force`; the touched suite
+green at `--retries=0`.
+**Sensitive:** no → 1 auditor.
+
+## Task 21 — KILLED AS SCOPED (real push service against Chrome)
+
+**Status: killed before dispatch, on evidence (F6), and CONFIRMED KILLED by founder ruling
+R-C 2026-07-26. Not a deferral — a negative result.**
+
+The original spike proposed redirecting Chrome's push endpoint to a local server. That is
+not achievable, on three independent grounds recorded in F6: `pushManager.subscribe()`
+requires headed Chromium + `launchPersistentContext` which our `storageState` auth cannot
+survive; `--host-resolver-rules` reaches only the send-side `fcm.googleapis.com` and not
+the `mtalk.google.com:5228` MCS delivery channel; and the only tool that ever did this was
+archived in 2021. Running the spike would have consumed a task to reach this same answer.
+
+**Re-entry condition (founder decision, NOT an agent decision):** the one evidenced path
+to genuine end-to-end Web Push — our server encrypts → a real push service delivers → a
+real browser service worker decrypts — is **Firefox + Mozilla autopush**, via
+`firefoxUserPrefs` (`dom.push.serverURL`, `dom.push.testing.allowInsecureServerURL`) and a
+containerized `autopush-rs`. It would subsume Task 19's proof rather than sit beside it.
+It requires adding a service to `docker-compose.yml` (autopush-rs wants a Bigtable
+emulator, ~1.5GB) and lifting the notifications suite out of `@chromium-only`. Per
+AGENT-RULES that is new infrastructure and a tech-stack change — reserved to the founder.
+
+
+## Task 22 — Delete Resend's false evidence claim (depends on Task 18)
+
+**Objective:** stop claiming CI verified a Resend call, since it structurally cannot.
+
+**Design context (founder ruling R-A):** the `resend` evidence row can never be earned.
+Two conditions must both hold — a real call, and `isCI` — and `email-sender-factory.ts:64-84`
+makes them mutually exclusive: `isLocalDev || isCI` returns `withMailboxCapture(createMockEmailSender())`,
+so the real adapter is constructed only in production, where `recordServiceEvidence` no-ops
+on `!isCI`. `RESEND_API_KEY` has no entry outside production (`env.config.ts:331-335`). The
+only writer is `email-resend.integration.test.ts`, whose every test stubs `fetchImpl`
+(`:27-29`). The founder ruled deletion over building a real Resend call: no claim beats a
+false one. Note this does NOT reduce real coverage — E2E still exercises email end to end
+through `/dev/mailbox` (`dev/routes.ts:723,731`) backed by `withMailboxCapture`; only the
+false *claim* goes away.
+
+**DEPENDS ON TASK 18** — solely because both edit `.github/workflows/ci.yml`. Do not run
+them concurrently. Task 18 rewrites the FCM half of the `ci.yml:222-224` comment; Task 22
+removes the Resend half and the step.
+
+**Acceptance criteria:**
+- The `Verify Resend was called` step and its `pnpm verify:evidence --require=resend` line
+  are removed from `ci.yml`. The comment above it no longer mentions Resend; after Task 18
+  the FCM claim is real, so what remains must describe only that.
+- The evidence write is removed from `email-resend.ts` — the `recordEvidence` helper and
+  both call sites in `send()`/`sendBatch()`. Removing the seam is what makes the deletion
+  structural rather than a convention.
+- The two evidence-asserting tests in `email-resend.integration.test.ts` are deleted. Every
+  other test in that file must still pass untouched — the file also covers request shape and
+  error handling, which stay.
+- `SERVICE_NAMES.RESEND` is removed from `packages/db/src/evidence.ts` and from the
+  assertion at `evidence.integration.test.ts:49`. A registry entry no writer can satisfy is
+  dead weight, and `verify-evidence.ts`'s `VALID_SERVICES` derives from this object, so
+  leaving it would keep `--require=resend` a legal argument that can never pass.
+- Orphans YOUR change creates are removed: if `db`/`isCI` become unused on
+  `ResendEmailSenderConfig`, drop them and update `email-sender-factory.ts:75-77`. If that
+  makes `db` unused in `createEmailSenderFromEnv`'s signature, REPORT the ripple rather than
+  forcing it through — that touches the composition root and is a judgment call for the
+  orchestrator.
+- `pnpm lint:unused` (knip) must be clean for the touched files — this task deletes
+  exports, which is exactly what knip catches.
+
+**CAVEATS (state in the report):** after this, no CI signal asserts anything about Resend
+beyond the mock-backed E2E newsletter flow. That is the intended, honest state. Re-entry
+condition, recorded for the future: Resend publishes test-mode addresses and restricted
+send-only keys, so a real CI call is buildable later on Task 18's exact shape — that was
+considered and declined, not overlooked.
+
+**Files:** `.github/workflows/ci.yml`, `apps/api/src/slices/notifications/adapters/email-resend.ts`,
+`email-resend.integration.test.ts`, `email-sender-factory.ts` (if the config shape changes),
+`packages/db/src/evidence.ts`, `packages/db/src/evidence.integration.test.ts`.
+**Scoped checks:** `pnpm test:api`; `pnpm test:db`; `turbo lint typecheck --filter=@hushbox/api --filter=@hushbox/db --force`; `pnpm lint:unused`.
+**Sensitive:** no → 1 auditor.
+
 ## Standing amendments
 
 - **FOUNDER RULING 2026-07-24 — I7's `push-event` postMessage is REMOVED (supersedes I7,

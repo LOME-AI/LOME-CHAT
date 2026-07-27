@@ -307,3 +307,545 @@ Consequence accepted: nothing resets the read to the top except page navigation 
 - **Acceptance criteria:** (1) `publicHoistPattern: ['onnxruntime-common']` added to `pnpm-workspace.yaml` beside `overrides:` — **exactly that one package**, not `onnxruntime-*` (which would pointlessly hoist the native binaries), with a comment stating the durable fact: transformers imports it as an undeclared bare specifier and the dev optimizer's output directory cannot see the private hoist dir; (2) `pnpm install --frozen-lockfile` — the safe form, which fails rather than writes if out of sync; (3) **`git diff pnpm-lock.yaml` shows ZERO new lines** beyond the pre-existing foreign drift recorded before the change — if the lockfile gains anything, stop and report; (4) `node_modules/onnxruntime-common` exists as a symlink to `.pnpm/onnxruntime-common@1.22.0-dev.20250409-89f8206ba4/…`, and `.pnpm/node_modules/onnxruntime-common` is gone (moved, not copied — correct, not a regression); (5) a resolution probe from `apps/marketing/node_modules/.vite/deps/` now RESOLVES `onnxruntime-common` (it is `MODULE_NOT_FOUND` today) — record both before and after; (6) **the one genuinely unverified risk:** after `rm -rf apps/*/node_modules/.vite/deps` and a dev-server run driving the TTS worker, the emitted `kokoro-js` prebundle must still be ~4,218,418 bytes with `onnxruntime-common` **inlined** and zero bare specifiers — i.e. it must NOT split into a second ORT chunk, which would break `instanceof Tensor` across the boundary. If it splits, STOP and report; that outcome reverses the recommendation; (7) prod build + `verify:web-bundle` still green, `dist/ort/*` sha256 unchanged, and the shipped ORT version still `1.22.0-dev.20250409-89f8206ba4`.
 - **Files:** `pnpm-workspace.yaml` only (plus whatever `pnpm install` legitimately relinks in `node_modules`, which is not repo content).
 - **Sensitive:** yes — a workspace-wide resolution change touching every package. **Auditors: 2** — one correctness lens (does it resolve, is the pin intact, is the prebundle still inlined), one regression lens (lockfile untouched, CI `--frozen-lockfile` still valid, no other package's resolution moved).
+
+---
+
+## AMENDMENT — 2026-07-26: X-series (admin dead weight, barrel shape, dependency declaration, dev reload)
+
+Founder approved X1–X3 and reopened the dev first-click reload as X4. Founder ruling,
+verbatim in effect: *"I have never allowed the dev first click reload, lets fix that."*
+This **overrides** the acceptance recorded at plan.md §W1/W2 — the reload is a defect to
+fix, not an accepted cost. Founder also ruled working-tree/lockfile churn acceptable
+("I am fine with any change, dont worry about in progress changes"), which is what moves
+`packageExtensions` from deferred into scope. Founder fact, load-bearing for X2: the
+accessibility widget is mounted on **every** marketing blog and landing page and must keep
+working.
+
+Design record: `research/admin-tts-exposure.md` findings are carried inline below (the
+analysts had no write tools); the decisive mechanism is restated here because both the
+implementer and the auditor need it.
+
+**The mechanism (do not re-derive, do not "improve" around it):** the heavy dependencies
+are NOT in `tts-engine.ts` — that module imports only its worker protocol. `kokoro-js`
+is imported by `lib/tts.worker.ts:20`, reached through
+`new Worker(new URL('tts.worker.ts', import.meta.url), { type: 'module' })` at
+`tts-engine.ts:116`. Vite/rolldown resolves and emits that worker as an asset at
+**transform time, before tree-shaking**, and emitted assets are never garbage-collected.
+Proof from the current artifact: `grep -rl "TTS speak was cancelled" apps/admin/dist`
+returns zero (the engine's own code was fully tree-shaken) while
+`apps/admin/dist/assets/tts.worker-DGv4QGFc.js` ships anyway. Therefore the ONLY way to
+stop the emission is to remove `tts-engine.ts` from the app's module graph entirely. A
+dynamic `import()` does not do it — rolldown follows dynamic edges at build time.
+
+**Deliberate no, recorded so it is not re-proposed:** converting `sections/audio.tsx:14`'s
+static `getTtsService` import to a dynamic one. Measured, the megabytes are already lazy
+everywhere (no Worker is constructed at mount; `getTtsService()` runs only from a click
+handler at `audio.tsx:89`). It would defer 2.74 kB gzip on marketing, cost the extraction
+of `TTS_VOICES` out of the engine (rendered synchronously in the voice `<Select>` at
+`audio.tsx:167`), add a click-time chunk-fetch failure mode, and fix nothing about admin.
+
+**Enforcement doctrine for this amendment:** the artifact guard is the single mechanism.
+No ESLint `no-restricted-imports` scoped to an app — `packages/config/eslint.config.js:30-33`
+documents that flat config REPLACES a rule key rather than merging, so an admin-scoped
+block would silently drop the animation-library bans for every admin file. No source-level
+closure test either: it would be a second mechanism guarding the same failure, which
+CODE-RULES forbids.
+
+### X1 — Declare which apps ship TTS; extend the bundle verifier to TTS-free dists
+
+- **Objective:** make "this app ships TTS" a declared fact the build checks, instead of an
+  emergent bundler outcome nobody chose.
+- **Design context:** `scripts/verify-web-bundle.ts` already implements exactly this class
+  of guard and is wired ONLY to `apps/web/dist` via `scripts/build-web-bundle.ts:89,109`.
+  `scripts/build-admin-bundle.ts` verifies nothing at all. The capability exists; the
+  coverage does not. Confirmed: `apps/admin/dist/assets/tts.worker-DGv4QGFc.js` contains 2
+  occurrences of `/assets/ort-`, so the EXISTING `checkBundledRuntimeReferences` and
+  `checkStrayRuntimeCopies` would already fail admin today if pointed at it. Do not write
+  new checks that duplicate those; add the missing expectation and the wiring.
+- **Acceptance criteria:**
+  1. `VerifyWebBundleOptions` gains a TTS-shipping expectation (a boolean such as
+     `shipsTts`, or the declared app list — implementer's choice of shape, but the set of
+     TTS-shipping apps must be declared in exactly ONE place and imported, never repeated
+     per call site).
+  2. When TTS is expected (today: the merged web bundle), behaviour is **byte-for-byte
+     unchanged** — all six existing checks run exactly as now. Pin this: the existing
+     `verifyWebBundle` tests must pass unmodified except for any added required argument.
+  3. When TTS is NOT expected: `checkSelfHostedRuntime` must be skipped (it REQUIRES a
+     `dist/ort/**` tree to exist and would false-fail a legitimately TTS-free dist), and
+     the dist must instead be asserted to contain **zero** `ORT_RUNTIME_FILE` matches and
+     **zero** `tts.worker-*.js` chunks. Note `checkWorkerMetaProperty` currently fails on
+     zero worker chunks by design (it must not pass vacuously) — a TTS-free dist must not
+     trip that failure path.
+  4. RED FIRST and watched: `collectWebBundleViolations` over a fixture dist containing
+     `assets/tts.worker-abc.js` and `assets/ort-wasm-simd-threaded.jsep-xyz.wasm` with TTS
+     not expected returns exactly the two expected violations. This test must be observed
+     failing before the implementation exists.
+  5. `buildAdminBundle` (`scripts/build-admin-bundle.ts:38-49`) calls the verifier against
+     `apps/admin/dist` with TTS not expected.
+  6. `apps/crawler-view` is enumerated in the declared list as TTS-free even though it has
+     no build script or dist today, so it is guarded the day it gets one.
+  7. The file walk must not wander into `apps/web/android/app/src/main/assets/public/`,
+     which holds a checked-in built copy of the web app carrying its own worker chunks.
+- **Expected end state of this task:** the admin build FAILS. That is correct and
+  intentional — X2 makes it pass. Do not weaken the check to make the build green.
+- **Files:** `scripts/verify-web-bundle.ts`, `scripts/verify-web-bundle.test.ts`,
+  `scripts/build-admin-bundle.ts`, `scripts/build-admin-bundle.test.ts`.
+- **Scoped checks:** `turbo test typecheck lint --filter=@hushbox/scripts`;
+  `jscpd --threshold 2` over the four files.
+- **Sensitive:** no. **Auditors: 1.**
+
+### X2 — Split the accessibility barrel by weight (depends on X1)
+
+- **Objective:** make the light accessibility surface's TTS-freedom a property of the
+  module graph, so an app importing the providers cannot inherit 23.9 MB by writing the
+  obvious import.
+- **Design context:** `packages/ui/src/components/accessibility/index.ts` exports five
+  symbols; two are light (`A11yProvider`, `MotionProvider`, plus internal-only
+  `SvgColorblindDefs`) and two are heavy (`AccessibilityWidget`, `AccessibilityPanel` →
+  `sections/index.ts` → `sections/audio.tsx:14` → the engine → the worker). `A11yProvider`
+  itself is already TTS-free: it imports `sections/aids/magnifier` and
+  `sections/aids/reading-guide` by narrow path, never the sections barrel
+  (`a11y-provider.tsx:10-11`). The barrel is the sole leak.
+- **Full importer census (authoritative — do not re-grep and reach a different set):**
+  `AccessibilityWidget` → `apps/marketing/src/layouts/BlogLayout.astro:3`,
+  `apps/marketing/src/layouts/LandingLayout.astro:3` (both `client:load`).
+  `AccessibilityPanel` → `apps/web/src/routes/_app/accessibility.tsx:4`.
+  Light-only importers needing NO change → `apps/web/src/routes/__root.tsx:5`,
+  `apps/admin/src/routes/__root.tsx:3`, `apps/web/src/test-utils/render.tsx:5`.
+  Also touching the barrel → `apps/web/src/routes/__root.test.tsx:62-63` (a `vi.mock`
+  factory that lists both heavy symbols and must be updated to match the new shape).
+  `packages/ui/src/index.ts` does NOT re-export accessibility — the subpath is the only door.
+- **Acceptance criteria:**
+  1. `@hushbox/ui/accessibility` exports only light symbols; its transitive static-import
+     closure contains no `new Worker` and does not reach `lib/tts-engine.ts`.
+  2. `AccessibilityWidget` and `AccessibilityPanel` are exported from a new
+     `./accessibility/panel` subpath (both together — the widget is a Sheet wrapper around
+     the panel, `accessibility-widget.tsx:7`). The path name deliberately does NOT encode
+     "heavy" or "tts"; that would become a wrong name the day TTS moves. The durable fact
+     (this subpath pulls the TTS engine and its worker chunk) goes in the module's
+     doc-comment.
+  3. The four importers above are updated. The accessibility widget still renders and
+     functions on marketing blog AND landing pages — verify, do not assume; a wrong import
+     here removes the widget site-wide.
+  4. The `./accessibility/lib` subpath export is removed along with the engine re-export at
+     `lib/index.ts:17-24`. It has zero importers today (verified) and is an identical
+     dormant copy of the same trap. This is a public-surface removal on `packages/ui`,
+     approved by the founder as part of this task.
+  5. **Rebuild `apps/admin` and prove the bytes are gone by measurement, not inference:**
+     `apps/admin/dist` contains no `tts.worker-*.js` and no `ort-*.wasm`; total dist size
+     drops from 25,611,280 B to roughly 1.7 MB. X1's guard goes green.
+  6. `apps/web` and `apps/marketing` still ship TTS and still pass X1's guard unchanged.
+     Expected secondary win to confirm on web: `apps/web/dist/index.html` no longer
+     `modulepreload`s the panel chunk (~24,977 B) and engine chunk (~8,647 B), because
+     `__root.tsx` no longer drags the whole barrel.
+  7. `scripts/generate-headers.ts:643-645` — its comment justifying the absence of
+     `wasm-unsafe-eval` asserts "admin bundles no crypto/WASM", which the current artifact
+     falsifies (21.6 MB of ORT wasm ships). After this task it is true again; correct the
+     comment only if it still misstates the post-change reality.
+- **Files:** `packages/ui/src/components/accessibility/index.ts`, the new panel subpath
+  module, `packages/ui/src/components/accessibility/lib/index.ts`,
+  `packages/ui/package.json`, `apps/marketing/src/layouts/BlogLayout.astro`,
+  `apps/marketing/src/layouts/LandingLayout.astro`,
+  `apps/web/src/routes/_app/accessibility.tsx`, `apps/web/src/routes/__root.test.tsx`,
+  `scripts/generate-headers.ts`.
+- **Scoped checks:** `turbo test typecheck lint --filter=@hushbox/ui`,
+  `--filter=@hushbox/web`, `--filter=@hushbox/admin`, `--filter=@hushbox/scripts`;
+  marketing build.
+- **Sensitive:** no. **Auditors: 1.**
+
+### X3 — Declare the phantom dependency with `packageExtensions` (depends on X1)
+
+- **Objective:** replace four containment mechanisms for one upstream defect with two, and
+  make the shipped ORT version a declared edge rather than a pnpm hoist-order outcome.
+- **Design context:** `@huggingface/transformers@3.8.1` imports `onnxruntime-common` as an
+  undeclared bare specifier (`dist/transformers.web.js:1`). **Option F as previously
+  written up in `research/phantom-dep-hoist.md:43,75` is WRONG and must not be attempted:**
+  a pnpm patch to a package's `package.json` `dependencies` has zero effect on resolution —
+  the graph is built from the resolver's manifest (`pnpm.mjs:176155-176160`) and patches are
+  applied to files at link time (`pnpm.mjs:181231-181234`); pnpm's own docs forbid this use.
+  `packageExtensions` is the designed remedy: it merges into the manifest via the
+  `readPackageHook` at `pnpm.mjs:176159`, creating a real edge and a real symlink.
+- **Acceptance criteria:**
+  1. `packageExtensions` entry added to `pnpm-workspace.yaml` with the **exact** selector
+     `@huggingface/transformers@3.8.1` declaring
+     `onnxruntime-common: "1.22.0-dev.20250409-89f8206ba4"` — the exact version string, never
+     a range. A range would keep applying a stale version beside a future newer
+     `onnxruntime-web` and install a genuine second copy, reintroducing the `instanceof
+     Tensor` split. The exact selector fails safe: on a transformers bump the extension
+     silently stops applying and behaviour falls back to today's, which the build guard
+     catches. Record this reasoning in a comment on the entry.
+  2. `pnpm install`, then `git diff --stat pnpm-lock.yaml` shows ONLY the
+     `packageExtensionsChecksum` line plus the new `onnxruntime-common` edge under
+     `@huggingface/transformers@3.8.1`. **Any other version movement from the forced full
+     re-resolution is a STOP-AND-REPORT, not a merge.**
+  3. `node_modules/.pnpm/@huggingface+transformers@3.8.1/node_modules/onnxruntime-common`
+     exists as a new symlink into `.pnpm/onnxruntime-common@1.22.0-dev.20250409-89f8206ba4/…`,
+     and `ls node_modules/.pnpm/ | grep -c '^onnxruntime-common@'` is still **2**, never 3.
+     This premise is Inferred, not Verified — if it does not hold, STOP AND REPORT; the
+     whole task rests on it.
+  4. The `onnxruntime-common` pin in `packages/ui/package.json` and its `knip.jsonc:91`
+     ignore are removed.
+  5. `declaredOrtCommonVersion()` (`verify-web-bundle.ts:53-68`) is re-pointed to read the
+     version from the `packageExtensions` entry instead of `packages/ui/package.json`,
+     keeping its `EXACT_VERSION` assertion. Its failure path must stay tested (a doctored
+     value must throw). `checkOrtCommonVersion` itself STAYS — it is the only guard on which
+     ORT version actually ships and the only check that fails on zero sites.
+  6. **Falsification gate for retiring `publicHoistPattern`:** delete it, reinstall,
+     `rm -rf apps/*/node_modules/.vite/deps`, start both dev servers and drive the TTS
+     worker. The emitted `kokoro-js` prebundle must still be **4,218,418 bytes with zero
+     bare specifiers** (ORT inlined, not split into a second chunk). If a bare
+     `onnxruntime-common` survives, `publicHoistPattern` STAYS and this task lands a
+     three-piece end state — report that outcome, do not force it.
+  7. Production build + `verify:web-bundle` green: `dist/ort/*` hashes unchanged and
+     `checkOrtCommonVersion` still reports `1.22.0-dev.20250409-89f8206ba4`.
+- **Note for the record:** this relocates the exact-version literal rather than eliminating
+  it — the other implementation is upstream's manifest and cannot be shared, so
+  `checkOrtCommonVersion` remains a legitimate cross-check rather than the banned
+  mirrored-constant pattern. State that in the entry's comment so a future agent does not
+  "clean up" the guard.
+- **Files:** `pnpm-workspace.yaml`, `packages/ui/package.json`, `knip.jsonc`,
+  `scripts/verify-web-bundle.ts`, `scripts/verify-web-bundle.test.ts`, `pnpm-lock.yaml`.
+- **Scoped checks:** `turbo test typecheck lint --filter=@hushbox/scripts`; `pnpm lint:unused`.
+- **Sensitive:** no, but high blast radius (dependency resolution + the shipped ORT
+  version). **Auditors: 2, independent.**
+
+### X4 — Fix the dev-server first-click reload — PENDING ANALYSIS
+
+- **Objective:** clicking Listen for the first time in `pnpm dev` must not reload the page.
+- **Founder ruling:** this is a defect to fix. The prior "accepted as-is" disposition at
+  plan.md §W1/W2 is **withdrawn**.
+- **Known mechanism:** Vite's dep optimizer discovers `kokoro-js` on the first worker fetch,
+  prebundles it, and broadcasts a full reload — killing all four workers mid-load. Server
+  log, verbatim: `[vite] ✨ new dependencies optimized: kokoro-js` /
+  `[vite] ✨ optimized dependencies changed. reloading`. Second click works. Warm cache:
+  no reload. Structurally impossible in production (no dep optimizer, no HMR client).
+- **Known trap:** the `optimizeDeps.include` entry deleted earlier in this run was
+  `'@hushbox/ui > kokoro-js > onnxruntime-common'` — it pinned the PHANTOM dep, not
+  `kokoro-js`, so it almost certainly never suppressed this reload. Any fix of that shape is
+  a different entry with a different purpose, not a revival, and its efficacy was never
+  verified. Vite also silently drops an include whose nested chain fails, so an unverified
+  include is indistinguishable from no fix.
+- **Open question routed to an analyst:** the option set and which option actually
+  suppresses the reload, verified rather than inferred, including interaction with X3 (a
+  declared `onnxruntime-common` edge changes what the optimizer resolves) and the cost to a
+  marketing developer who never opens a blog post.
+- Acceptance criteria to be written into this section once the analysis returns.
+
+### X1 — CORRECTIONS TO THIS TASK'S OWN SPEC (orchestrator, 2026-07-26, post-implementation)
+
+Two defects in §X1 as originally written. Both are mine. The corrected text below is
+authoritative for the audit; the auditor judges against THIS, not the original wording.
+
+**Correction 1 — file ownership was incomplete.** §X1's Files list omitted
+`scripts/build-web-bundle.ts` and `scripts/build-web-bundle.test.ts`. Criterion 1 requires
+the TTS-shipping expectation to be declared in exactly one place; making it a required
+option necessarily breaks the existing assignment of `verifyWebBundle` to
+`BuildWebBundleDeps['verify']`, so the web build's call site must be threaded too. An
+optional-with-default parameter would have satisfied the type but violated criterion 1 by
+creating a second implicit declaration of which apps ship TTS. Those two files are IN
+BOUNDS for X1. Edits to them are in scope and are not a deviation.
+
+**Correction 2 — criterion 3 named an incomplete set of checks.** It named only
+`checkSelfHostedRuntime` and `checkWorkerMetaProperty` as problematic on a TTS-free dist.
+In fact `checkOrtCommonVersion`'s zero-sites vacuity guard and `checkStrayRuntimeCopies`
+also fire there, so §X1 as literally written was unsatisfiable against criterion 4's
+"exactly the two expected violations". **Corrected criterion 3:** on a dist not expected to
+ship TTS, the verifier must assert zero `ORT_RUNTIME_FILE` matches and zero
+`tts.worker-*.js` chunks, and must not run checks that presuppose the presence of TTS
+artifacts. Which specific checks are skipped is an implementation choice, but it must be
+justified in the implementation report, and it must not drop a check a TTS-free dist can
+still meaningfully fail — Cloudflare per-file-size and file-count limits apply to every
+dist regardless of TTS and must still run.
+
+**Audit note on Correction 2 (a question to answer, not a finding to accept):** whether
+skipping `checkBundledRuntimeReferences` on TTS-free dists loses real coverage — i.e.
+whether a chunk can reference `/assets/ort-` or `/_astro/ort-` while no ORT file is present,
+and if so whether the zero-artifact assertion catches that case or misses it.
+
+### KNOWN PRE-EXISTING FAILURES — `@hushbox/scripts` package test gate (2026-07-26)
+
+The `turbo test --filter=@hushbox/scripts` gate is RED for reasons outside the X-series.
+Agents must attribute around these and must NOT fix them — they belong to other
+workstreams or to this checkout's transient state:
+
+- `generate-env.test.ts` — secret list missing `VAPID_*` / `NOTIFICATION_TAG_SECRET`
+  (another workstream's env registry change).
+- `refresh-catalog-run.test.ts`, `seed-run.test.ts` — `ERR_MODULE_NOT_FOUND` on
+  `@hushbox/db` from a stale `node_modules/.vite` `deps_ssr` cache. **Likely caused by this
+  run itself**: a concurrent analyst is clearing and regenerating `apps/*/node_modules/.vite`
+  directories to investigate the dev-server reload. Treat as environmental, not as a code
+  defect, and do not "fix" it by editing source.
+- `lib/seed-documents.test.ts` — observed flapping red→green mid-session as another
+  workstream edited it.
+
+A task is judged on the tests covering the files it owns, plus eslint/tsgo, not on this
+package-wide gate being green.
+
+### NAMING DEBT — recorded, deliberately not acted on
+
+`scripts/verify-web-bundle.ts` and its "Web bundle verification failed" message now cover
+the admin bundle too. Not renamed, because §X1's criteria name `VerifyWebBundleOptions`
+explicitly and a mid-run rename would churn every call site and test. The error message
+includes the dist path so it remains unambiguous. Flagged to the founder as debt; a rename
+is a follow-up decision, not an X-series task.
+
+### X1 AUDIT — validated finding + a larger gap the orchestrator confirmed
+
+**Auditor verdict: FAIL**, one Important finding, validated and accepted:
+`scripts/build-admin-bundle.ts:52-54` asserts "Every admin build — CI, preview, local —
+comes through here, so this is the single gate." That is false. `buildAdminBundle` is
+reached only via `pnpm build:e2e:admin` (`package.json:16`, `ci.yml:415`). CODE-RULES
+treats a wrong comment as worse than none, and this one asserts a safety property about the
+deployed artifact that does not hold.
+
+**Orchestrator verification extended the finding (do not treat as auditor speculation —
+this was confirmed directly):** `scripts/build-web-bundle.ts` is the ONLY caller of
+`verifyWebBundle`, and it appears **nowhere in any workflow**. Both `ci.yml:285-321` and
+`release.yml:138-140` reimplement its sequence inline — `pnpm build` (turbo → each app's own
+`vite build`/`astro build`) → `merge-marketing-into-web.ts` → `generate-headers.ts` → upload
+`web-dist` and `admin-dist` — and skip the verification step. Consequences:
+
+- **No deployed artifact has ever been verified.** Not `web-dist`, not `admin-dist`.
+- The `new.target` worker guard added earlier in this run (§W1) runs in CI only against the
+  **e2e** bundles (`pnpm build:e2e`, `ci.yml:396`; `pnpm build:e2e:admin`, `ci.yml:415`), never
+  against what deploys. Earlier reporting in this run that described it as guarding
+  production overstated its reach.
+- Admin's verified artifact is additionally built `--mode development`
+  (`build-admin-bundle.ts:47`), so even that check runs against a different build mode than
+  production ships.
+- Root cause is a duplicated build sequence: the ordered steps live in
+  `build-web-bundle.ts` AND are re-spelled in two workflow files. That is the
+  "One Implementation, Shared" violation the guard gap is a symptom of.
+
+**Disposition:** the false comment is fixed inside X1 (below). Closing the production
+coverage gap requires editing CI/CD, which AGENT-RULES puts behind explicit founder
+approval — routed to the founder as X5, not folded in silently.
+
+### X1 FIX CYCLE 1 — validated findings to fix
+
+1. `scripts/build-admin-bundle.ts:52-54` — the comment is factually wrong. Replace it with
+   what actually routes through this path (the E2E/preview admin build, per the file's own
+   header at `:3-5` and `ci.yml:411-413`, which states outright that the production
+   `admin-dist` is a different build). The comment must not claim or imply that the
+   deployed admin artifact is gated by this call. Do not wire any new build path — that is
+   X5's scope and needs founder approval.
+
+### X5 — Gate the DEPLOYED artifacts, not just the e2e ones — AWAITING FOUNDER APPROVAL
+
+Blocked: modifying CI/CD requires explicit approval. Options to put to the founder:
+(a) CI and release call `pnpm build:web` instead of re-spelling its three steps, so the
+sequence and its verification exist once; (b) add an explicit verify step after
+`generate-headers` in both workflows (fixes coverage, leaves the duplicated sequence);
+(c) move verification into each app's own build via a `closeBundle` plugin — works for admin,
+which already uses that pattern for `generateAdminHeaders`, but cannot verify the merged web
+bundle because the merge and headers steps run after and outside vite; (d) accept e2e-only
+verification and correct every claim made about the guard's reach.
+
+### X1 — CLEAN (2026-07-26, re-audit after fix cycle 1)
+
+Re-audit PASS, no findings. Every clause of the replacement comment independently verified
+against the repo; the mandated admin failure is still real and still comes from
+`checkNoTtsArtifacts` (the two violations against the real dist); the six original checks
+are byte-identical on the TTS-expecting path; 100% per-file coverage on all three changed
+sources. The auditor also independently confirmed the open question from Correction 2:
+skipping `checkBundledRuntimeReferences` on TTS-free dists loses no real coverage, because
+the asset-URL string in a chunk is produced by the same bundler event that emits the file,
+so the zero-artifact assertion catches every case carrying actual bloat.
+
+**Routed to X5, not charged against X1 —** two sibling claims of the same false-reach class
+survive in the tree and must be corrected by whichever X5 option lands:
+- `scripts/build-web-bundle.ts:87-89` — "Every caller — prod, e2e, preview — comes through
+  here, so this is the single gate." Pre-existing at HEAD, and **no workflow calls
+  `buildWebBundle` at all**.
+- `scripts/verify-web-bundle.ts:2-3` — "so prod, e2e, and the preview build all pay them"
+  reads correctly as the script's own `BuildTarget` values plus the playwright preview;
+  true as written, but re-check it if X5 changes the wiring.
+
+### X3 — CRITERION 6 RE-BASELINED (orchestrator, 2026-07-26)
+
+The original criterion 6 hardcoded `4,218,418 bytes` for the emitted `kokoro-js` prebundle.
+**That literal is already stale** — the current tree emits `4,218,286 bytes` (measured twice,
+on both apps, during X4's investigation). A magic byte count in an acceptance criterion
+fails for the wrong reason the moment any dependency moves.
+
+**Corrected criterion 6:** record the prebundle's size and content BEFORE the change, then
+after. The assertion is comparative, not absolute: the emitted `kokoro-js` prebundle must be
+**the same size before and after** (a few bytes of sourcemap-name drift is acceptable and
+must be explained if it appears), must still have `onnxruntime-common` **inlined**, and must
+contain **zero bare specifiers** — i.e. ORT must NOT split into a second chunk, which would
+break `instanceof Tensor` across the boundary. If it splits, `publicHoistPattern` STAYS and
+the task lands a three-piece end state — report that outcome, do not force it.
+
+### X4 — Stop the dev-server first-click reload (criteria, post-analysis)
+
+**Root cause (Verified, with a minimal scratch reproduction):** Vite's dependency scanner
+never crosses a `new Worker(new URL(…, import.meta.url))` edge. `workerImportMetaUrlPlugin`
+— the plugin that understands that pattern — is registered only in the main pipeline
+(`resolvePlugins`), not in the scanner's reduced plugin set (`rolldownScanPlugin`). Dynamic
+imports ARE followed; worker entry points are NOT. So `kokoro-js`, imported inside
+`lib/tts.worker.ts`, is invisible at startup and gets discovered on first worker fetch.
+The reload that follows is not tunable: late discovery re-chunks the whole prebundle
+(measured — 40 of 48 already-optimized deps got new file hashes), and any hash change sets
+`needsReload`.
+
+**Both apps are affected.** `apps/marketing` (blog Listen) and `apps/web` (chat read-aloud)
+each lose their first click on a cold dep cache, with identical log lines.
+
+**Chosen option: `optimizeDeps.entries` naming the worker source.** It fixes the cause rather
+than one symptom package, names no dependency (so nothing can drift against
+`packages/ui/package.json`), covers every future worker-only dependency, and costs ~0 ms of
+cold start — measured across three cold starts per app, the delta was inside the noise. Its
+real cost is ~9.5 MB of dev-cache disk per app.
+
+**Rejected, with the evidence that disqualifies each:**
+- `optimizeDeps.include: ['@hushbox/ui > kokoro-js']` — works, but encodes a package name
+  `packages/ui` owns (swap the TTS library and the reload silently returns), covers only that
+  one package, and renames the dev prebundle to `@hushbox_ui___kokoro-js.js`, which X3's
+  criterion inspects.
+- `optimizeDeps.include: ['kokoro-js']` (bare) — does not resolve from either app root under
+  pnpm; warns and the reload persists.
+- `optimizeDeps.include: ['@hushbox/ui > kokoro-js > onnxruntime-common']` — **the entry
+  deleted earlier in this run.** Verified to leave the reload fully intact: it pinned the
+  phantom dep only. Vite's `nestedResolveBasedir` falls back to the previous basedir on any
+  failed hop, so a wrong chain silently resolves something else and warns about nothing.
+- `optimizeDeps.exclude: ['kokoro-js']` — zero cost and Verified to stop the reload, but the
+  only option that changes what dev actually executes, and it manufactures a dual-ORT
+  `instanceof Tensor` hazard the moment anything else pulls transformers into the optimizer.
+- `server.warmup.clientFiles` — same cost as the chosen option plus an extra startup optimize
+  round that can broadcast the same reload to a connected tab.
+
+- **Acceptance criteria:**
+  1. The worker's absolute source path is exported as ONE constant from
+     `scripts/lib/ort-assets-plugin.ts` (the seam both app configs already import), computed
+     from `import.meta.url`, and **asserted to exist at config load** — throw with a clear
+     message if missing, matching the existing `collectOrtAssets` pattern in that file. This
+     assert IS the regression guard; do not also add a dev-server boot test (one mechanism
+     per task).
+  2. `apps/marketing/astro.config.mjs` composes it as `optimizeDeps: { entries: [<const>] }`.
+     Astro's own entries merge with it — verify that, do not assume.
+  3. `apps/web/vite.config.ts` composes it as `optimizeDeps: { entries: ['**/*.html', <const>] }`.
+     **The `**/*.html` pattern MUST be restated:** setting `entries` on web REPLACES Vite's
+     default glob. Omitting it silently collapses the cold-start dep cache from ~101 MB to
+     ~11 MB with no error — everything still works, just slower.
+  4. Verified GREEN on BOTH apps, cold cache (`rm -rf apps/*/node_modules/.vite/deps` first —
+     a warm cache hides the bug entirely): after cold start and BEFORE any page request,
+     `_metadata.json`'s `optimized` map contains `kokoro-js` and `deps/kokoro-js.js` exists.
+     Then fetch the worker's dev URL and observe **zero** `new dependencies found` and **zero**
+     `reloading` lines in the server log. The RED direction must be observed first on at least
+     one app.
+  5. Dev module topology unchanged: the worker's rewritten import is still
+     `/node_modules/.vite/deps/kokoro-js.js?v=…`, ORT still inlined, zero bare specifiers.
+  6. Web's cold-start dep cache is ≈101 MB + ~9.5 MB — **not** ≈11 MB (that shrinkage is the
+     criterion-3 trap having fired).
+  7. Production is untouched: `optimizeDeps` is dev-only, so no rebuild is needed to prove it,
+     but `verify:web-bundle` must still pass unchanged.
+  8. Correct the stale comment at
+     `packages/ui/src/components/accessibility/lib/tts.worker.ts:13-19`, which still says
+     dynamic imports inside a worker "would require `worker.format: 'es'` config, which we're
+     avoiding." The repo now REQUIRES that format (`WORKER_BUILD_OPTIONS`); the comment
+     contradicts a load-bearing build constraint.
+- **Files:** `scripts/lib/ort-assets-plugin.ts` (+ test), `apps/web/vite.config.ts`,
+  `apps/marketing/astro.config.mjs`,
+  `packages/ui/src/components/accessibility/lib/tts.worker.ts`.
+- **Scoped checks:** `turbo test typecheck lint --filter=@hushbox/scripts`,
+  `--filter=@hushbox/web`, `--filter=@hushbox/ui`.
+- **Sensitive:** no. **Auditors: 1.**
+- **Ordering:** LAST. X3 runs `pnpm install` and X4 drives dev servers; running either
+  alongside a build or a test suite already caused one round of cache-related foreign test
+  failures in this run.
+
+**Naming debt (recorded, deliberately not acted on):** `scripts/lib/ort-assets-plugin.ts` is
+documented as the ORT self-hosting module but already carries `WORKER_BUILD_OPTIONS` and will
+now carry a TTS-worker scan entry. The constants fit the seam; the filename is stretching.
+Grouped with the `verify-web-bundle` naming debt as one founder-visible follow-up.
+
+### X5 — Gate the DEPLOYED artifacts (APPROVED 2026-07-26)
+
+Founder approved X4 and X5. **Assumption stated for correction:** X5b is scoped as the
+explicit-verify-step variant I recommended, NOT the "CI calls `pnpm build:web`" restructure.
+The deploy pipeline is the wrong place to take restructuring risk for elegance, and the
+workflows inject env per-step inside generator-written `# BEGIN GENERATED:` blocks that a
+restructure would disturb.
+
+**The gap being closed:** `verifyWebBundle` has never run on an artifact that deploys.
+`build-web-bundle.ts` does build → merge → headers → **verify**; `ci.yml:285-321` and
+`release.yml:126-141` each re-spell build → merge → headers → upload, without the verify.
+
+Split into two independent halves because admin needs no workflow change at all.
+
+#### X5a — Admin: gate every admin build from the app's own config
+
+- **Objective:** every admin build — production `vite build`, CI, e2e, preview, local —
+  passes the bundle guard, without a workflow edit.
+- **Design context:** `apps/admin/vite.config.ts` already runs `generateAdminHeaders` from a
+  build-only `closeBundle` hook (`adminHeadersPlugin`). Verification belongs in that same
+  hook. This is strictly stronger than a CI step: it cannot be bypassed by invoking a
+  different build entry point.
+- **Acceptance criteria:**
+  1. Verification runs from admin's build-only plugin, sequenced **after**
+     `generateAdminHeaders` — `checkPagesLimits` counts emitted files, and `_headers` is one
+     of them.
+  2. It calls the SAME seam X1 established (`appBundleOptions` + `verifyWebBundle`). No
+     second declaration of which apps ship TTS, no reimplemented checks, no copied literals.
+  3. **The explicit call in `scripts/build-admin-bundle.ts` is REMOVED**, along with the
+     scope comment X1's fix cycle wrote. Keeping both would be two mechanisms for one
+     guarantee — CODE-RULES forbids the backup mechanism. `pnpm build:e2e:admin` still gets
+     verified, now via the vite build it invokes; prove that, do not assume it.
+  4. Proven non-vacuous: a production-mode `vite build` of admin (NOT `--mode development`)
+     runs the verification and passes against the post-X2 dist, AND the check demonstrably
+     fails if TTS artifacts are present. Show the failing direction by evidence, not by
+     assertion.
+- **Files:** `apps/admin/vite.config.ts`, `scripts/build-admin-bundle.ts` (+ its test).
+- **Depends on:** X2 (the admin dist must be clean or this build fails).
+- **Scoped checks:** `turbo test typecheck lint --filter=@hushbox/admin`,
+  `--filter=@hushbox/scripts`.
+- **Sensitive:** no. **Auditors: 1.**
+
+#### X5b — Web: verify the merged bundle before it is uploaded
+
+- **Objective:** the `web-dist` artifact that deploys is verified.
+- **Design context:** the merged web bundle CANNOT be verified from vite's `closeBundle` —
+  `merge-marketing-into-web.ts` and `generate-headers.ts` run after vite finishes and outside
+  it. So this half genuinely needs a workflow step.
+- **Acceptance criteria:**
+  1. A verification step is added to BOTH `.github/workflows/ci.yml` (after
+     `Generate _headers`, before `Upload web build artifact`) and
+     `.github/workflows/release.yml` (after its own `Generate _headers`).
+  2. The step invokes the same seam via a root pnpm script — never a reimplementation and
+     never an inline `tsx -e`. If a new script is added, `pnpm lint:unused` (knip) must stay
+     green.
+  3. `scripts/build-web-bundle.ts:87-89` — "Every caller — prod, e2e, preview — comes through
+     here, so this is the single gate" — is false and must be corrected: no workflow calls
+     `buildWebBundle` at all.
+  4. **Honest verification boundary:** agents cannot run GitHub Actions. Verify by running
+     the new script locally against the real merged `apps/web/dist` (expect pass), by
+     confirming the failing direction is reachable, and by checking the workflow YAML parses
+     and the step is positioned between headers and upload. State plainly in the report that
+     CI execution itself is unverified.
+  5. The step must need no secrets or generated env beyond what is already present at that
+     point in the job.
+- **Files:** `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `package.json`,
+  `scripts/build-web-bundle.ts`.
+- **Scoped checks:** `turbo test typecheck lint --filter=@hushbox/scripts`;
+  `pnpm lint:unused`.
+- **Sensitive:** no, but it edits the deploy path. **Auditors: 2, independent.**
+
+### REVISED ORDER (all remaining work, strictly serial)
+
+X2 (in flight) → X5a → X5b → X3 → X4.
+
+Rationale: X5a immediately proves X2's byte removal on the PRODUCTION admin build path
+rather than the e2e one. X3 runs `pnpm install` and X4 drives dev servers with cache
+clearing — the two most disruptive tasks go last, after everything that needs stable builds.
+Running an analyst alongside an implementer earlier in this run already produced a round of
+cache-related foreign test failures; that is not repeated.
+
+### STILL OPEN — not approved, not declined, NOT scoped in
+
+The hydration race: the Listen control is an Astro island (`client:visible`), inert between
+server-render and hydration (measured 151 ms–1.6 s). A click in that window does nothing —
+no reload, no error, no audio — and this exists in PRODUCTION, where the dep-optimizer reload
+provably cannot happen. It is an independent second cause of "I had to click twice" and X4
+does not address it. Offered to the founder with two shapes (hydrate the island eagerly, or
+render the control visibly disabled until live); no ruling received. Do not fold it into any
+X-task without one.

@@ -280,6 +280,143 @@ describe('the ceiling', () => {
   });
 });
 
+describe('one shared token count, per-model physical bounds', () => {
+  // §Sharing one budget across siblings: `T` is solved once against the SUMMED
+  // variable rates, and each sibling then clamps it with its OWN `providerCap`
+  // and `contextHeadroom`. `vendor/plain` and `vendor/tight` are deliberately
+  // heterogeneous on both physical bounds, so the two clamps land on different
+  // siblings and neither reading can be mistaken for the other.
+  function pair(funding: bigint): CoreResult {
+    return evaluateTurn(
+      inputOf({
+        fundingNanoUsd: funding,
+        catalog: [PLAIN, TIGHT],
+        selection: selectionOf(['vendor/plain', 'vendor/tight']),
+      })
+    );
+  }
+
+  function ceilingOf(result: CoreResult, modelId: string): number | undefined {
+    return result.optionSet.all.find((entry) => entry.modelId === modelId)?.ceilingTokens;
+  }
+
+  it('leaves the wide sibling on its own provider cap while the tight one takes its own context headroom', () => {
+    // 1,000 prompt chars at 4 chars/token (paid) = 250 input tokens.
+    // fixedCosts = 250 × (1,000 + 1,000) + 1,000 × 300 = 800,000;
+    // Σ variableRate = 2 × (2,000 + 600) = 5,200, so
+    // T = floor((1,000,000,000 − 800,000) / 5,200) = 192,153 — far above both
+    // siblings' physical room, so only the physical bounds bind here.
+    const result = pair(1_000_000_000n);
+    // vendor/plain: min(providerCap 8,000, contextHeadroom 100,000 − 250, T).
+    expect(ceilingOf(result, 'vendor/plain')).toBe(8000);
+    // vendor/tight: min(providerCap 4,000, contextHeadroom 4,000 − 250, T) — the
+    // tight sibling's own 3,750 does NOT pull the wide sibling below 8,000, and
+    // the wide sibling's 8,000 does not lift the tight one above its context.
+    expect(ceilingOf(result, 'vendor/tight')).toBe(3750);
+  });
+
+  it('prices the pair at Σ cost(m, ceiling(m)), not at T × Σ rates', () => {
+    const result = pair(1_000_000_000n);
+    // cost(plain, 8,000) = 250 × 1,000 + 8,000 × 2,600 + 1,000 × 300 (prompt
+    // storage rides the first sibling only) = 21,350,000.
+    // cost(tight, 3,750) = 250 × 1,000 + 3,750 × 2,600 = 10,000,000.
+    expect(result.totalNanoUsd).toBe(31_350_000n);
+    // The forbidden summed-rate basis on this very turn: fixedCosts + T × Σ rates
+    // = 800,000 + 192,153 × 5,200 = 999,995,600 — effectively the whole funding,
+    // which is why §Multi-Model 2 forbids it as a charge basis even though `T` is
+    // solved against those same summed rates.
+    expect(800_000n + 192_153n * 5200n).toBe(999_995_600n);
+  });
+
+  it('shares the money bound when the money is what binds, leaving both physical clamps loose', () => {
+    // fixedCosts = 800,000; T = floor((11,000,000 − 800,000) / 5,200) = 1,961 —
+    // below both siblings' physical room, so ONE shared count binds both.
+    const result = pair(11_000_000n);
+    expect(ceilingOf(result, 'vendor/plain')).toBe(1961);
+    expect(ceilingOf(result, 'vendor/tight')).toBe(1961);
+  });
+});
+
+describe('the smart slot`s MAX enters the shared token solve', () => {
+  // §The hold: the smart slot contributes `MAX` over its candidates, and that
+  // maximum is what the shared token count is solved against — so the ceiling
+  // the turn delivers is sized for the worst candidate the classifier could
+  // pick, never for the cheapest.
+  //
+  // Every model id below is the same length and the same three ids appear in both
+  // catalogs, and `vendor/eng1` is the cheapest combined rate in both — so the
+  // classifier reserve (priced from the ids, on the cheapest engine) is identical
+  // across the two evaluations and the difference is the candidate rates alone.
+  const ENGINE = modelOf({
+    modelId: 'vendor/eng1',
+    inputRate: 100n,
+    outputRate: 200n,
+    contextLength: 100_000,
+    providerCap: 32_000,
+  });
+  const MID = modelOf({
+    modelId: 'vendor/mid1',
+    inputRate: 1000n,
+    outputRate: 2000n,
+    contextLength: 100_000,
+    providerCap: 32_000,
+  });
+  const DEAR = modelOf({
+    modelId: 'vendor/dear',
+    inputRate: 4000n,
+    outputRate: 8000n,
+    contextLength: 100_000,
+    providerCap: 32_000,
+  });
+  /** Same id as {@link DEAR}, at {@link MID}'s rates: the control catalog. */
+  const DEAR_AS_MID = modelOf({
+    modelId: 'vendor/dear',
+    inputRate: 1000n,
+    outputRate: 2000n,
+    contextLength: 100_000,
+    providerCap: 32_000,
+  });
+  // Sized so the CHEAPER candidate's arrangement is bound by the provider cap
+  // while the dearer one is still bound by the money: were both money-bound, every
+  // arrangement would price at roughly the whole funding and the control below
+  // could not tell a MAX from a MIN.
+  const FUNDING = 120_000_000n;
+
+  function slotTurn(catalog: readonly PriceableModel[]): CoreResult {
+    return evaluateTurn(
+      inputOf({
+        fundingNanoUsd: FUNDING,
+        catalog,
+        selection: {
+          answerSources: { models: ['vendor/eng1'], smartSlot: true },
+          modality: 'text',
+          pinned: {},
+          webSearch: false,
+        },
+      })
+    );
+  }
+
+  it('solves a smaller shared count for the dearer candidate than for the cheaper one', () => {
+    const result = slotTurn([ENGINE, MID, DEAR]);
+    // Each candidate row is graded on its own arrangement, so the dearer
+    // candidate's arrangement buys strictly fewer tokens at the same funding —
+    // which is the shared count `T` differing per arrangement.
+    expect(candidateOf(result, 'vendor/dear')?.ceilingTokens).toBeLessThan(
+      candidateOf(result, 'vendor/mid1')?.ceilingTokens ?? 0
+    );
+  });
+
+  it('sizes the hold on the dearest candidate, not the cheapest', () => {
+    const withDear = slotTurn([ENGINE, MID, DEAR]);
+    const control = slotTurn([ENGINE, MID, DEAR_AS_MID]);
+    expect(withDear.totalNanoUsd).toBeDefined();
+    // Only the dearest candidate's rates changed between the two catalogs, so a
+    // hold taken over anything but the MAX would have priced both identically.
+    expect(withDear.totalNanoUsd ?? 0n).toBeGreaterThan(control.totalNanoUsd ?? 0n);
+  });
+});
+
 describe('reasons, in the precedence the specification fixes', () => {
   it('reports money when the funding cannot cover a minimum answer at all', () => {
     const result = evaluateTurn(inputOf({ fundingNanoUsd: 600_000n }));
@@ -852,9 +989,14 @@ describe('the hold covers every presented candidate`s arrangement', () => {
     expect(presentedCandidateIds(result)).toEqual(['v/cheap']);
     const dear = result.optionSet.all.find((entry) => entry.modelId === 'v/dear');
     expect(dear?.availability).toEqual({ available: false, reason: 'insufficient_funds' });
-    // The hold does not move: it was already the MAX over the VIABLE candidates,
-    // and v/cheap's arrangement is the one it was sized on.
-    expect(result.totalNanoUsd).toBe(89_263_685n);
+    // The hold is v/cheap's arrangement and carries NO classifier reserve. v/dear
+    // is 60× the pool median's `maxCallCost`, so `outlier(m)` keeps it out of the
+    // classifier-selectable set; that leaves one selectable candidate, and one
+    // candidate beside a pinned effort is nothing to classify (§Reserve ⟺ classify
+    // is decided on pool size). The 32,435 nano the amount lost is exactly that
+    // reserve — measured, not inferred.
+    expect(result.totalNanoUsd).toBe(89_231_250n);
+    expect(reserveOf(result)).toBe(0n);
     const ceilingOf = (modelId: string): number | undefined =>
       result.optionSet.all.find((entry) => entry.modelId === modelId)?.ceilingTokens;
     expect(ceilingOf('v/pin')).toBe(64_000);
@@ -898,13 +1040,28 @@ describe('the hold covers every presented candidate`s arrangement', () => {
 });
 
 describe('an explicit effort pin on a model with no rung to run', () => {
-  /** Three natives, mandatory: §Reasoning Effort 2's "offers no choice" shape. */
+  /**
+   * One native word, mandatory: no CHOICE exists, but the single rung is real and
+   * priced. Its 32,000-token provider cap cannot hold High's 32,000-token clamped
+   * budget beside a minimum answer, so it is refused on its own physical bound —
+   * an honest verdict, not a resolution failure.
+   */
   const MANDATORY_SINGLE = modelOf({
     modelId: 'vendor/mandatory-single',
     inputRate: 100n,
     outputRate: 200n,
     contextLength: 100_000,
     providerCap: 32_000,
+    reasoning: { supportedEfforts: ['high'], mandatory: true },
+  });
+
+  /** The same shape with room for that budget plus a minimum answer. */
+  const MANDATORY_SINGLE_WIDE = modelOf({
+    modelId: 'vendor/mandatory-single-wide',
+    inputRate: 100n,
+    outputRate: 200n,
+    contextLength: 200_000,
+    providerCap: 64_000,
     reasoning: { supportedEfforts: ['high'], mandatory: true },
   });
 
@@ -917,7 +1074,19 @@ describe('an explicit effort pin on a model with no rung to run', () => {
     }
   });
 
-  it('runs a mandatory-reasoning model that offers no choice, at every pin', () => {
+  it('resolves every pin onto a mandatory single-rung model rather than calling it unoffered', () => {
+    for (const pin of ['off', 'lite', 'low', 'medium', 'high', 'max'] as const) {
+      const result = evaluateTurn(
+        inputOf({
+          catalog: [MANDATORY_SINGLE_WIDE],
+          selection: selectionOf(['vendor/mandatory-single-wide'], { pinned: { effort: pin } }),
+        })
+      );
+      expect(result.optionSet.sendable).toBe(true);
+    }
+  });
+
+  it('refuses on the physical cap, not the pin, when the rung leaves no answer room', () => {
     for (const pin of ['off', 'lite', 'low', 'medium', 'high', 'max'] as const) {
       const result = evaluateTurn(
         inputOf({
@@ -925,7 +1094,7 @@ describe('an explicit effort pin on a model with no rung to run', () => {
           selection: selectionOf(['vendor/mandatory-single'], { pinned: { effort: pin } }),
         })
       );
-      expect(result.optionSet.sendable).toBe(true);
+      expect(refusalOf(result)).toBe('model_output_cap_too_low');
     }
   });
 

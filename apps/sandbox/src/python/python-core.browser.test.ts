@@ -88,6 +88,46 @@ describe('python runtime bridge transport (embedded in a sandboxed frame)', () =
     expect(consoleText(control, 'stdout')).toContain('genuine');
     expect(control.some((m) => m.type === 'result')).toBe(true);
   }, 120_000);
+
+  it('keeps the embedder port out of reach of the interpreter realm', async () => {
+    // Probed from Python, against the shipped bundle: Pyodide loads into the
+    // frame's own realm and document code reaches JS through the FFI, so the
+    // port is reachable by a document exactly when it is reachable from
+    // `js.globalThis`. Every own property is matched on its value's JS
+    // constructor name — the `MessagePort` constructor function itself is a
+    // `Function`, so it is correctly not a hit — and the control object, which
+    // does hold a port, proves the scan detects one when there is one to find.
+    const code = `import js
+
+def scan(target):
+    names = js.Object.getOwnPropertyNames(target)
+    read = 0
+    hits = []
+    for name in names:
+        try:
+            constructor = js.Reflect.get(js.Reflect.get(target, name), "constructor")
+            kind = js.Reflect.get(constructor, "name")
+        except Exception:
+            continue
+        read += 1
+        if kind == "MessagePort":
+            hits.append(name)
+    return len(names), read, hits
+
+control = js.Object.new()
+js.Reflect.set(control, "leaked", js.MessageChannel.new().port1)
+print("CONTROL_HITS=" + repr(scan(control)[2]))
+names, read, hits = scan(js.globalThis)
+print("GLOBAL_NAMES=" + str(names))
+print("GLOBAL_READ=" + str(read))
+print("GLOBAL_HITS=" + repr(hits))`;
+    const messages = await page.run(code, 'realm-port-1');
+    const out = consoleText(messages, 'stdout');
+    expect(messages.some((m) => m.type === 'error')).toBe(false);
+    expect(out).toContain("CONTROL_HITS=['leaked']");
+    expect(Number(/GLOBAL_READ=(\d+)/.exec(out)?.[1] ?? '0')).toBeGreaterThan(100);
+    expect(out).toContain('GLOBAL_HITS=[]');
+  }, 120_000);
 });
 
 describe('python runtime (real browser)', () => {

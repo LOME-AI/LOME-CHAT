@@ -57,9 +57,13 @@ export interface EffortOption {
  * - `level` — engage at the offered rung (label + exact wire from the
  *   model's positional ladder); feed `planReasoning`.
  * - `off` — explicit hard off; feed `planReasoningOff`.
- * - `default` — send no reasoning wire at all: the model offers no choice
- *   (not reasoning-capable, or mandatory with a single-level vocabulary
- *   that reasons at the provider default).
+ * - `default` — send no reasoning wire at all: the model is not
+ *   reasoning-capable, so there is nothing to wire.
+ *
+ * A mandatory model with a single native word resolves to `level`, not to
+ * `default`: its one rung carries a real budget the provider will spend, so it
+ * is wired and priced explicitly rather than left to the provider default
+ * (§Predicates — eligibility is graded on a reachable corner).
  */
 export type ResolvedEffort =
   | { readonly kind: 'level'; readonly level: OfferedLevel }

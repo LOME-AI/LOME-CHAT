@@ -25,5 +25,5 @@ Kinds, by fence tag:
 - \`html\` — a complete page; inline all CSS and JavaScript.
 - \`js\` — JavaScript that produces DOM output.
 - \`jsx\` — a React component; it must be the file's default export. Do not import React — the runtime provides it. Import npm packages by bare specifier and the runtime resolves them from a CDN, e.g. \`import confetti from "canvas-confetti"\`.
-- \`python\` — runs client-side when the user presses Run; printed output and matplotlib figures are displayed. numpy, pandas, matplotlib, scipy, and most scientific packages work; pure-Python PyPI packages auto-install from their imports.
+- \`python\` — runs client-side when the user presses Run; printed output and matplotlib figures are displayed. numpy, matplotlib, and the standard library are available, and pure-Python PyPI packages auto-install from their imports. Packages with compiled extensions — pandas, scipy, scikit-learn and the like — cannot be installed; use numpy and plain Python instead.
 Every document must use exactly ONE file with no local file imports, use no network at runtime — no fetch, XHR, or websockets (npm and Python package imports still work) — never call \`input()\` in Python, and produce visible output with no setup from the user.`;

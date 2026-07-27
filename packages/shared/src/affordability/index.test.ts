@@ -133,8 +133,6 @@ const WALLED_EXPORTS = [
   'resolveEffortForModel',
   'turnEffortOptions',
   // clamping
-  'ComputeMaxTokensParams',
-  'computeSafeMaxTokens',
   'validCap',
 ] as const;
 
@@ -172,7 +170,6 @@ const WALLED_TYPE_ONLY_EXPORTS = new Set<string>([
   'ReasoningPlanResult',
   'EffortOption',
   'ResolvedEffort',
-  'ComputeMaxTokensParams',
 ]);
 
 /** The subset with a runtime binding, so `Object.hasOwn` can see it at all. */

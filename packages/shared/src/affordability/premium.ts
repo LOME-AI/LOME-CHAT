@@ -21,6 +21,7 @@ import { estimateTokensForTier, outputCharsPerTokenForTier } from './estimate/pr
 import { priceRequest } from './estimate/price-request.js';
 import { reservationCeiling } from './estimate/reducers.js';
 import { NANO_USD_PER_CENT, nanoUSD } from './nano-usd.js';
+import { nanoPercentile } from './percentile.js';
 import type { BillableRequest } from './estimate/types.js';
 import type { NanoUSD } from './nano-usd.js';
 import type { PriceableModel } from './priceable-model.js';
@@ -33,6 +34,36 @@ export const PREMIUM_RECENCY_MS = 182 * 24 * 60 * 60 * 1000;
 
 /** A trial-eligible model must afford at least this multiple of the minimum answer. */
 export const TRIAL_AFFORDABILITY_MULTIPLIER = 2;
+
+/**
+ * A percentile is only meaningful over a real sample. Below this many priceable
+ * models there is no threshold at all, so the price leg does not fire — a
+ * one-model pool would otherwise mark its own model premium against itself.
+ * Recency still decides.
+ */
+export const MIN_POOL_FOR_PRICE_PERCENTILE = 4;
+
+/**
+ * The combined billable rate at/above which a model is premium: the
+ * {@link PREMIUM_PRICE_PERCENTILE} of the pool's own combined rates. `undefined`
+ * when the pool is too small to have one ({@link MIN_POOL_FOR_PRICE_PERCENTILE}).
+ *
+ * The pool is a property of the catalog, never of a payer or a prompt, so the
+ * classification is reproducible from the catalog alone and no row order can
+ * change it. This is the ONE premium threshold: a caller holding a pool resolves
+ * it here rather than ranking rates itself.
+ */
+export function premiumPriceThresholdNanoUsd(pool: readonly PriceableModel[]): NanoUSD | undefined {
+  if (pool.length < MIN_POOL_FOR_PRICE_PERCENTILE) return undefined;
+  const threshold = nanoPercentile(
+    pool.map((model) => combinedRateNanoUsd(model)),
+    PREMIUM_PRICE_PERCENTILE
+  );
+  /* v8 ignore next -- unreachable: the length guard above admits only non-empty
+     pools, for which the percentile always selects a member */
+  if (threshold === undefined) return undefined;
+  return nanoUSD(threshold);
+}
 
 /**
  * The model's combined billable per-token rate — the single quantity both the
@@ -48,10 +79,11 @@ export interface PremiumClassificationInput {
   readonly model: PriceableModel;
   /**
    * The combined billable per-token rate at/above which a model is premium —
-   * the {@link PREMIUM_PRICE_PERCENTILE} of the exposed pool, resolved by the
-   * caller that holds the pool.
+   * {@link premiumPriceThresholdNanoUsd} of the exposed pool, resolved by the
+   * caller that holds the pool. `undefined` when the pool is too small to have a
+   * threshold, which disables the PRICE leg alone: recency still decides.
    */
-  readonly priceThresholdNanoUsd: NanoUSD;
+  readonly priceThresholdNanoUsd?: NanoUSD | undefined;
   /** The model's release timestamp in milliseconds (catalog `releasedAt` × 1000). */
   readonly releasedAtMs: number;
   /**
@@ -68,7 +100,12 @@ export interface PremiumClassificationInput {
  */
 export function isPremiumModel(input: PremiumClassificationInput): boolean {
   const { model, priceThresholdNanoUsd, releasedAtMs, nowMs } = input;
-  if (combinedRateNanoUsd(model) >= BigInt(priceThresholdNanoUsd)) return true;
+  if (
+    priceThresholdNanoUsd !== undefined &&
+    combinedRateNanoUsd(model) >= BigInt(priceThresholdNanoUsd)
+  ) {
+    return true;
+  }
   return releasedAtMs > nowMs - PREMIUM_RECENCY_MS;
 }
 
@@ -78,6 +115,12 @@ export function isPremiumModel(input: PremiumClassificationInput): boolean {
  * MINIMUM_OUTPUT_TOKENS` — input tokens plus output at billable rates, priced
  * through the shared estimator core, so this never re-implements billing math.
  *
+ * `promptChars` is the input-character basis to price the worst case over: the
+ * turn's real `promptChars` where one exists, and a representative fixed count
+ * where the question is "may this model ever be used on trial" rather than "can
+ * this turn send". The caller chooses, because those are different questions and
+ * a classification that moved with what a user typed would be the wrong one.
+ *
  * Trial turns never persist, so the reservation is provider cost only. The
  * mechanism that drops storage is the explicit `kind === 'provider'` filter
  * below — nothing else. `inputChars: 0` drops the input-storage leg alone;
@@ -85,9 +128,9 @@ export function isPremiumModel(input: PremiumClassificationInput): boolean {
  * ratio, so removing that filter silently re-adds a storage charge to a turn
  * that never persists (§Cost, §Trial Usage).
  */
-export function exceedsTrialBudget(model: PriceableModel, systemPromptChars: number): boolean {
-  if (!Number.isSafeInteger(systemPromptChars) || systemPromptChars < 0) {
-    throw new RangeError('exceedsTrialBudget: systemPromptChars must be a non-negative integer');
+export function exceedsTrialBudget(model: PriceableModel, promptChars: number): boolean {
+  if (!Number.isSafeInteger(promptChars) || promptChars < 0) {
+    throw new RangeError('exceedsTrialBudget: promptChars must be a non-negative integer');
   }
   const request: BillableRequest = {
     models: [
@@ -98,7 +141,7 @@ export function exceedsTrialBudget(model: PriceableModel, systemPromptChars: num
         },
       },
     ],
-    inputTokens: BigInt(estimateTokensForTier('trial', systemPromptChars)),
+    inputTokens: BigInt(estimateTokensForTier('trial', promptChars)),
     inputChars: 0,
     outputCharsPerToken: outputCharsPerTokenForTier('trial'),
   };
