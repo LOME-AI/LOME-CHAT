@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { noticeText } from './affordability/notices.js';
 import type { UserFacingMessage } from './error-messages.js';
 
 /**
@@ -26,6 +27,7 @@ export const ERROR_CODES = {
   INTERNAL: 'INTERNAL',
   CONCURRENT_RUN: 'CONCURRENT_RUN',
   INSUFFICIENT_ADMISSION: 'INSUFFICIENT_ADMISSION',
+  RUN_CAPACITY_REACHED: 'RUN_CAPACITY_REACHED',
   ADMISSION_UNAVAILABLE: 'ADMISSION_UNAVAILABLE',
   ZDR_REFUSED: 'ZDR_REFUSED',
   UNSUPPORTED_MODALITY: 'UNSUPPORTED_MODALITY',
@@ -135,6 +137,25 @@ export const errorCodeSchema = z.enum(ERROR_CODE_VALUES);
  * Compile-exhaustive code→user-message map: the `satisfies
  * Record<ErrorCode, string>` clause makes adding a code without a message
  * a type error.
+ *
+ * Where a wire refusal describes a condition the pre-send money vocabulary also
+ * describes, the sentence is read from that vocabulary rather than re-typed
+ * here — §Notices 1 and 2 make one condition's wording single-homed, and a
+ * literal copy at this end is exactly the second phrasing they forbid.
+ *
+ * A code is not automatically a condition. Admission's three refusals used to
+ * share one code and therefore one sentence, which told a payer whose runs were
+ * merely in flight that their balance was short — a payment action for a caller
+ * whom paying cannot help. Each now carries its own code and reads its own
+ * condition's wording.
+ *
+ * `INSUFFICIENT_ADMISSION` keeps the unresolved wording because it still answers
+ * for conditions that are genuinely several: a cost-circuit trip (the run
+ * started and was killed), an empty balance, and an exhausted budget SCOPE —
+ * which is itself two conditions with opposite actions, since the scope may be
+ * a group owner's budget or the sender's own free daily allowance, and the
+ * refusal does not say which. Retargeting this code at any one of them would
+ * put that one's action on all of them.
  */
 export const ERROR_MESSAGES = {
   VALIDATION: 'Invalid input. Please check your data and try again.',
@@ -146,10 +167,9 @@ export const ERROR_MESSAGES = {
   TIMEOUT: 'The operation took too long and was stopped. Please try again.',
   UNAVAILABLE: 'This service is temporarily unavailable. Please try again later.',
   INTERNAL: 'Something went wrong. Please try again later.',
-  CONCURRENT_RUN:
-    'This conversation is already generating a response. Wait for it to finish, then try again.',
-  INSUFFICIENT_ADMISSION:
-    'Your balance or budget is too low to start this request. Add credits or adjust your selection.',
+  CONCURRENT_RUN: noticeText('run_already_in_progress'),
+  INSUFFICIENT_ADMISSION: noticeText('send_cannot_start'),
+  RUN_CAPACITY_REACHED: noticeText('funds_held_by_run'),
   ADMISSION_UNAVAILABLE: 'Paid requests are temporarily unavailable. Please try again shortly.',
   ZDR_REFUSED: 'This model does not meet our zero-data-retention requirements and cannot be used.',
   UNSUPPORTED_MODALITY: 'This content type is not supported yet.',
@@ -162,8 +182,7 @@ export const ERROR_MESSAGES = {
   AUDIO_DISABLED: 'Audio generation is not yet available. Please try a different content type.',
   CONTENT_POLICY:
     'The model declined to answer because it considered the request unsafe. Try rephrasing your message.',
-  CONTEXT_LENGTH_EXCEEDED:
-    'This conversation is too long for the selected model. Try a model with a larger context window.',
+  CONTEXT_LENGTH_EXCEEDED: noticeText('prompt_too_long'),
   NETWORK_ERROR: "We couldn't reach the AI provider. Check your connection and try again.",
   NO_REASONING_ENDPOINTS:
     "No provider can run this model with reasoning under HushBox's privacy requirements right now. Try a different effort level or model.",
@@ -216,15 +235,12 @@ export const ERROR_MESSAGES = {
   TRIAL_CAPACITY_REACHED:
     "HushBox's free trial is at capacity for today. Sign up to keep chatting, or try again tomorrow.",
   FEATURE_REQUIRES_AUTH: 'This feature requires an account. Please sign up or log in.',
-  TRIAL_MESSAGE_TOO_EXPENSIVE:
-    'This message is too costly for the free trial. Try a shorter message or sign up to keep chatting.',
-  PREMIUM_REQUIRES_ACCOUNT:
-    'This model is available with an account. Sign up to chat with premium models.',
+  TRIAL_MESSAGE_TOO_EXPENSIVE: noticeText('trial_message_cap_exceeded'),
+  PREMIUM_REQUIRES_ACCOUNT: noticeText('premium_requires_account'),
   MEDIA_TRIAL_BLOCKED:
     'The free trial supports text models only. Sign up to generate images and video.',
-  MODEL_TIER_LOCKED: 'This premium model needs credits. Add funds to your balance to use it.',
-  GROUP_BUDGET_EXHAUSTED:
-    'No group budget is left for you in this conversation. Ask the conversation owner to allocate more budget.',
+  MODEL_TIER_LOCKED: noticeText('premium_requires_credit'),
+  GROUP_BUDGET_EXHAUSTED: noticeText('guest_no_group_budget'),
   BUDGET_BELOW_SPENT:
     "A budget can't be set below what has already been spent. Refresh to see the latest spend, then pick a higher amount.",
   MODEL_DISABLED: 'This model is temporarily unavailable. Please choose a different model.',

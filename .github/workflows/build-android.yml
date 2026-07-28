@@ -96,6 +96,11 @@ jobs:
           VITE_WEB_URL: https://hushbox.ai
         # END GENERATED: build-env-android
 
+      # `cap sync` copies this dist into the APK, so the bundle guard runs on it
+      # between the build and the sync. The step needs no env block.
+      - name: Verify web bundle
+        run: pnpm verify:bundle
+
       - name: Generate platform assets
         working-directory: apps/web
         run: npx @capacitor/assets generate --assetPath resources/assets --android

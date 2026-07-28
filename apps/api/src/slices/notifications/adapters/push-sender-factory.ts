@@ -5,7 +5,6 @@ import { createWebPushSender } from './push-webpush.js';
 import { createCompositePushSender } from './push-composite.js';
 import { createCollapseAliasDeriver } from './collapse-alias.js';
 import type { EnvContext } from '@hushbox/shared';
-import type { Database } from '@hushbox/db';
 import type { MockPushSender } from './push-mock.js';
 import type { PushMessage, PushSender } from '../ports/index.js';
 
@@ -64,7 +63,7 @@ export function listCapturedPushes(): readonly CapturedPush[] {
  * in every mode — it is stamped on the mock too — and missing FCM/VAPID
  * credentials in production fail fast (there is no degraded mode).
  */
-export function createPushSenderFromEnv(env: PushSenderEnv, db: Database): PushSender {
+export function createPushSenderFromEnv(env: PushSenderEnv): PushSender {
   // Explicit fail-fast at the selection seam: createEnvUtilities throws on an
   // absent NODE_ENV, and this guard restates that with a sender-specific message
   // so a production deploy that omitted it fails loudly instead of ever risking
@@ -106,8 +105,6 @@ export function createPushSenderFromEnv(env: PushSenderEnv, db: Database): PushS
     fcm: createFcmPushSender({
       projectId: env.FCM_PROJECT_ID,
       serviceAccountJson: env.FCM_SERVICE_ACCOUNT_JSON,
-      db,
-      isCI,
     }),
     webPush: createWebPushSender({
       vapid: {

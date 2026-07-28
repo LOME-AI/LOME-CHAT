@@ -1,4 +1,4 @@
-import { historyCharacterCount, isRunnableModelShape } from '@hushbox/shared';
+import { isRunnableModelShape } from '@hushbox/shared';
 import {
   exceedsTrialBudget,
   isPremiumModel,
@@ -15,7 +15,7 @@ import { ratesFromPricing } from './estimate.js';
 import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import type { Result } from '../../../lib/result/index.js';
-import type { ChatHistoryMessage, ModelDescriptor } from '@hushbox/shared';
+import type { ModelDescriptor } from '@hushbox/shared';
 import type { PriceableModel } from '@hushbox/shared/affordability';
 import type { DomainError } from '../../../lib/errors/index.js';
 
@@ -32,15 +32,11 @@ import type { DomainError } from '../../../lib/errors/index.js';
  *
  * Cost basis, stated once (see also the route): the 1¢ cap compares BILLABLE
  * cost — the same figure a paid send would be charged, never the worst-case run
- * ceiling. The two legs price different bases deliberately. The MODEL-level leg
- * is provider-only over a fixed synthetic exchange, because a trial turn never
- * persists (§Trial Usage). The per-send budget (`trialMessageBillableNanoUsd`)
- * still prices the pass-through storage of the send; §Trial Usage says a trial
- * turn stores nothing, so that term does not belong there either — it is left in
- * place deliberately, because removing it narrows the margin between this gate
- * and the compiled turn's own floor to less than the system-prompt input tokens
- * this gate does not price, and the gate must dominate that floor for every rate
- * shape.
+ * ceiling. Both legs are PROVIDER-ONLY, because a trial turn never persists
+ * (§Trial Usage). They differ only in their input basis, deliberately: the
+ * MODEL-level leg prices a fixed synthetic exchange, because "may this model ever
+ * be used on trial" must not move with what a user typed, while the per-send leg
+ * prices the send's own character count.
  */
 
 /** 1¢ in nano-USD (0.01 USD). The per-message cap compares BILLABLE (all-in)
@@ -117,11 +113,11 @@ export function trialEligibility(
   if (model === undefined) return { eligible: false, reason: 'premium' };
 
   const threshold = premiumPriceThresholdNanoUsd(priceableTextPool(exposedCatalog));
+  // The release date rides the projection, which is also where the catalog's
+  // seconds become the milliseconds every comparison in the money module uses.
   const premium = isPremiumModel({
     model,
     ...(threshold === undefined ? {} : { priceThresholdNanoUsd: threshold }),
-    // `releasedAt` is UNIX SECONDS; the classifier takes milliseconds.
-    releasedAtMs: target.releasedAt * 1000,
     nowMs,
   });
 
@@ -132,33 +128,51 @@ export function trialEligibility(
 }
 
 /**
- * The BILLABLE cost of the ACTUAL trial message on a minimum basis: the FULL
- * input the model will see — every history message's content plus the prompt —
- * estimated as input tokens, its input STORAGE, a fixed minimum output
- * allocation (2000 tokens), and that output's STORAGE; NOT the worst-case run
- * ceiling. Priced through the shared core (`priceRequest`, trial tier) so the
- * cost formula lives once. The route refuses the send when this exceeds
- * `TRIAL_MESSAGE_COST_CAP_NANO_USD` — a long resent history legitimately trips
- * the cap (it is the honest cost of the send, storage included).
+ * The BILLABLE cost of the ACTUAL trial message on a minimum basis: the input the
+ * model will see, as input tokens, plus a fixed minimum output allocation (2,000
+ * tokens); NOT the worst-case run ceiling. Priced through the shared core
+ * (`priceRequest`, trial tier) so the cost formula lives once. The route refuses
+ * the send when this exceeds `TRIAL_MESSAGE_COST_CAP_NANO_USD` — a long resent
+ * history legitimately trips the cap, which is the honest cost of the send.
+ *
+ * **Provider cost only, and the basis is the WHOLE prompt.** Those are one change
+ * and neither is correct without the other:
+ *
+ * - No storage. §Trial Usage's "trial never persists" is unconditional, so a turn
+ *   that stores nothing must not be priced for storage. The mechanism is the
+ *   `kind === 'provider'` selection below; nothing subtracts a storage figure.
+ * - `promptChars` is what the SEND will carry — system prompt, custom
+ *   instructions, history and the new input — counted by the one shared counter,
+ *   never history-plus-prompt alone. Storage used to mask the difference: the
+ *   system prompt's unpriced input tokens sat under the storage term, so
+ *   removing storage without widening the basis would let a turn the compiled
+ *   definition prices above 1¢ through this gate whenever input costs more per
+ *   token than output. With the whole prompt priced, this gate's surplus over that
+ *   floor is 1,000 output tokens at the model's own output rate — positive for
+ *   every rate shape, inverted ones included.
  */
 export function trialMessageBillableNanoUsd(
   target: ModelDescriptor,
-  promptText: string,
-  history: readonly ChatHistoryMessage[]
+  promptChars: number
 ): Result<bigint, DomainError> {
-  const historyChars = historyCharacterCount(history);
-  const inputChars = historyChars + promptText.length;
+  if (!Number.isSafeInteger(promptChars) || promptChars < 0) {
+    return err(validationError('trial message promptChars must be a non-negative integer'));
+  }
   // Conservative ratio (2 chars/token, a deliberate overestimate the trial absorbs)
   // comes from the shared helper: every non-paid tier selects it.
-  const inputTokens = BigInt(estimateTokensForTier('trial', inputChars));
+  const inputTokens = BigInt(estimateTokensForTier('trial', promptChars));
   const priced = priceRequest({
     models: [{ pricing: ratesFromPricing(target.pricing) }],
     inputTokens,
-    inputChars,
+    inputChars: 0,
     outputCharsPerToken: outputCharsPerTokenForTier('trial'),
   });
   if (!priced.ok) return err(validationError(priced.error.detail));
   return ok(
-    evaluateManifest(priced.value, BigInt(AFFORDABILITY_OUTPUT_TOKENS), { scope: 'all-in' })
+    evaluateManifest(
+      { items: priced.value.items.filter((item) => item.kind === 'provider') },
+      BigInt(AFFORDABILITY_OUTPUT_TOKENS),
+      { scope: 'all-in' }
+    )
   );
 }

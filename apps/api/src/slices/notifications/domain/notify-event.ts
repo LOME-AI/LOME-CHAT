@@ -1,4 +1,3 @@
-import { notificationCopyForCategory } from '@hushbox/shared';
 import { ResultAsync, okAsync } from '../../../lib/result/index.js';
 import { selectNotifyRecipients } from './notify-decision.js';
 import type { NotificationCategory } from '@hushbox/shared';
@@ -48,9 +47,10 @@ export interface NotifyEventInput {
  * Best-effort, channel-blind notification for one conversation event. Reads
  * the active members, narrows to the target set, applies the single decision
  * function (prefs, quiet hours, mute, presence, actor), fans out to the
- * survivors' devices with fixed per-category copy, and prunes tokens the
- * sender reports dead. The wire payload is generic (`category` +
- * `conversationId`); the composite sender derives the collapse alias. A failure
+ * survivors' devices, and prunes tokens the sender reports dead. The wire
+ * payload is generic (`category` + `conversationId`) and is the only thing
+ * sent: each transport looks the notification's words up from the category, so
+ * this layer never handles text. The composite sender derives the alias. A failure
  * anywhere is logged with its code and returned as a Result — the caller
  * fires-and-forgets; nothing here can crash a request.
  */
@@ -101,7 +101,7 @@ function resolveRecipients(
   });
 }
 
-/** Fans out fixed per-category copy to the survivors' devices and prunes dead ones. */
+/** Fans the generic payload out to the survivors' devices and prunes dead ones. */
 function deliverToRecipients(
   deps: Pick<NotifyEventDeps, 'deviceTokens' | 'push'>,
   input: NotifyEventInput,
@@ -111,12 +111,9 @@ function deliverToRecipients(
     if (tokens.length === 0) {
       return okAsync<PushDelivery, DomainError>(NOTHING_DELIVERED);
     }
-    const copy = notificationCopyForCategory(input.category);
     const message: PushMessage = {
       recipients: tokens,
-      title: copy.title,
-      body: copy.body,
-      data: { category: input.category, conversationId: input.conversationId },
+      payload: { category: input.category, conversationId: input.conversationId },
     };
     return deps.push
       .send(message)

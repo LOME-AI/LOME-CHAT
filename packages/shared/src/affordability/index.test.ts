@@ -36,7 +36,7 @@ const RELOCATED_UNITS = [
   'levenshtein', // string distance
   'outputTokensOf', // estimate
   'buildClassifierSystemPrompt', // smart-model
-  'resolveFundingDecision', // billing
+  'resolveFunding', // billing
   'resolveClientBilling', // billing (client wrapper)
 ] as const;
 
@@ -47,6 +47,20 @@ const RELOCATED_UNITS = [
  * points, because the root barrel re-exports this one.
  */
 const CONTENT_SHAPED_NAMES = ['truncateForClassifier', 'buildClassifierMessages'] as const;
+
+/**
+ * The two reasoning-plan producers, published at both entry points.
+ *
+ * Four of their siblings — `reasoningPlanModelFrom`, `reasoningBudgetForWire`,
+ * `ReasoningWire` and `REASONING_OFF_WIRE` — were already published, so the
+ * wall never protected this family; keeping only these two behind it was an
+ * inconsistency rather than a policy, and it forced a caller either to reach a
+ * subpath or to re-derive `B + H` for itself, which is the mirrored-formula
+ * shape `docs/CODE-RULES.md` bans. What stays walled is the LADDER these plans
+ * are computed from (`REASONING_BUDGET_TOKENS_BY_EFFORT`), pinned below: a
+ * caller may ask for a plan, never for the budget table behind it.
+ */
+const REASONING_PLAN_PRODUCERS = ['planReasoning', 'planReasoningOff'] as const;
 
 /**
  * The money layer's export wall, as symbols. `docs/BILLING.md` §Where the Code
@@ -125,8 +139,6 @@ const WALLED_EXPORTS = [
   'ReasoningInfeasibleReason',
   'ReasoningPlan',
   'ReasoningPlanResult',
-  'planReasoning',
-  'planReasoningOff',
   'EffortOption',
   'ResolvedEffort',
   'offeredEffortLabels',
@@ -287,6 +299,101 @@ function starTargetOf(from: string, statement: ts.Statement): string | undefined
   if (!specifier.text.startsWith('.')) return undefined;
   return path.resolve(path.dirname(from), specifier.text.replace(/\.js$/, '.ts'));
 }
+
+/**
+ * `docs/BILLING.md` §The public surface: the six exports feature code touches,
+ * plus the named structural seams. This pins PRESENCE at both entry points —
+ * the totality pin (set equality against this list) waits until the interim
+ * per-unit subpaths are gone, because until then a consumer reaching a walled
+ * unit is still resolving, and a totality assertion would have to name every
+ * symbol those consumers reach.
+ */
+const DOCUMENTED_SURFACE = [
+  'getTurnOptions',
+  'chooseFrom',
+  'wireFor',
+  'renderOptions',
+  'resolveFunding',
+  'notices',
+  // The named structural seams.
+  'STORAGE_COST_PER_CHARACTER_NANO',
+  'MEDIA_STORAGE_COST_PER_BYTE_NANO',
+  'getUserTier',
+  'tierCanAccessPremium',
+  'isPremiumModel',
+  'premiumPriceThresholdNanoUsd',
+  'DIMENSIONS',
+  'dimensionFor',
+  'buildClassifierSystemPrompt',
+  'nanoUnitPriceUsd',
+] as const;
+
+/**
+ * The types the surface's own signatures name. A consumer that can call
+ * `getTurnOptions` and cannot name what it returns has no usable API, so these
+ * travel with it.
+ */
+const DOCUMENTED_SURFACE_TYPES = [
+  'TurnOptions',
+  'OptionSet',
+  'ModelEntry',
+  'DimensionAvailability',
+  'Availability',
+  'RefusalCode',
+  'Selection',
+  'FundingSnapshot',
+  'PromptBasis',
+  'PriceableModel',
+  'ModelId',
+  'ChosenOptions',
+  'Notice',
+  'NoticeReason',
+] as const;
+
+describe('the public surface', () => {
+  it.each(DOCUMENTED_SURFACE)('binds %s on the affordability barrel', (name) => {
+    expect(Object.hasOwn(affordability, name)).toBe(true);
+  });
+
+  it.each(DOCUMENTED_SURFACE)('binds %s on the package root barrel', (name) => {
+    expect(Object.hasOwn(root, name)).toBe(true);
+  });
+
+  it.each(DOCUMENTED_SURFACE)('hands back one binding for %s at both entry points', (name) => {
+    expect((affordability as Record<string, unknown>)[name]).toBe(
+      (root as Record<string, unknown>)[name]
+    );
+  });
+
+  it.each(DOCUMENTED_SURFACE_TYPES)('publishes the type %s at both entry points', (name) => {
+    expect(publishedNames(MODULE_BARREL).has(name)).toBe(true);
+    expect(publishedNames(ROOT_BARREL).has(name)).toBe(true);
+  });
+});
+
+describe('the reasoning plan producers', () => {
+  it.each(REASONING_PLAN_PRODUCERS)('binds %s on the affordability barrel', (name) => {
+    expect(Object.hasOwn(affordability, name)).toBe(true);
+  });
+
+  it.each(REASONING_PLAN_PRODUCERS)('binds %s on the package root barrel', (name) => {
+    expect(Object.hasOwn(root, name)).toBe(true);
+  });
+
+  it.each(REASONING_PLAN_PRODUCERS)(
+    'hands back one binding for %s at both entry points',
+    (name) => {
+      expect((affordability as Record<string, unknown>)[name]).toBe(
+        (root as Record<string, unknown>)[name]
+      );
+    }
+  );
+
+  it('keeps the ladder the plans are built from behind the wall', () => {
+    expect(Object.hasOwn(affordability, 'REASONING_BUDGET_TOKENS_BY_EFFORT')).toBe(false);
+    expect(Object.hasOwn(root, 'REASONING_BUDGET_TOKENS_BY_EFFORT')).toBe(false);
+  });
+});
 
 describe('affordability barrel', () => {
   it.each(RELOCATED_UNITS)('exposes %s', (name) => {

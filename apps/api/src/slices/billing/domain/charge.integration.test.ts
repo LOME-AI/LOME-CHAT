@@ -365,6 +365,64 @@ describe('chargeWithinTx', () => {
     expect(rows[0]?.cachedInputTokens).toBe(2);
   });
 
+  it('records the level a reasoning generation actually ran at', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    const input = chargeInput(fixture, {
+      modality: 'text',
+      tokens: { inputTokens: 10, outputTokens: 20, reasoningTokens: 3, cachedInputTokens: 0 },
+      reasoningEffort: 'high',
+    });
+    const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    const rows = await db
+      .select()
+      .from(llmCompletions)
+      .where(eq(llmCompletions.usageRecordId, result.usageRecordId));
+    expect(rows[0]?.reasoningEffort).toBe('high');
+  });
+
+  it('records `off` for a generation the user turned reasoning off on', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    const input = chargeInput(fixture, {
+      modality: 'text',
+      tokens: { inputTokens: 10, outputTokens: 20, reasoningTokens: 0, cachedInputTokens: 0 },
+      reasoningEffort: 'off',
+    });
+    const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    const rows = await db
+      .select()
+      .from(llmCompletions)
+      .where(eq(llmCompletions.usageRecordId, result.usageRecordId));
+    expect(rows[0]?.reasoningEffort).toBe('off');
+  });
+
+  it('records no level for a generation sent with no reasoning wire', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    const input = chargeInput(fixture, {
+      modality: 'text',
+      tokens: { inputTokens: 10, outputTokens: 20, reasoningTokens: 0, cachedInputTokens: 0 },
+    });
+    const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    const rows = await db
+      .select()
+      .from(llmCompletions)
+      .where(eq(llmCompletions.usageRecordId, result.usageRecordId));
+    expect(rows[0]?.reasoningEffort).toBeNull();
+  });
+
+  it('writes a completion row for a text generation that reported no usage', async () => {
+    const fixture = await seedFixture('purchased', 10_000_000_000n);
+    const input = chargeInput(fixture, { modality: 'text', reasoningEffort: 'low' });
+    const result = await runSettlement(db, (tx) => chargeWithinTx(stores, tx, input));
+    const rows = await db
+      .select()
+      .from(llmCompletions)
+      .where(eq(llmCompletions.usageRecordId, result.usageRecordId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.reasoningEffort).toBe('low');
+    expect(rows[0]?.inputTokens).toBe(0);
+    expect(rows[0]?.outputTokens).toBe(0);
+  });
+
   it('writes the media_generations dimension for an image generation', async () => {
     const fixture = await seedFixture('purchased', 10_000_000_000n);
     const input = chargeInput(fixture, {

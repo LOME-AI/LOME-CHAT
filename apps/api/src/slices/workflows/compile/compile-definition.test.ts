@@ -260,6 +260,41 @@ describe('compileDefinition — registry resolution', () => {
     expect(codesOf(definition)).toEqual(['node_config_unresolved']);
   });
 
+  it('accepts a modelCall consuming the registered schema it declares as its input', () => {
+    const definition = definitionWith(
+      [
+        answerNode('classify'),
+        {
+          id: 'decide',
+          type: 'fanIn',
+          version: 1,
+          reducer: 'classifyText',
+          ins: [{ node: 'classify', port: 'out' }],
+          out: 'out',
+        },
+        answerNode('answer', {
+          inputSchema: CLASSIFICATION,
+          in: { node: 'decide', port: 'out' },
+        }),
+      ],
+      [
+        edge('input', 'prompt', 'classify', 'in'),
+        edge('classify', 'out', 'decide', 'in0'),
+        edge('decide', 'out', 'answer', 'in'),
+      ]
+    );
+    const compiled = compileDefinition(definition, makeContext())._unsafeUnwrap();
+    expect(compiled.nodes.get('answer')?.inputs.get('in')?.tag).toEqual(jsonTag(CLASSIFICATION));
+  });
+
+  it('rejects raw text fed to a modelCall that declares a schema input', () => {
+    const definition = definitionWith(
+      [answerNode('answer', { inputSchema: CLASSIFICATION })],
+      [edge('input', 'prompt', 'answer', 'in')]
+    );
+    expect(codesOf(definition)).toEqual(['type_mismatch']);
+  });
+
   it('rejects a single-input node whose registration declares two ports with node_config_unresolved', () => {
     const definition = definitionWith(
       [answerNode('answer', { model: 'two-port-model' })],

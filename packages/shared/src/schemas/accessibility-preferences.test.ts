@@ -3,8 +3,18 @@ import {
   accessibilityPreferencesSchema,
   ACCESSIBILITY_PREFERENCES_DEFAULTS,
   reconcileAccessibilityPreferences,
+  TTS_VOICE_IDS,
   type AccessibilityPreferences,
 } from './accessibility-preferences.js';
+
+describe('TTS_VOICE_IDS', () => {
+  it('lists exactly the voices the ttsVoice preference accepts', () => {
+    for (const id of TTS_VOICE_IDS) {
+      expect(accessibilityPreferencesSchema.parse({ version: 1, ttsVoice: id }).ttsVoice).toBe(id);
+    }
+    expect(TTS_VOICE_IDS).toHaveLength(5);
+  });
+});
 
 describe('ACCESSIBILITY_PREFERENCES_DEFAULTS', () => {
   it('exists and is a parsed object', () => {

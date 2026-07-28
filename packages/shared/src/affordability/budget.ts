@@ -1,17 +1,23 @@
 /**
- * Pre-send notification vocabulary.
+ * Pre-send notification assembly.
  *
- * `generateNotifications` maps a client billing decision + context onto the
- * user-facing notices. Cost/affordability math lives in the canonical nano-USD
- * estimator (this directory's `estimate/`), not here.
+ * `generateNotifications` decides WHICH conditions hold for a client billing
+ * decision plus its context; every sentence it renders comes from the one copy
+ * home in `./notices.js`, so this module chooses reasons and never words them.
+ * Cost/affordability math lives in the canonical nano-USD estimator (this
+ * directory's `estimate/`), not here.
  */
 
 import { CAPACITY_RED_THRESHOLD, LOW_BALANCE_OUTPUT_TOKEN_THRESHOLD } from './constants.js';
+import { notices } from './notices.js';
+import type { Notice, NoticeReason } from './notices.js';
 import type {
   FundingSource,
   ResolveBillingResult,
   DenialReason,
 } from './billing/client-billing.js';
+
+export type { BudgetError, MessageSegment } from './notices.js';
 
 export interface NotificationInput {
   billingResult: ResolveBillingResult;
@@ -22,223 +28,125 @@ export interface NotificationInput {
 }
 
 /**
- * A segment of a message, optionally with a link.
+ * The producer's denial discriminator, mapped onto the shared vocabulary. Two
+ * of them name a condition the turn arithmetic also names, and the mapping is
+ * what makes the pre-send notice and the wire refusal read identically rather
+ * than merely similarly.
  */
-export interface MessageSegment {
-  /** The text content of this segment */
-  text: string;
-  /** Route path if this segment should be a clickable link */
-  link?: string;
-}
-
-export interface BudgetError {
-  /** Unique identifier for the error type */
-  id: string;
-  /** Severity: 'error' blocks send, 'warning' allows, 'info' is informational */
-  type: 'warning' | 'error' | 'info';
-  /** Human-readable message to display (plain text fallback) */
-  message: string;
-  /** Structured message with optional links for rendering */
-  segments?: MessageSegment[];
-}
-
-const DENIAL_NOTIFICATIONS: Record<DenialReason, BudgetError> = {
-  premium_requires_balance: {
-    id: 'premium_requires_balance',
-    type: 'error',
-    message: 'This model requires a paid account.',
-    segments: [
-      { text: 'This model requires a paid account. ' },
-      { text: 'Top up', link: '/billing' },
-      { text: ' to use premium models.' },
-    ],
-  },
-  insufficient_balance: {
-    id: 'insufficient_balance',
-    type: 'error',
-    message: 'Insufficient balance. Top up or try a more affordable model.',
-    segments: [
-      { text: 'Insufficient balance. ' },
-      { text: 'Top up', link: '/billing' },
-      { text: ' or try a more affordable model.' },
-    ],
-  },
-  insufficient_free_allowance: {
-    id: 'insufficient_free_allowance',
-    type: 'error',
-    message:
-      "Your free daily usage can't cover this message. Top up or try a shorter conversation.",
-    segments: [
-      { text: "Your free daily usage can't cover this message. " },
-      { text: 'Top up', link: '/billing' },
-      { text: ' or try a shorter conversation.' },
-    ],
-  },
-  trial_limit_exceeded: {
-    id: 'trial_limit_exceeded',
-    type: 'error',
-    message: 'This message exceeds the usage limit.',
-    segments: [
-      { text: 'This message exceeds the usage limit. ' },
-      { text: 'Sign up', link: '/signup' },
-      { text: ' for more capacity.' },
-    ],
-  },
-  guest_budget_exhausted: {
-    id: 'guest_budget_exhausted',
-    type: 'error',
-    message: 'No budget allocated. Contact the conversation owner.',
-    segments: [{ text: 'No budget allocated. Contact the conversation owner.' }],
-  },
+const DENIAL_REASONS: Readonly<Record<DenialReason, NoticeReason>> = {
+  premium_requires_balance: 'premium_requires_credit',
+  insufficient_balance: 'insufficient_funds',
+  insufficient_free_allowance: 'free_allowance_exhausted',
+  trial_limit_exceeded: 'trial_message_cap_exceeded',
+  guest_budget_exhausted: 'guest_no_group_budget',
 };
 
-const FUNDING_SOURCE_NOTICES: Partial<Record<FundingSource, BudgetError>> = {
-  free_allowance: {
-    id: 'free_tier_notice',
-    type: 'info',
-    message: 'Using free allowance. Top up for longer conversations.',
-    segments: [
-      { text: 'Using free allowance. ' },
-      { text: 'Top up', link: '/billing' },
-      { text: ' for longer conversations.' },
-    ],
-  },
-  trial_fixed: {
-    id: 'trial_notice',
-    type: 'info',
-    message: 'Free preview. Sign up for full access.',
-    segments: [
-      { text: 'Free preview. ' },
-      { text: 'Sign up', link: '/signup' },
-      { text: ' for full access.' },
-    ],
-  },
-};
-
-const DELEGATED_BUDGET_ACTIVE: BudgetError = {
-  id: 'delegated_budget_notice',
-  type: 'info',
-  message: "You won't be charged. The conversation owner has allocated budget for your messages.",
-  segments: [
-    {
-      text: "You won't be charged. The conversation owner has allocated budget for your messages.",
-    },
-  ],
-};
-
-const DELEGATED_BUDGET_EXHAUSTED: BudgetError = {
-  id: 'delegated_budget_exhausted',
-  type: 'info',
-  message: 'Allocated budget used up. Your personal balance will be used.',
-  segments: [{ text: 'Allocated budget used up. Your personal balance will be used.' }],
+/** Funding sources that are worth stating; the two paid ones speak for themselves. */
+const FUNDING_SOURCE_REASONS: Readonly<Partial<Record<FundingSource, NoticeReason>>> = {
+  free_allowance: 'free_allowance_pays',
+  trial_fixed: 'trial_preview_pays',
 };
 
 /** Push non-blocking warning notifications (capacity + low balance). */
 function pushWarningNotifications(
-  notifications: BudgetError[],
+  reasons: NoticeReason[],
   capacityPercent: number,
   fundingSource: FundingSource | 'denied',
   maxOutputTokens: number
 ): void {
   if (capacityPercent >= CAPACITY_RED_THRESHOLD * 100) {
-    notifications.push({
-      id: 'capacity_warning',
-      type: 'warning',
-      message: "Your conversation is near this model's memory limit. Responses may be cut short.",
-    });
+    reasons.push('context_near_capacity');
   }
   if (
     fundingSource === 'personal_balance' &&
     maxOutputTokens < LOW_BALANCE_OUTPUT_TOKEN_THRESHOLD
   ) {
-    notifications.push({
-      id: 'low_balance',
-      type: 'warning',
-      message: 'Low balance. Long responses may be shortened.',
-    });
-  }
-}
-
-/** Push info-level notifications (funding source + delegated budget). */
-function pushInfoNotifications(
-  notifications: BudgetError[],
-  fundingSource: FundingSource | 'denied',
-  isDenied: boolean,
-  hasDelegatedBudget: boolean | undefined
-): void {
-  if (!isDenied) {
-    const notice = FUNDING_SOURCE_NOTICES[fundingSource as FundingSource];
-    if (notice) notifications.push(notice);
-  }
-  if (hasDelegatedBudget === true) {
-    notifications.push(
-      fundingSource === 'owner_balance' ? DELEGATED_BUDGET_ACTIVE : DELEGATED_BUDGET_EXHAUSTED
-    );
+    reasons.push('answer_may_be_shortened');
   }
 }
 
 /**
- * Generate notification messages based on a billing decision and context.
+ * Push info-level notices: which funding source is paying, and — when the
+ * sender is about to be charged for a turn the conversation owner would
+ * otherwise have funded — the affirmative pre-send disclosure §Notices 5
+ * requires.
  *
- * Maps a `ResolveBillingResult` (from the client's `resolveClientBilling()`)
- * plus capacity/privilege context into an array of user-facing notification
- * messages.
+ * The disclosure is driven by the funding core's own `payerSwitch`, which is
+ * set only on an approved fall-through and covers an allocation that ran out,
+ * one that was never granted, and one too small for this turn alike. Reading
+ * the switch rather than the presence of a budget row is what makes the
+ * never-allocated sender told as well; and because a refusal never carries it,
+ * a blocked send states its refusal instead of a charge that will not happen.
  */
-export function generateNotifications(input: NotificationInput): BudgetError[] {
+function pushInfoNotifications(
+  reasons: NoticeReason[],
+  billingResult: ResolveBillingResult,
+  hasDelegatedBudget: boolean | undefined
+): void {
+  if (billingResult.fundingSource === 'denied') return;
+
+  const notice = FUNDING_SOURCE_REASONS[billingResult.fundingSource];
+  if (notice) reasons.push(notice);
+
+  if (billingResult.fundingSource === 'owner_balance' && hasDelegatedBudget === true) {
+    reasons.push('group_budget_pays');
+  }
+  if (billingResult.payerSwitch !== undefined) {
+    reasons.push('payer_switched_to_personal');
+  }
+}
+
+/**
+ * The one blocking reason for a turn whose funding and whose length may both be
+ * unsatisfiable at once (§Notices 4). The funding floor is tested first: a
+ * denial means either that the funding cannot cover a minimum answer or — for
+ * the tier denials — that no balance and no shorter prompt unlocks the model at
+ * all, so in both cases funding is the reason and length is not. Length answers
+ * only when funding is not the reason.
+ *
+ * This is the same precedence the option-level path applies; it is enforced
+ * here as well because this is the surface where both notices would otherwise
+ * be rendered together, handing the user two non-dismissible demands whose
+ * actions contradict each other.
+ */
+function blockingReason(
+  billingResult: ResolveBillingResult,
+  isOverCapacity: boolean
+): NoticeReason | undefined {
+  if (billingResult.fundingSource === 'denied') return DENIAL_REASONS[billingResult.reason];
+  return isOverCapacity ? 'prompt_too_long' : undefined;
+}
+
+/**
+ * Generate the notices for a billing decision and its context.
+ *
+ * Order is the blocking reason, then warnings, then informational notices, so
+ * the thing that stops the send is read first.
+ */
+export function generateNotifications(input: NotificationInput): Notice[] {
   const { billingResult, capacityPercent, maxOutputTokens, privilege, hasDelegatedBudget } = input;
 
-  // Read-only members can't send — only show privilege notice
-  if (privilege === 'read') {
-    return [
-      {
-        id: 'read_only_notice',
-        type: 'info' as const,
-        message: 'You have read-only access to this conversation.',
-        segments: [{ text: 'You have read-only access to this conversation.' }],
-      },
-    ];
-  }
+  // A read-only member cannot send at all, so no funding notice is relevant and
+  // the privilege block is the whole answer.
+  if (privilege === 'read') return [notices('conversation_read_only')];
 
-  const notifications: BudgetError[] = [];
+  const reasons: NoticeReason[] = [];
   const isDenied = billingResult.fundingSource === 'denied';
   const isOverCapacity = capacityPercent > 100;
 
-  // 1. Blocking errors
-  if (isOverCapacity) {
-    notifications.push({
-      id: 'capacity_exceeded',
-      type: 'error',
-      message: 'Message exceeds model capacity. Shorten your message or start a new conversation.',
-    });
-  }
-  if (isDenied) {
-    notifications.push(DENIAL_NOTIFICATIONS[billingResult.reason]);
-  }
+  const blocking = blockingReason(billingResult, isOverCapacity);
+  if (blocking !== undefined) reasons.push(blocking);
 
-  // 2. Non-blocking warnings (only when no blocking errors)
   if (!isDenied && !isOverCapacity) {
     pushWarningNotifications(
-      notifications,
+      reasons,
       capacityPercent,
       billingResult.fundingSource,
       maxOutputTokens
     );
   }
 
-  // 3. Info notices (always, even with blocking errors)
-  // Suppress "Your personal balance will be used" when guest has no budget —
-  // the guest_budget_exhausted denial error already covers it.
-  const effectiveHasDelegatedBudget =
-    hasDelegatedBudget &&
-    !(
-      billingResult.fundingSource === 'denied' && billingResult.reason === 'guest_budget_exhausted'
-    );
-  pushInfoNotifications(
-    notifications,
-    billingResult.fundingSource,
-    isDenied,
-    effectiveHasDelegatedBudget
-  );
+  pushInfoNotifications(reasons, billingResult, hasDelegatedBudget);
 
-  return notifications;
+  return reasons.map((reason) => notices(reason));
 }

@@ -25,6 +25,7 @@ import {
   wallets,
 } from '@hushbox/db';
 import { decryptTextFromEpoch, generateKeyPair, unwrapEpochKey } from '@hushbox/crypto';
+import { NOTIFICATION_COPY } from '@hushbox/shared';
 import { applyPipeline } from '../../middleware/pipeline.js';
 import { clearVersionOverride, getVersionOverride } from '../../middleware/version-override.js';
 import { withModelCatalogLock } from '../../slices/models/__tests__/model-catalog-lock.js';
@@ -1360,7 +1361,7 @@ describe('newsletter dev routes', () => {
 describe('dev mailbox routes', () => {
   it('lists captured mock emails and serves one as raw HTML', async () => {
     const subject = `Mailbox probe ${crypto.randomUUID().slice(0, 8)}`;
-    const sender = createEmailSenderFromEnv({ NODE_ENV: 'development' }, db);
+    const sender = createEmailSenderFromEnv({ NODE_ENV: 'development' });
     const sent = await sender.send({
       to: 'mailbox@platform-dev.test',
       subject,
@@ -1395,7 +1396,7 @@ describe('dev mailbox routes', () => {
 
 interface CapturedPushView {
   id: string;
-  category: string | null;
+  category: string;
   tag: string | null;
   title: string;
   body: string;
@@ -1407,15 +1408,13 @@ describe('dev push routes', () => {
   it('lists captured mock pushes with platform, category, alias tag and payload', async () => {
     const conversationId = crypto.randomUUID();
     const userId = crypto.randomUUID();
-    const sender = createPushSenderFromEnv(
-      { NODE_ENV: 'development', NOTIFICATION_TAG_SECRET: 'dev-route-collapse-alias-key' },
-      db
-    );
+    const sender = createPushSenderFromEnv({
+      NODE_ENV: 'development',
+      NOTIFICATION_TAG_SECRET: 'dev-route-collapse-alias-key',
+    });
     const sent = await sender.send({
       recipients: [{ platform: 'ios', userId, token: `push-probe-${crypto.randomUUID()}` }],
-      title: 'New message',
-      body: 'You have a new message in a conversation.',
-      data: { category: 'message', conversationId },
+      payload: { category: 'message', conversationId },
     });
     expect(sent.isOk()).toBe(true);
 
@@ -1436,15 +1435,13 @@ describe('dev push routes', () => {
   it('never exposes a device token or subscription endpoint', async () => {
     const token = `push-secret-${crypto.randomUUID()}`;
     const conversationId = crypto.randomUUID();
-    const sender = createPushSenderFromEnv(
-      { NODE_ENV: 'development', NOTIFICATION_TAG_SECRET: 'dev-route-collapse-alias-key' },
-      db
-    );
+    const sender = createPushSenderFromEnv({
+      NODE_ENV: 'development',
+      NOTIFICATION_TAG_SECRET: 'dev-route-collapse-alias-key',
+    });
     await sender.send({
       recipients: [{ platform: 'android', userId: crypto.randomUUID(), token }],
-      title: 'New message',
-      body: 'You have a new message in a conversation.',
-      data: { category: 'message', conversationId },
+      payload: { category: 'message', conversationId },
     });
 
     const res = await request('/dev/push');
@@ -1453,26 +1450,24 @@ describe('dev push routes', () => {
     expect(body).not.toContain(token);
   });
 
-  it('reports a conversation-less send as having no category, tag or payload', async () => {
-    const body = `probe body ${crypto.randomUUID()}`;
-    const sender = createPushSenderFromEnv(
-      { NODE_ENV: 'development', NOTIFICATION_TAG_SECRET: 'dev-route-collapse-alias-key' },
-      db
-    );
-    // Nothing conversation-scoped: the composite derives no collapse alias.
+  it('renders the fixed copy the category resolves to, which the message never carries', async () => {
+    const conversationId = crypto.randomUUID();
+    const sender = createPushSenderFromEnv({
+      NODE_ENV: 'development',
+      NOTIFICATION_TAG_SECRET: 'dev-route-collapse-alias-key',
+    });
     await sender.send({
       recipients: [{ platform: 'ios', userId: crypto.randomUUID(), token: crypto.randomUUID() }],
-      title: 'Notice',
-      body,
+      payload: { category: 'membership', conversationId },
     });
 
     const res = await request('/dev/push');
     const { sends } = await readJson<{ sends: CapturedPushView[] }>(res);
-    const captured = sends.find((send) => send.body === body);
+    const captured = sends.find((send) => send.payload['conversationId'] === conversationId);
 
-    expect(captured?.category).toBeNull();
-    expect(captured?.tag).toBeNull();
-    expect(captured?.payload).toEqual({});
+    expect(captured?.category).toBe('membership');
+    expect(captured?.title).toBe(NOTIFICATION_COPY.membership.title);
+    expect(captured?.body).toBe(NOTIFICATION_COPY.membership.body);
   });
 
   it('404s in production (dev-only route class)', async () => {

@@ -161,10 +161,10 @@ describe('purgeStaleDeviceTokens', () => {
         membership: membershipOf([{ userId: recipient, muted: false }]),
         preferences,
         deviceTokens,
-        push: createPushSenderFromEnv(
-          { NODE_ENV: 'development', NOTIFICATION_TAG_SECRET: 'retention-collapse-alias-key' },
-          db
-        ),
+        push: createPushSenderFromEnv({
+          NODE_ENV: 'development',
+          NOTIFICATION_TAG_SECRET: 'retention-collapse-alias-key',
+        }),
         logger: silentLogger,
       },
       {

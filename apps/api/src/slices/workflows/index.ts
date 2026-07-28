@@ -31,6 +31,7 @@ export type {
 } from './engine/workflow-capabilities.js';
 export {
   SettlementFenceLost,
+  anchorChargeKey,
   createChargingCommit,
   createFencedSettlementHook,
   keyRowCompletion,
@@ -47,6 +48,14 @@ export { createNodeRegistry } from './engine/node-registry.js';
 export type { NodeRegistryDeps } from './engine/node-registry.js';
 export { deriveModelPorts } from './engine/model-ports.js';
 export * from './builder/index.js';
+// The classifier call's prompt machinery. Engine-side by ownership — the
+// truncation budget is what the classifier reserve prices — and published
+// because the slice that holds the conversation content assembles the call.
+export { truncateForClassifier } from './nodes/classifier-context.js';
+export type { TruncationInput } from './nodes/classifier-context.js';
+export { buildClassifierMessages } from './nodes/classifier-messages.js';
+export type { ClassifierMessage, ClassifierMessagesInput } from './nodes/classifier-messages.js';
+export { TURN_DECISION_SCHEMA_NAME } from './nodes/turn-decision.js';
 export { compileDefinition } from './compile/compile-definition.js';
 export type { CompiledDefinition } from './compile/compile-definition.js';
 export type { CompileContext, NodeRegistryContext, ValueNode } from './compile/context.js';

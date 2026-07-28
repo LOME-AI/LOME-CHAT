@@ -1,4 +1,3 @@
-import { outputCharsPerTokenForTier } from '@hushbox/shared/affordability/estimate/pre-adapters';
 import {
   ascendingByPrice,
   candidateEntry,
@@ -11,7 +10,7 @@ import {
   trialMessageBillableNanoUsd,
 } from './trial-eligibility.js';
 import type { SmartModelCandidateEntry } from './smart-model-candidates.js';
-import type { ChatHistoryMessage, ModelDescriptor } from '@hushbox/shared';
+import type { ModelDescriptor } from '@hushbox/shared';
 
 /**
  * The Smart Model candidate list for one TRIAL send: every exposed,
@@ -26,17 +25,17 @@ import type { ChatHistoryMessage, ModelDescriptor } from '@hushbox/shared';
  * - Trial has NO wallet, so there is no balance read. The fixed 1¢
  *   per-message ceiling (`TRIAL_MESSAGE_COST_CAP_NANO_USD`) plays the role
  *   the wallet balance plays for a paid send.
- * - Everything is BILLABLE (all-in) cost — the trial cap's basis (see
+ * - Everything is BILLABLE provider cost — the trial cap's basis (see
  *   `trial-eligibility.ts`) and the same basis the paid filter's classifier
- *   reserve gates a customer-facing balance with. Both the reserve and the
- *   per-message cost include their pass-through R2 STORAGE (tier `trial`),
- *   matching legacy `calculateTrialBudget`; storage is pass-through by
- *   construction (it never marks up).
+ *   reserve gates a customer-facing balance with. Neither the reserve nor the
+ *   per-message cost carries storage: a trial turn persists nothing, and the
+ *   classifier's own prompt and answer never rest either (§Trial Usage).
  * - A candidate is kept iff
  *     classifier worst-case reserve + the ACTUAL message's billable cost ≤ 1¢,
- *   where the message cost is `trialMessageBillableNanoUsd` (the full resent
- *   history plus the prompt as input + storage, the fixed minimum output
- *   allocation + its storage) — the cap prices the classifier + answer
+ *   where the message cost is `trialMessageBillableNanoUsd` over the route's own
+ *   `promptCharacterCount` (system prompt, custom instructions, history and
+ *   input) plus the fixed minimum output allocation — the cap prices the
+ *   classifier + answer
  *   combination per candidate, so the send stays under the ceiling whichever
  *   model the classifier picks. A reserve that alone meets the cap empties the
  *   list (nothing is left for any answer), and an unpriceable candidate
@@ -50,9 +49,17 @@ export interface TrialSmartModelCandidatesInput {
   readonly descriptors: readonly ModelDescriptor[];
   /** The reference clock for the premium-recency leg. */
   readonly nowMs: number;
-  /** The send being priced: the prompt plus every resent history turn. */
-  readonly prompt: string;
-  readonly history: readonly ChatHistoryMessage[];
+  /**
+   * The character count the SEND carries — system prompt, custom instructions,
+   * history and the new input — as the route measured it for the turn budget.
+   *
+   * A count, not the text, and it arrives from the caller rather than being
+   * recomputed here. Recomputing it locally is exactly the defect this replaced:
+   * this file could see the system prompt, the history and the input, but NOT the
+   * custom instructions, so the gate priced less than the definition it gates and
+   * admitted sends over the 1¢ cap.
+   */
+  readonly promptCharacterCount: number;
 }
 
 export interface TrialSmartModelCandidates {
@@ -77,28 +84,24 @@ export function buildTrialSmartModelCandidates(
   const classifier = eligibleSorted[0];
   if (classifier === undefined) return null;
 
-  // The trial reserve is the classifier's billable provider cost PLUS its
-  // pass-through storage (tier `trial` output ratio) — the same storage legacy
-  // `calculateTrialBudget` folded into the 1¢ gate. Summed as-is (storage never
-  // marks up); undefined when the classifier lacks a per-token rate.
-  const reserveItems = classifierReserveLineItems(
-    classifier,
-    eligibleSorted,
-    outputCharsPerTokenForTier('trial')
-  );
+  // The trial reserve is the classifier's billable provider cost. There is no
+  // storage leg to add: the classifier's prompt and answer never rest, so the
+  // list carries one item and summing it cannot pick up a storage charge.
+  // `undefined` when the classifier lacks a per-token rate.
+  const reserveItems = classifierReserveLineItems(classifier, eligibleSorted);
   /* v8 ignore next -- unreachable: the classifier is eligibleSorted[0], which passed trialEligibility's isPriceableForTrial (both per-token rates present), so classifierReserveLineItems cannot fail to price it; kept fail-closed */
   if (reserveItems === undefined) return null;
   let reserve = 0n;
   for (const item of reserveItems) {
-    // Both classifier line items (tokens + storage) always carry fixedNano; the
-    // ?? guards only the optional NanoLineItem field type, never a real absence.
+    // Every classifier line item carries fixedNano; the ?? guards only the
+    // optional NanoLineItem field type, never a real absence.
     /* v8 ignore next */
     reserve += item.fixedNano ?? 0n;
   }
   if (reserve >= TRIAL_MESSAGE_COST_CAP_NANO_USD) return null;
 
   const affordable = eligibleSorted.filter((descriptor) => {
-    const messageCost = trialMessageBillableNanoUsd(descriptor, input.prompt, input.history);
+    const messageCost = trialMessageBillableNanoUsd(descriptor, input.promptCharacterCount);
     /* v8 ignore next -- unreachable: trialEligibility already gated isPriceableForTrial (both per-token rates present), so trialMessageBillableNanoUsd cannot error for an eligible descriptor; kept fail-closed */
     if (messageCost.isErr()) return false;
     return reserve + messageCost.value <= TRIAL_MESSAGE_COST_CAP_NANO_USD;

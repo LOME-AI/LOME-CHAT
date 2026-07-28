@@ -12,6 +12,7 @@ import {
   NEWSLETTER_STATUSES,
   NEWSLETTER_SUPPRESS_REASONS,
   PAYMENT_STATUSES,
+  RESOLVED_REASONING_EFFORTS,
 } from '@hushbox/shared';
 
 import {
@@ -35,6 +36,8 @@ import {
   newsletterStatusEnum,
   newsletterSuppressReasonEnum,
   paymentStatusEnum,
+  llmCompletions,
+  reasoningEffortEnum,
   userLockReasonEnum,
   verificationPurposeEnum,
   walletTypeEnum,
@@ -61,6 +64,7 @@ const ALL_ENUMS = [
   newsletterStatusEnum,
   newsletterSuppressReasonEnum,
   paymentStatusEnum,
+  reasoningEffortEnum,
   userLockReasonEnum,
   verificationPurposeEnum,
   walletTypeEnum,
@@ -85,6 +89,15 @@ describe('pgEnums', () => {
 
   it('derives model-exclude-reason values from the single shared EXCLUDE_REASONS source', () => {
     expect(modelExcludeReasonEnum.enumValues).toEqual([...EXCLUDE_REASONS]);
+  });
+
+  it('derives reasoning-effort values from the single shared RESOLVED_REASONING_EFFORTS source', () => {
+    expect(reasoningEffortEnum.enumValues).toEqual([...RESOLVED_REASONING_EFFORTS]);
+  });
+
+  it('leaves the recorded reasoning effort nullable, so "does not apply" stays distinct from off', () => {
+    expect(llmCompletions.reasoningEffort.notNull).toBe(false);
+    expect(llmCompletions.reasoningEffort.enumValues).toEqual([...RESOLVED_REASONING_EFFORTS]);
   });
 
   it('derives feedback-kind values from the single shared FEEDBACK_KINDS source', () => {

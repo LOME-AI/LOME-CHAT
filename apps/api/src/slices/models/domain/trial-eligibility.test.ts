@@ -208,166 +208,136 @@ describe('the premium price boundary over the exposed catalog', () => {
 });
 
 describe('trialMessageBillableNanoUsd', () => {
-  it('prices the actual prompt on the minimum basis (2000 output tokens), not the context window', () => {
-    // prompt 10 chars -> 10 input chars -> ceil(10 / 2) = 5 input tokens; 2000 output tokens.
-    // provider = 5 * 1000 + 2000 * 1000 = 2,005,000.
-    // storage  = 10 * 300 (input chars) + 2000 * 4 * 300 (output, trial ratio) = 2,403,000.
-    // canonical (with-storage) total = 4,408,000 — independent of the 1,000,000 context window.
+  it('prices the character count on the minimum basis (2000 output tokens), not the context window', () => {
+    // 10 chars -> ceil(10 / 2) = 5 input tokens; 2,000 output tokens.
+    // 5 × 1,000 + 2,000 × 1,000 = 2,005,000 — independent of the 1,000,000 context window.
     const target = model({ pricing: pricing(1000n, 1000n), limits: { contextLength: 1_000_000 } });
-    const result = trialMessageBillableNanoUsd(target, '0123456789', []);
-    expect(result.isOk() && result.value).toBe(4_408_000n);
+    expect(trialMessageBillableNanoUsd(target, 10)._unsafeUnwrap()).toBe(2_005_000n);
+  });
+
+  it('prices NO storage — a trial turn persists nothing', () => {
+    // The same 10 characters would have carried 10 × 300 of input storage and
+    // 2,000 × 4 × 300 of output storage: 2,403,000 nano, a quarter of the whole
+    // 1¢ cap on a short send and most of it on a long one.
+    const target = model({ pricing: pricing(1000n, 1000n) });
+    const storageWouldHaveBeen =
+      10n * STORAGE_COST_PER_CHARACTER_NANO +
+      2000n * BigInt(outputCharsPerTokenForTier('trial')) * STORAGE_COST_PER_CHARACTER_NANO;
+    expect(trialMessageBillableNanoUsd(target, 10)._unsafeUnwrap()).toBe(2_005_000n);
+    expect(trialMessageBillableNanoUsd(target, 10)._unsafeUnwrap()).toBeLessThan(
+      2_005_000n + storageWouldHaveBeen
+    );
   });
 
   it('exceeds the 1¢ cap for a long prompt on a mid-price model', () => {
-    // 24000 chars -> 12000 input tokens; base = 12000*1000 + 2000*1000 = 14,000,000 > cap.
+    // 24,000 chars -> 12,000 input tokens; 12,000,000 + 2,000,000 > cap.
     const target = model({ pricing: pricing(1000n, 1000n) });
-    const result = trialMessageBillableNanoUsd(target, 'x'.repeat(24_000), []);
+    const result = trialMessageBillableNanoUsd(target, 24_000);
     expect(result.isOk() && result.value > TRIAL_MESSAGE_COST_CAP_NANO_USD).toBe(true);
   });
 
   it('stays within the 1¢ cap for a short prompt on a mid-price model', () => {
     const target = model({ pricing: pricing(1000n, 1000n) });
-    const result = trialMessageBillableNanoUsd(target, 'hello', []);
+    const result = trialMessageBillableNanoUsd(target, 5);
     expect(result.isOk() && result.value <= TRIAL_MESSAGE_COST_CAP_NANO_USD).toBe(true);
   });
 
-  it('prices the summed history content plus the prompt', () => {
-    // history 4 + 6 chars, prompt 10 chars -> 20 input chars -> ceil(20 / 2) = 10 input tokens.
-    // provider = 10 * 1000 + 2000 * 1000 = 2,010,000.
-    // storage  = 20 * 300 + 2000 * 4 * 300 = 2,406,000.
-    // canonical (with-storage) total = 4,416,000.
-    const target = model({ pricing: pricing(1000n, 1000n) });
-    const result = trialMessageBillableNanoUsd(target, '0123456789', [
-      { role: 'user', content: 'abcd' },
-      { role: 'assistant', content: 'efghij' },
-    ]);
-    expect(result.isOk() && result.value).toBe(4_416_000n);
-  });
-
   it('derives input tokens from the shared estimateTokensForTier helper', () => {
-    const prompt = '0123456789';
-    const history = [
-      { role: 'user' as const, content: 'abcd' },
-      { role: 'assistant' as const, content: 'efghij' },
-    ];
-    const totalChars = prompt.length + history.reduce((sum, m) => sum + m.content.length, 0);
+    const totalChars = 20;
     const expectedInputTokens = estimateTokensForTier('trial', totalChars);
-    // provider = inputTokens * inputRate + 2000 output tokens * outputRate;
-    // storage  = totalChars * charRate (input) + 2000 * outputCharsPerToken(trial) * charRate.
     const providerBase = BigInt(expectedInputTokens) * 1000n + 2000n * 1000n;
-    const storageBase =
-      BigInt(totalChars) * STORAGE_COST_PER_CHARACTER_NANO +
-      2000n * BigInt(outputCharsPerTokenForTier('trial')) * STORAGE_COST_PER_CHARACTER_NANO;
     const target = model({ pricing: pricing(1000n, 1000n) });
-    const result = trialMessageBillableNanoUsd(target, prompt, history);
-    expect(result.isOk() && result.value).toBe(providerBase + storageBase);
+    expect(trialMessageBillableNanoUsd(target, totalChars)._unsafeUnwrap()).toBe(providerBase);
   });
 
   it('surfaces a model missing a per-token rate as a validation error (never a silent price)', () => {
     // priceRequest fails closed when the output rate is absent; the send cannot
     // be priced, so the trial gate refuses it rather than under-charging.
     const target = model({ pricing: { inputPerToken: nanoUSD(5n) } as Pricing });
-    const result = trialMessageBillableNanoUsd(target, 'hi', []);
+    const result = trialMessageBillableNanoUsd(target, 2);
     expect(result.isErr()).toBe(true);
     expect(result.isErr() && result.error.code).toBe('validation');
   });
 
-  it('exceeds the 1¢ cap when a long history inflates a short prompt', () => {
-    // 24000 history chars + 5 prompt chars -> 12003 input tokens; over the cap.
+  it('refuses a character count that is not a whole non-negative number', () => {
     const target = model({ pricing: pricing(1000n, 1000n) });
-    const result = trialMessageBillableNanoUsd(target, 'hello', [
-      { role: 'user', content: 'x'.repeat(12_000) },
-      { role: 'assistant', content: 'y'.repeat(12_000) },
-    ]);
-    expect(result.isOk() && result.value > TRIAL_MESSAGE_COST_CAP_NANO_USD).toBe(true);
+    expect(trialMessageBillableNanoUsd(target, -1).isErr()).toBe(true);
+    expect(trialMessageBillableNanoUsd(target, 1.5).isErr()).toBe(true);
   });
 });
 
 /**
  * The per-message gate must stay strictly stricter than the floor the compiled
- * trial turn prices, or an over-cap turn reaches the provider. The gate does not
- * price the server's own system prompt (1,609 characters, 805 trial input tokens)
- * while the turn does, so what covers that unpriced input leg is the gate's
- * surplus: 1,000 extra output tokens plus the pass-through storage of the send.
+ * trial turn prices, or an over-cap turn reaches the provider. Both now price the
+ * same input — the whole send, system prompt included — and the gate allocates
+ * 2,000 output tokens where the floor allocates 1,000, so the gate's surplus is
+ * exactly 1,000 output tokens at the model's own rate.
  *
- * The surplus is finite, so domination is a property of the RATE SHAPE, not a
- * theorem. Measured here in both directions: it holds across the whole shape band
- * the live catalog occupies (176 of 176 exposed text models price output at or
- * above input), and it fails past a measured inversion — which is why §Trial
- * Usage's storage-free reading cannot be applied to this gate until the gate
- * prices the same input the turn does.
+ * That is an identity, not a band: it is positive for EVERY rate shape, including
+ * an inverted one (input dearer than output), which is the case a sweep over
+ * realistic catalog shapes cannot see. The pair of pins below is what keeps the
+ * two halves of that identity — no storage, whole-prompt basis — from being
+ * separated later: the second measures what the gate would admit if the basis
+ * narrowed back to history-plus-prompt.
  */
 describe('the per-message gate dominates the compiled turn floor', () => {
-  /** The exact base system prompt the send carries but this gate never counts. */
+  /** The system prompt the send carries — counted by BOTH sides now. */
   const SYSTEM_PROMPT_CHARS = buildTurnSystemPrompt({
     now: new Date('2026-07-26T00:00:00Z'),
   }).length;
-  const PROMPT = 'x'.repeat(400);
+  const PROMPT_CHARS = 400;
+  const SEND_CHARS = SYSTEM_PROMPT_CHARS + PROMPT_CHARS;
 
   /** The unstamped turn's own floor: the whole input the send carries, at a
    * minimum answer, provider-only — trial turns persist nothing. */
   function compiledTurnFloorNanoUsd(target: ModelDescriptor): bigint {
     return callBillableNanoUsd(target.pricing, {
       kind: 'tokens',
-      inputTokens: estimateTokensForTier('trial', SYSTEM_PROMPT_CHARS + PROMPT.length),
+      inputTokens: estimateTokensForTier('trial', SEND_CHARS),
       outputTokens: 1000,
     })._unsafeUnwrap();
   }
 
-  /** The gate with its storage line items removed — the strip §Trial Usage asks
-   * for, priced here rather than shipped. */
-  function gateWithoutStorageNanoUsd(target: ModelDescriptor): bigint {
-    return callBillableNanoUsd(target.pricing, {
-      kind: 'tokens',
-      inputTokens: estimateTokensForTier('trial', PROMPT.length),
-      outputTokens: 2000,
-    })._unsafeUnwrap();
-  }
-
+  /** The gate as the route calls it: the send's whole character count. */
   function gateNanoUsd(target: ModelDescriptor): bigint {
-    return trialMessageBillableNanoUsd(target, PROMPT, [])._unsafeUnwrap();
+    return trialMessageBillableNanoUsd(target, SEND_CHARS)._unsafeUnwrap();
   }
 
-  const LIVE_SHAPES: readonly (readonly [string, bigint, bigint])[] = [
+  /** The gate on the narrower basis it used to price — the regression this pair
+   * exists to catch, kept as a measurement rather than as a second gate. */
+  function gateOnNarrowBasisNanoUsd(target: ModelDescriptor): bigint {
+    return trialMessageBillableNanoUsd(target, PROMPT_CHARS)._unsafeUnwrap();
+  }
+
+  const SHAPES: readonly (readonly [string, bigint, bigint])[] = [
     ['output far dearer', 100n, 400n],
     ['output slightly dearer', 100n, 200n],
     ['flat', 100n, 100n],
+    ['input dearer', 400n, 100n],
+    ['input far dearer', 4000n, 100n],
   ];
 
-  it.each(LIVE_SHAPES)('holds as shipped for a %s shape', (_label, input, output) => {
-    const target = model({ pricing: pricing(input, output) });
-    expect(gateNanoUsd(target)).toBeGreaterThan(compiledTurnFloorNanoUsd(target));
-  });
+  it.each(SHAPES)(
+    'clears the floor by exactly 1,000 output tokens on a %s shape',
+    (_label, input, output) => {
+      const target = model({ pricing: pricing(input, output) });
+      expect(gateNanoUsd(target) - compiledTurnFloorNanoUsd(target)).toBe(1000n * output);
+    }
+  );
 
-  it.each(LIVE_SHAPES)('holds WITHOUT storage for a %s shape', (_label, input, output) => {
-    const target = model({ pricing: pricing(input, output) });
-    expect(gateWithoutStorageNanoUsd(target)).toBeGreaterThan(compiledTurnFloorNanoUsd(target));
-  });
-
-  it('fails as shipped once input is ~32.5× output — a pre-existing gap, not a new one', () => {
-    // The gate carries 200 prompt tokens where the turn carries 1,005, so its
-    // surplus is 1,000 × output + storage(400 input chars + 2,000 output tokens at
-    // the trial ratio) less the 805 unpriced system-prompt tokens:
-    // 2,620,000 − 805 × input, which turns negative at input 3,255.
-    const inside = model({ pricing: pricing(3254n, 100n) });
-    const outside = model({ pricing: pricing(3255n, 100n) });
-    expect(gateNanoUsd(inside)).toBeGreaterThan(compiledTurnFloorNanoUsd(inside));
-    expect(gateNanoUsd(outside)).toBeLessThan(compiledTurnFloorNanoUsd(outside));
-  });
-
-  it('fails WITHOUT storage as soon as input passes ~1.25× output — a 26× wider band', () => {
-    // With no storage the surplus is 1,000 × output alone, so the boundary falls
-    // from input 3,256 to input 125 at output 100: an inverted shape the shipped
-    // gate refuses would be admitted, which is why the strip is not applied here.
-    const inverted = model({ pricing: pricing(125n, 100n) });
-    expect(gateNanoUsd(inverted)).toBeGreaterThan(compiledTurnFloorNanoUsd(inverted));
-    expect(gateWithoutStorageNanoUsd(inverted)).toBeLessThan(compiledTurnFloorNanoUsd(inverted));
-  });
-
-  it('measures the escape for a far-inverted shape by amount', () => {
+  it('would admit an over-floor turn if the basis narrowed back to history-plus-prompt', () => {
+    // 4,000 in / 100 out: the system prompt's unpriced input tokens outrun the
+    // extra 1,000 output tokens, so the narrow basis lands BELOW the floor while
+    // the shipped basis stays above it. This is the inverted shape the storage
+    // term used to hide.
     const inverted = model({ pricing: pricing(4000n, 100n) });
-    expect(compiledTurnFloorNanoUsd(inverted) - gateWithoutStorageNanoUsd(inverted)).toBe(
-      805n * 4000n - 1000n * 100n
+    expect(gateNanoUsd(inverted)).toBeGreaterThan(compiledTurnFloorNanoUsd(inverted));
+    expect(gateOnNarrowBasisNanoUsd(inverted)).toBeLessThan(compiledTurnFloorNanoUsd(inverted));
+    const unpricedInputTokens = BigInt(
+      estimateTokensForTier('trial', SEND_CHARS) - estimateTokensForTier('trial', PROMPT_CHARS)
+    );
+    expect(compiledTurnFloorNanoUsd(inverted) - gateOnNarrowBasisNanoUsd(inverted)).toBe(
+      unpricedInputTokens * 4000n - 1000n * 100n
     );
   });
 });

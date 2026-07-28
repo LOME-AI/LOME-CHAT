@@ -19,6 +19,7 @@ import { describe, expect, it } from 'vitest';
 import { intBetween, mulberry32, pick } from '../__tests__/seeded-prng.js';
 import { dimensionSupportFor } from './dimensions/derive.js';
 import { EFFORT_DIMENSION, EFFORT_OPTION_IDS } from './dimensions/effort.js';
+import { modelId } from './model-id.js';
 import { nanoUSD } from './nano-usd.js';
 import { getTurnOptions } from './turn-options.js';
 import type { Rng } from '../__tests__/seeded-prng.js';
@@ -32,45 +33,53 @@ import type {
   TurnOptions,
 } from './turn-types.js';
 
+/** A fixed instant: premium classification takes its clock as an argument. */
+const NOW_MS = 1_800_000_000_000;
+
 const CATALOG: readonly PriceableModel[] = [
   {
-    modelId: 'vendor/a-cheap',
+    modelId: modelId('vendor/a-cheap'),
     inputRateNanoUsd: nanoUSD(60n),
     outputRateNanoUsd: nanoUSD(150n),
     contextLength: 200_000,
     providerCap: 64_000,
+    releasedAtMs: 0,
     reasoning: { supportedEfforts: ['high', 'medium', 'low'] },
   },
   {
-    modelId: 'vendor/b-mid',
+    modelId: modelId('vendor/b-mid'),
     inputRateNanoUsd: nanoUSD(1200n),
     outputRateNanoUsd: nanoUSD(3600n),
     contextLength: 64_000,
     providerCap: 16_000,
+    releasedAtMs: 0,
     reasoning: { supportedEfforts: null },
   },
   {
-    modelId: 'vendor/c-mandatory',
+    modelId: modelId('vendor/c-mandatory'),
     inputRateNanoUsd: nanoUSD(2500n),
     outputRateNanoUsd: nanoUSD(9000n),
     contextLength: 32_000,
     providerCap: 12_000,
+    releasedAtMs: 0,
     reasoning: { supportedEfforts: ['high', 'medium', 'low'], mandatory: true },
   },
   {
-    modelId: 'vendor/d-plateau',
+    modelId: modelId('vendor/d-plateau'),
     inputRateNanoUsd: nanoUSD(400n),
     outputRateNanoUsd: nanoUSD(900n),
     contextLength: 3000,
     providerCap: 1200,
+    releasedAtMs: 0,
     reasoning: { supportedEfforts: ['high', 'medium', 'low'] },
   },
   {
-    modelId: 'vendor/e-plain',
+    modelId: modelId('vendor/e-plain'),
     inputRateNanoUsd: nanoUSD(800n),
     outputRateNanoUsd: nanoUSD(1600n),
     contextLength: 128_000,
     providerCap: 8000,
+    releasedAtMs: 0,
     reasoning: undefined,
   },
 ];
@@ -101,7 +110,10 @@ function selectionOf(rng: Rng): Selection {
   return {
     answerSources: smartSlot
       ? { models: shuffled, smartSlot: true }
-      : { models: [shuffled[0] ?? MODEL_IDS[0] ?? '', ...shuffled.slice(1)], smartSlot: false },
+      : {
+          models: [shuffled[0] ?? MODEL_IDS[0] ?? modelId('vendor/none'), ...shuffled.slice(1)],
+          smartSlot: false,
+        },
     modality: 'text',
     pinned: pin === undefined ? {} : { effort: pin },
     webSearch: rng() > 0.7,
@@ -251,7 +263,7 @@ describe('admissible is a subset of affordable', () => {
         },
         basisOf(rng),
         selection,
-        CATALOG
+        { models: CATALOG, nowMs: NOW_MS }
       );
 
       shapes.push(shapeOf(options, selection));
@@ -294,7 +306,7 @@ describe('the basis leg alone is monotone', () => {
         },
         basisOf(rng),
         selection,
-        CATALOG
+        { models: CATALOG, nowMs: NOW_MS }
       );
       if (options.admissible.sendable !== options.affordable.sendable) differingCount += 1;
       if (isSmartSlotBesidePinned(selection)) smartSlotBesidePinnedCount += 1;
@@ -308,7 +320,7 @@ describe('the basis leg alone is monotone', () => {
 describe('a pinned sibling is graded on a monotone arrangement', () => {
   /** The turn the regression below is pinned on: one pinned sibling, one open slot. */
   const PINNED_WITH_SMART_SLOT: Selection = {
-    answerSources: { models: ['vendor/a-cheap'], smartSlot: true },
+    answerSources: { models: [modelId('vendor/a-cheap')], smartSlot: true },
     modality: 'text',
     pinned: {},
     webSearch: false,
@@ -332,7 +344,7 @@ describe('a pinned sibling is graded on a monotone arrangement', () => {
       },
       basis,
       PINNED_WITH_SMART_SLOT,
-      CATALOG
+      { models: CATALOG, nowMs: NOW_MS }
     );
   }
 
@@ -420,6 +432,67 @@ function expectNothingFiltered(set: OptionSet): {
   return { greyed, rowsWithRungs };
 }
 
+/**
+ * The feasible set of an ORDERED dimension is a downward-closed prefix, and that
+ * is what makes a single "up to X" ceiling a lossless representation of it
+ * (`docs/BILLING.md` §Ordering, enumerability). A hole would mean the ceiling
+ * form silently drops a feasible rung, or presents an infeasible one — and the
+ * classifier is handed exactly that set, so a hole is a `presented ⟺ feasible`
+ * break rather than a display bug.
+ *
+ * The prefix is asserted in the DOMAIN's order, which is the requirement order
+ * for a partition dimension: the off rung sits below every canonical level, so
+ * enabling Low while Min is greyed is exactly the gap this looks for.
+ */
+const effortPosition = (optionId: string): number =>
+  EFFORT_OPTION_IDS.indexOf(optionId as (typeof EFFORT_OPTION_IDS)[number]);
+
+/** Every candidate row's effort rungs, ascending by the declared domain order. */
+function effortRungsOf(set: OptionSet): readonly (readonly boolean[])[] {
+  return entriesOf(set)
+    .filter((entry): entry is CandidateModelEntry => entry.kind === 'candidate')
+    .flatMap((entry) => entry.dimensions.filter((one) => one.dimensionId === 'effort'))
+    .map((dimension) =>
+      [...dimension.options]
+        .toSorted((a, b) => effortPosition(a.optionId) - effortPosition(b.optionId))
+        .map((option) => option.availability.available)
+    );
+}
+
+/** Whether one row's availability flags form a downward-closed prefix — no holes. */
+function isPrefix(flags: readonly boolean[]): boolean {
+  const firstUnavailable = flags.indexOf(false);
+  return firstUnavailable === -1 || !flags.slice(firstUnavailable).includes(true);
+}
+
+describe('an ordered dimension`s feasible set is a downward-closed prefix', () => {
+  it('never leaves a gap, on either set, across 200 generated turns', () => {
+    const rng = mulberry32(0x2b_7d_90_41);
+    const rows: (readonly boolean[])[] = [];
+    for (let iteration = 0; iteration < 200; iteration += 1) {
+      const spendable = BigInt(intBetween(rng, 0, 300)) * 1_000_000n;
+      const options = getTurnOptions(
+        {
+          spendableNanoUsd: nanoUSD(spendable),
+          heldNanoUsd: nanoUSD(BigInt(intBetween(rng, 0, 200)) * 1_000_000n),
+          tier: pick(rng, TIERS),
+          payer: 'self',
+        },
+        basisOf(rng),
+        selectionOf(rng),
+        { models: CATALOG, nowMs: NOW_MS }
+      );
+      rows.push(...effortRungsOf(options.affordable), ...effortRungsOf(options.admissible));
+    }
+    expect(rows.filter((flags) => !isPrefix(flags))).toEqual([]);
+    // A sweep where every rung was available on every row would satisfy the
+    // prefix check without ever exercising a boundary.
+    expect(rows.length).toBeGreaterThan(200);
+    const partial = rows.filter((flags) => flags.includes(true) && flags.includes(false));
+    expect(partial.length).toBeGreaterThan(10);
+  });
+});
+
 describe('options are marked, never filtered', () => {
   it('presents every catalog model and every offered rung at every balance', () => {
     const rng = mulberry32(0x11_22_33_44);
@@ -436,7 +509,7 @@ describe('options are marked, never filtered', () => {
         },
         basisOf(rng),
         selectionOf(rng),
-        CATALOG
+        { models: CATALOG, nowMs: NOW_MS }
       );
       for (const set of [options.affordable, options.admissible]) {
         const counted = expectNothingFiltered(set);

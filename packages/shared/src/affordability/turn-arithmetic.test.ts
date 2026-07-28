@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { MINIMUM_OUTPUT_TOKENS } from './constants.js';
 import { cheapestEffortOption, EFFORT_DIMENSION } from './dimensions/effort.js';
 import { dimensionSupportFor } from './dimensions/derive.js';
+import { modelId } from './model-id.js';
 import { nanoUSD } from './nano-usd.js';
 import {
   budgetBuysTokens,
@@ -37,11 +38,12 @@ import type { PriceableModel } from './priceable-model.js';
 
 /** 1,000 nano per input token, 2,000 per output token — round numbers on purpose. */
 const MODEL: PriceableModel = {
-  modelId: 'vendor/base',
+  modelId: modelId('vendor/base'),
   inputRateNanoUsd: nanoUSD(1000n),
   outputRateNanoUsd: nanoUSD(2000n),
   contextLength: 100_000,
   providerCap: 8000,
+  releasedAtMs: 0,
   reasoning: undefined,
 };
 
@@ -250,16 +252,18 @@ describe('ceilingTokens — min(providerCap, contextHeadroom, budgetBuys)', () =
 describe('reasoningBudgetTokens — B(m, e), and e_min(m)', () => {
   const disableable: PriceableModel = {
     ...MODEL,
-    modelId: 'vendor/disableable',
+    modelId: modelId('vendor/disableable'),
     contextLength: 200_000,
     providerCap: 200_000,
+    releasedAtMs: 0,
     reasoning: { supportedEfforts: ['high', 'medium', 'low'] },
   };
   const mandatory: PriceableModel = {
     ...MODEL,
-    modelId: 'vendor/mandatory',
+    modelId: modelId('vendor/mandatory'),
     contextLength: 200_000,
     providerCap: 200_000,
+    releasedAtMs: 0,
     reasoning: { supportedEfforts: ['high', 'medium', 'low'], mandatory: true },
   };
 
@@ -289,9 +293,10 @@ describe('reasoningBudgetTokens — B(m, e), and e_min(m)', () => {
 describe('feasible(m, e) and eligible(m)', () => {
   const mandatory: PriceableModel = {
     ...MODEL,
-    modelId: 'vendor/mandatory',
+    modelId: modelId('vendor/mandatory'),
     contextLength: 200_000,
     providerCap: 200_000,
+    releasedAtMs: 0,
     reasoning: { supportedEfforts: ['high', 'medium', 'low'], mandatory: true },
   };
 
@@ -361,11 +366,12 @@ describe('outlier(m) — maxCallCost above OUTLIER_COST_MULTIPLE × the pool med
   /** Output rate alone varies, and every cap is 1,000 tokens, so maxCallCost is
    * exactly 1,000 × outputRate: 1e6, 2e6, 3e6, 4e6 and 1e8 nano. */
   const pool: readonly PriceableModel[] = [1000n, 2000n, 3000n, 4000n, 100_000n].map((rate) => ({
-    modelId: `vendor/rate-${String(rate)}`,
+    modelId: modelId(`vendor/rate-${String(rate)}`),
     inputRateNanoUsd: nanoUSD(0n),
     outputRateNanoUsd: nanoUSD(rate),
     contextLength: 100_000,
     providerCap: 1000,
+    releasedAtMs: 0,
     reasoning: undefined,
   }));
   const basis = callCostBasisForTier(0, 'paid', false);
@@ -385,7 +391,7 @@ describe('outlier(m) — maxCallCost above OUTLIER_COST_MULTIPLE × the pool med
   it('keeps a candidate exactly at the multiple: the test is strictly greater', () => {
     const atThreshold: PriceableModel = {
       ...pool[0]!,
-      modelId: 'vendor/at-threshold',
+      modelId: modelId('vendor/at-threshold'),
       outputRateNanoUsd: nanoUSD(3000n * 20n),
     };
     expect(outlierModelIds([...pool.slice(0, 4), atThreshold], basis).size).toBe(0);
@@ -394,8 +400,9 @@ describe('outlier(m) — maxCallCost above OUTLIER_COST_MULTIPLE × the pool med
   it('excludes a model made extreme by its CAPACITY rather than its rate', () => {
     const enormous: PriceableModel = {
       ...pool[1]!,
-      modelId: 'vendor/enormous',
+      modelId: modelId('vendor/enormous'),
       providerCap: 100_000,
+      releasedAtMs: 0,
       contextLength: 1_000_000,
     };
     expect([...outlierModelIds([...pool.slice(0, 4), enormous], basis)]).toEqual([
@@ -404,7 +411,11 @@ describe('outlier(m) — maxCallCost above OUTLIER_COST_MULTIPLE × the pool med
   });
 
   it('drops a model the prompt leaves no room for from the pool rather than ranking it at zero', () => {
-    const narrow: PriceableModel = { ...pool[0]!, modelId: 'vendor/narrow', contextLength: 10 };
+    const narrow: PriceableModel = {
+      ...pool[0]!,
+      modelId: modelId('vendor/narrow'),
+      contextLength: 10,
+    };
     expect(medianMaxCallCostNanoUsd([...pool, narrow], { ...basis, inputTokens: 100 })).toBe(
       medianMaxCallCostNanoUsd(pool, { ...basis, inputTokens: 100 })
     );

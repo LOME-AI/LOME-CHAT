@@ -10,6 +10,8 @@
  */
 
 import type { DimensionId, OptionId, OptionLabel } from './dimensions/index.js';
+import type { ModelId } from './model-id.js';
+import type { PriceableModel } from './priceable-model.js';
 import type { Modality } from './modality.js';
 import type { NanoUSD } from './nano-usd.js';
 import type { UserTier } from './tiers.js';
@@ -71,13 +73,32 @@ export const EMPTY_PROMPT_BASIS: PromptBasis = {
 };
 
 /**
+ * The priceable catalog pool as of an instant.
+ *
+ * The instant rides WITH the pool rather than as its own argument because both of
+ * premium classification's legs are properties of this pair — the price percentile
+ * is taken over the pool, the recency window is measured from the instant — and
+ * because the money layer holds no clock of its own (§Model Classification,
+ * §Affordability: "nothing in it reads a clock, a database, or a random source").
+ *
+ * `nowMs` is validated where the snapshot enters the module rather than trusted:
+ * a clock a caller got wrong changes premium classification, which is a money
+ * verdict, so an unusable instant is refused at the boundary the same way an empty
+ * identifier is.
+ */
+export interface CatalogSnapshot {
+  readonly models: readonly PriceableModel[];
+  readonly nowMs: number;
+}
+
+/**
  * Where the turn's answers come from. At least one answer source is required,
  * so an empty turn is unrepresentable: either the pinned model list is
  * non-empty, or the smart slot is on.
  */
 export type AnswerSources =
-  | { readonly models: NonEmpty<string>; readonly smartSlot: boolean }
-  | { readonly models: readonly string[]; readonly smartSlot: true };
+  | { readonly models: NonEmpty<ModelId>; readonly smartSlot: boolean }
+  | { readonly models: readonly ModelId[]; readonly smartSlot: true };
 
 /**
  * What the user has fixed. `pinned` names one option per registered dimension;
@@ -179,7 +200,7 @@ export interface DimensionAvailability {
 
 /** What both kinds of row carry: which model, its verdict, and its ceiling. */
 interface ModelEntryBase {
-  readonly modelId: string;
+  readonly modelId: ModelId;
   readonly availability: Availability;
   /** `ceiling(m)` — `min(providerCap, contextHeadroom, budgetBuys)`, in tokens. */
   readonly ceilingTokens: number;

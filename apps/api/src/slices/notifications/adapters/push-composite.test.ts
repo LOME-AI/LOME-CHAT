@@ -22,9 +22,7 @@ const web = (userId: string, endpoint: string): PushRecipient => ({
 function message(recipients: readonly PushRecipient[]): PushMessage {
   return {
     recipients,
-    title: 'New message',
-    body: 'You have a new message in a conversation.',
-    data: { category: 'message', conversationId: CONVERSATION_ID },
+    payload: { category: 'message', conversationId: CONVERSATION_ID },
   };
 }
 
@@ -136,6 +134,21 @@ describe('createCompositePushSender', () => {
     });
   });
 
+  it('rejects a payload whose conversation id is malformed, before either transport is reached', async () => {
+    const fcm = createMockPushSender();
+    const webPush = createMockPushSender();
+    const sender = createCompositePushSender({ fcm, webPush, deriveCollapseKey: stubDerive() });
+
+    const result = await sender.send({
+      recipients: [ios('u1', 'ios-tok'), web('u2', 'https://push/aaa')],
+      payload: { category: 'message', conversationId: '../../etc/passwd' },
+    });
+
+    expect(result._unsafeUnwrapErr().code).toBe('validation');
+    expect(fcm.getSentMessages()).toEqual([]);
+    expect(webPush.getSentMessages()).toEqual([]);
+  });
+
   it('surfaces an unavailable error when alias derivation fails', async () => {
     const fcm = createMockPushSender();
     const webPush = createMockPushSender();
@@ -149,20 +162,5 @@ describe('createCompositePushSender', () => {
 
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
     expect(fcm.getSentMessages()).toEqual([]);
-  });
-
-  it('omits the collapse key when the message is not conversation-scoped', async () => {
-    const fcm = createMockPushSender();
-    const webPush = createMockPushSender();
-    const sender = createCompositePushSender({ fcm, webPush, deriveCollapseKey: stubDerive() });
-
-    const delivery = await sender.send({
-      recipients: [ios('u1', 'ios-tok')],
-      title: 'x',
-      body: 'y',
-    });
-    expect(delivery.isOk()).toBe(true);
-
-    expect(fcm.getSentMessages()[0]?.collapseKey).toBeUndefined();
   });
 });

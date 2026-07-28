@@ -93,17 +93,21 @@ function resolveExecution(
 }
 
 /**
- * Resolves the classifier and EVERY candidate binding up front — mirroring the
- * compile-time registry, so a definition that compiled always resolves here
- * and any routing the classifier picks can run.
+ * Resolves EVERY candidate binding up front — mirroring the compile-time
+ * registry, so a definition that compiled always resolves here and any candidate
+ * the turn's decision names can run.
+ *
+ * The declared classifier model is required to resolve without being bound to
+ * anything: the node no longer calls it, but the compile-time port derivation
+ * and the admission estimate both read it, so a node naming a model this
+ * registry cannot resolve is a definition that must not run.
  */
 function resolveSmartModel(
   deps: LiveExecutionRegistryDeps,
   node: Extract<ValueNode, { type: 'smartModel' }>
 ): NodeExecution | undefined {
   if (node.version !== SMART_MODEL_IMPL_VERSION) return undefined;
-  const classifier = deps.models.resolve(node.classifierModelId);
-  if (classifier === undefined) return undefined;
+  if (deps.models.resolve(node.classifierModelId) === undefined) return undefined;
   const candidates = new Map<string, ModelBinding>();
   for (const candidate of node.candidates) {
     const binding = deps.models.resolve(candidate.id);
@@ -112,7 +116,6 @@ function resolveSmartModel(
   }
   return createSmartModelExecution({
     provider: deps.provider,
-    classifier,
     candidates,
     schemas: deps.schemas,
     usdToBillableNanoUsd: providerUsdToBillableNanoUsd,

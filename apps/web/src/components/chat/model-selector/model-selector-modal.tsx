@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { Overlay, useIsMobile } from '@hushbox/ui';
+import { EMPTY_PROMPT_BASIS, type Availability } from '@hushbox/shared';
 import { useModelStore } from '@/stores/model';
 import { getAccessibleModelIds } from '@/hooks/models/models';
-import { useModelFloor, type ModelFloorGroupContext } from '@/hooks/billing/use-prompt-budget';
+import { useTurnOptions } from '@/hooks/billing/use-turn-options';
 
 import { SignupModal } from '@/components/auth/signup-modal';
 import {
@@ -37,11 +38,11 @@ interface ModelSelectorModalProps extends ModelSelectorGatingProps {
   /** Filter models to match this modality. Defaults to 'text' for back-compat. */
   activeModality?: ChatModality;
   /**
-   * Group funding context of the conversation the picker was opened from —
-   * without it the floor verdict is self-funded only, which would grey
-   * models a group member's delegated budget funds.
+   * The conversation the picker was opened from — it NAMES THE PAYER, so
+   * without it the verdict is self-funded only, which would grey models a
+   * group member's delegated budget funds.
    */
-  floorGroup?: ModelFloorGroupContext | undefined;
+  floorGroup?: { readonly conversationId: string } | undefined;
 }
 
 /**
@@ -56,7 +57,6 @@ export function ModelSelectorModal({
   selectedIds,
   onSelect,
   premiumIds,
-  canAccessPremium = true,
   isAuthenticated = true,
   isLinkGuest,
   onPremiumClick,
@@ -64,12 +64,44 @@ export function ModelSelectorModal({
   floorGroup,
 }: Readonly<ModelSelectorModalProps>): React.JSX.Element {
   const isMobile = useIsMobile();
-  // ONE floor implementation: the same shared verdict that denies the
-  // composer's send greys the picker row (BILLING §Affordability 4).
-  const { isBelowFloor } = useModelFloor({
+  // ONE verdict: the picker greys from `affordable`, the set the composer's
+  // send gate is the hold-aware twin of (BILLING §Affordability, the four
+  // notions). The picker asks the prompt-INDEPENDENT question — "can this payer
+  // call this model at all" — so it passes the empty basis; the producer
+  // evaluates `affordable` against an empty basis regardless, which is what
+  // keeps rows from churning while the user types.
+  const turnOptions = useTurnOptions({
+    basis: EMPTY_PROMPT_BASIS,
     isAuthenticated,
-    ...(floorGroup === undefined ? {} : { group: floorGroup }),
+    ...(floorGroup === undefined ? {} : { conversationId: floorGroup.conversationId }),
   });
+
+  /**
+   * A row's verdict. While the funding or catalog read is in flight the
+   * producer has no verdict to give, and a row must render NEUTRAL rather than
+   * refused — treating a pending read as a refusal is what greyed every
+   * affordable row for a render.
+   */
+  /**
+   * Whether this payer can reach premium models at all, READ OFF the produced
+   * set rather than computed: a premium row the producer marked unavailable is
+   * exactly a model this payer cannot reach. It orders the list (reachable
+   * models first) and gates nothing — the verdict is already on every row.
+   */
+  const canAccessPremium = !(turnOptions.options?.affordable.all ?? []).some(
+    (row) =>
+      !row.availability.available &&
+      (row.availability.reason === 'premium_requires_credit' ||
+        row.availability.reason === 'premium_requires_account')
+  );
+
+  const availabilityOf = React.useCallback(
+    (modelId: string): Availability => {
+      const entry = turnOptions.options?.affordable.all.find((row) => row.modelId === modelId);
+      return entry?.availability ?? { available: true };
+    },
+    [turnOptions.options]
+  );
   const resolvedModality = resolveModality(activeModality);
   const pickerMode = useModelStore((s) => s.pickerMode[resolvedModality]);
   const setPickerMode = useModelStore((s) => s.setPickerMode);
@@ -133,11 +165,6 @@ export function ModelSelectorModal({
 
   const focusedModel = models.find((m) => m.id === focusedModelId) ?? models[0];
 
-  const isPremium = React.useCallback(
-    (modelId: string): boolean => premiumIds?.has(modelId) ?? false,
-    [premiumIds]
-  );
-
   const handleHoverModel = React.useCallback((modelId: string): void => {
     setFocusedModelId(modelId);
   }, []);
@@ -156,12 +183,6 @@ export function ModelSelectorModal({
       onOpenChange(false);
     },
     [onSelect, onOpenChange]
-  );
-
-  const isPremiumGated = React.useCallback(
-    (modelId: string): boolean =>
-      !isLinkGuest && !canAccessPremium && (premiumIds?.has(modelId) ?? false),
-    [isLinkGuest, canAccessPremium, premiumIds]
   );
 
   const isMultiModelSignupBlocked = React.useCallback(
@@ -184,19 +205,22 @@ export function ModelSelectorModal({
       const model = models.find((m) => m.id === modelId);
       if (!model) return;
 
-      if (isPremiumGated(modelId)) {
-        onPremiumClick?.(modelId);
-        return;
-      }
-
-      // Authoritative selectable-blocked guard: a floor-greyed row never
-      // commits and never joins the pending selection. Removing one is always
-      // allowed — a model that falls below the floor after it was selected
-      // would otherwise be escapable only via Clear-all, trapping the whole
-      // selection behind the one row the user wants to drop.
+      // Removing a selection is ALWAYS allowed, checked before any refusal: a
+      // model that becomes unavailable after it was selected would otherwise be
+      // escapable only via Clear-all, trapping the whole selection behind the
+      // one row the user wants to drop.
       const isRemoval = pickerMode === 'multi' && localSelectedIds.has(modelId);
-      if (!isRemoval && isBelowFloor(model)) {
-        return;
+      if (!isRemoval) {
+        const availability = availabilityOf(modelId);
+        if (!availability.available) {
+          // A premium lock routes to the paywall — the one reason whose action
+          // the user can take from here. Every other reason simply refuses.
+          const isPremiumLock =
+            availability.reason === 'premium_requires_credit' ||
+            availability.reason === 'premium_requires_account';
+          if (isPremiumLock) onPremiumClick?.(modelId);
+          return;
+        }
       }
 
       if (pickerMode === 'single') {
@@ -214,9 +238,8 @@ export function ModelSelectorModal({
     },
     [
       models,
-      isPremiumGated,
       onPremiumClick,
-      isBelowFloor,
+      availabilityOf,
       pickerMode,
       localSelectedIds,
       isMultiModelSignupBlocked,
@@ -302,11 +325,7 @@ export function ModelSelectorModal({
             localSelectedIds,
             focusedModelId,
             expandedModelId,
-            isPremium,
-            isBelowFloor,
-            canAccessPremium,
-            isAuthenticated,
-            isLinkGuest: isLinkGuest ?? false,
+            availabilityOf,
             isMobile,
             pulsingModelId,
             getPinnedLabel,

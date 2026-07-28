@@ -3,10 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { SMART_MODEL_ID } from '@hushbox/shared';
 import {
-  offeredEffortLabels,
   offersEffortOff,
   effectiveReasoningSelection,
-  serverAcceptsChoice,
   useReasoningEffort,
   type EffortModel,
 } from '@/hooks/chat/use-reasoning-effort';
@@ -58,24 +56,6 @@ const mandatoryModel: EffortModel = {
 
 const plainModel: EffortModel = { id: 'plain', contextLength: 8192 };
 
-describe('offeredEffortLabels', () => {
-  it('maps an enumerated effort vocabulary onto the positional ladder', () => {
-    expect(offeredEffortLabels([effortModel])).toEqual(['low', 'medium', 'high']);
-  });
-
-  it('offers the full ladder for a budget-native model', () => {
-    expect(offeredEffortLabels([budgetModel])).toEqual(['lite', 'low', 'medium', 'high', 'max']);
-  });
-
-  it('offers nothing when any selected model lacks reasoning', () => {
-    expect(offeredEffortLabels([effortModel, plainModel])).toEqual([]);
-  });
-
-  it('intersects labels across a multi-model selection in canonical order', () => {
-    expect(offeredEffortLabels([effortModel, budgetModel])).toEqual(['low', 'medium', 'high']);
-  });
-});
-
 describe('offersEffortOff', () => {
   it('offers None when no selected model has mandatory reasoning', () => {
     expect(offersEffortOff([effortModel, budgetModel])).toBe(true);
@@ -83,24 +63,6 @@ describe('offersEffortOff', () => {
 
   it('hides None when any selected model has mandatory reasoning', () => {
     expect(offersEffortOff([effortModel, mandatoryModel])).toBe(false);
-  });
-});
-
-describe('serverAcceptsChoice', () => {
-  it('accepts a level every selected model offers', () => {
-    expect(serverAcceptsChoice([effortModel, budgetModel], 'high')).toBe(true);
-  });
-
-  it('rejects a level any selected model lacks (union-only levels stay greyed)', () => {
-    expect(serverAcceptsChoice([effortModel, budgetModel], 'max')).toBe(false);
-  });
-
-  it('accepts Min when no selected model has mandatory reasoning', () => {
-    expect(serverAcceptsChoice([effortModel, budgetModel], 'off')).toBe(true);
-  });
-
-  it('rejects Min when any selected model has mandatory reasoning', () => {
-    expect(serverAcceptsChoice([effortModel, mandatoryModel], 'off')).toBe(false);
   });
 });
 

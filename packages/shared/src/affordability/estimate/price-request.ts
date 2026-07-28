@@ -4,7 +4,8 @@
  * input and output rates plus input/output storage; the media path prices
  * generation + storage line items. On top of the modality base it folds the
  * fixed web-search reservation (when `webSearch`) and the Smart-Model classifier
- * pre-reserve (when `classifierStage`). It applies NO fee math (rates arrive
+ * pre-reserve (when `classifierStage`; provider cost only — the classifier's
+ * prompt and answer never rest, so they carry no storage). It applies NO fee math (rates arrive
  * billable from the catalog) and does NO char→token conversion — conversion
  * lives in the pre-adapters. This is the nano-USD, input-driven successor to legacy
  * `buildCostManifest`.
@@ -110,7 +111,7 @@ export function priceRequest(request: BillableRequest): EstimateResult<Manifest>
   }
 
   if (request.classifierStage !== undefined) {
-    const classifier = classifierLineItems(request.classifierStage, request.outputCharsPerToken);
+    const classifier = classifierLineItems(request.classifierStage);
     if (!classifier.ok) return classifier;
     items.push(...classifier.value);
   }

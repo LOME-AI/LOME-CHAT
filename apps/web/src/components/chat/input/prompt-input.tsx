@@ -15,7 +15,7 @@ import {
 import { cn, useIsMobile } from '@hushbox/ui';
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from '@hushbox/ui';
 import { Textarea } from '@hushbox/ui';
-import { FEATURE_FLAGS, MODALITY_ARIA_LABELS, TEST_IDS } from '@hushbox/shared';
+import { FEATURE_FLAGS, MODALITY_ARIA_LABELS, notices, TEST_IDS } from '@hushbox/shared';
 import { usePromptBudget } from '@/hooks/billing/use-prompt-budget';
 import { useReasoningEffort } from '@/hooks/chat/use-reasoning-effort';
 import { ReasoningEffortMenu } from '@/components/chat/input/reasoning-effort-menu';
@@ -701,6 +701,22 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
       ...(reasoningEffort !== undefined && { reasoningEffort }),
     });
 
+    // §Notices 7: a blocked send ALWAYS carries a notice, and exactly one
+    // blocking demand renders. The refusal LEADS the list — an informational
+    // funding notice must not sit above the reason the send is refused — and
+    // any duplicate of the same condition is dropped so one cause yields one
+    // notice.
+    const composerNotices = React.useMemo(
+      () =>
+        budget.sendRefusal === undefined
+          ? budget.notifications
+          : [
+              notices(budget.sendRefusal),
+              ...budget.notifications.filter((notice) => notice.id !== budget.sendRefusal),
+            ],
+      [budget.sendRefusal, budget.notifications]
+    );
+
     const canSubmit = canSubmitMessage({
       hasContent: budget.hasContent,
       isOverCapacity: budget.isOverCapacity,
@@ -788,10 +804,7 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
         {/* The effort chip sits immediately left of Send (founder ruling
             2026-07-23); it renders nothing (collapsed slide wrapper) unless
             the selected model offers reasoning levels. */}
-        <ReasoningEffortMenu
-          maxOutputTokens={budget.maxOutputTokens}
-          estimatedInputTokens={budget.estimatedInputTokens}
-        />
+        <ReasoningEffortMenu effortDimension={budget.effortDimension} />
         <Button
           id="send-button"
           type="button"
@@ -863,7 +876,7 @@ export const PromptInput = React.forwardRef<PromptInputRef, PromptInputProps>(
         </div>
 
         <StableContent isStable={isAppStable}>
-          <BudgetMessages errors={budget.notifications} className="mt-2" />
+          <BudgetMessages errors={composerNotices} className="mt-2" />
         </StableContent>
       </div>
     );

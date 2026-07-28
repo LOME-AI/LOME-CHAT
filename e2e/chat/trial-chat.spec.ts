@@ -55,7 +55,7 @@ test.describe('Trial Chat', { tag: '@chromium-only' }, () => {
       // Regression guard: a web-search preference persists across sign-out and the
       // trial toggle can't clear it. It must not reserve the worst-case search cost
       // (≈5.75¢, far above the 1¢ trial cap) and gate trial sends with
-      // "This message exceeds the usage limit."
+      // "This message is too costly for the free trial."
       await unauthenticatedPage.addInitScript((storageKey) => {
         globalThis.localStorage.setItem(
           storageKey,

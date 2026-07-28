@@ -26,18 +26,23 @@ import { describe, expect, it } from 'vitest';
 import { MINIMUM_OUTPUT_TOKENS } from './constants.js';
 import { dimensionSupportFor, partitionCeiling, partitionPoolTokens } from './dimensions/derive.js';
 import { EFFORT_DIMENSION, maxReasoningBudgetTokens } from './dimensions/effort.js';
+import { modelId } from './model-id.js';
 import { nanoUSD } from './nano-usd.js';
 import { getTurnOptions } from './turn-options.js';
 import type { OptionId } from './dimensions/index.js';
 import type { PriceableModel } from './priceable-model.js';
 import type { FundingSnapshot, ModelEntry, PromptBasis, Selection } from './turn-types.js';
 
+/** A fixed instant: premium classification takes its clock as an argument. */
+const NOW_MS = 1_800_000_000_000;
+
 const LADDER: PriceableModel = {
-  modelId: 'vendor/ladder',
+  modelId: modelId('vendor/ladder'),
   inputRateNanoUsd: nanoUSD(80n),
   outputRateNanoUsd: nanoUSD(200n),
   contextLength: 200_000,
   providerCap: 100_000,
+  releasedAtMs: 0,
   reasoning: { supportedEfforts: ['high', 'medium', 'low'] },
 };
 
@@ -58,7 +63,7 @@ const BASIS: PromptBasis = {
 
 function selectionPinnedTo(option: OptionId): Selection {
   return {
-    answerSources: { models: ['vendor/ladder'], smartSlot: false },
+    answerSources: { models: [modelId('vendor/ladder')], smartSlot: false },
     modality: 'text',
     pinned: { effort: option },
     webSearch: false,
@@ -66,7 +71,10 @@ function selectionPinnedTo(option: OptionId): Selection {
 }
 
 function entryFor(option: OptionId): { entry: ModelEntry; holdNanoUsd: bigint | undefined } {
-  const options = getTurnOptions(FUNDING, BASIS, selectionPinnedTo(option), [LADDER]);
+  const options = getTurnOptions(FUNDING, BASIS, selectionPinnedTo(option), {
+    models: [LADDER],
+    nowMs: NOW_MS,
+  });
   const entry = options.admissible.sendable
     ? options.admissible.all.find((candidate) => candidate.modelId === 'vendor/ladder')
     : undefined;
@@ -76,7 +84,7 @@ function entryFor(option: OptionId): { entry: ModelEntry; holdNanoUsd: bigint | 
     // The selection pins the model, so the row it looks up is a pinned one.
     entry: entry ?? {
       kind: 'pinned',
-      modelId: '',
+      modelId: modelId(''),
       availability: { available: true },
       ceilingTokens: 0,
     },

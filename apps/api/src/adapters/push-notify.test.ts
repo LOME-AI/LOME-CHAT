@@ -10,6 +10,13 @@ import type { Telemetry } from '../lib/telemetry/index.js';
 /** Development env selects the in-process mock push sender (no real push). */
 const ENV = { NODE_ENV: 'development', NOTIFICATION_TAG_SECRET: 'test-secret' } as Bindings;
 
+/**
+ * Must be a real uuid: the composite push sender validates the wire payload
+ * against the shared schema and refuses to dispatch a malformed conversation
+ * id, so a placeholder here would silently stop the pipeline short of `send`.
+ */
+const CONVERSATION_ID = '018f4e2a-1c3b-7d4e-9f0a-1b2c3d4e5f60';
+
 function noopTelemetry(): Telemetry {
   const noop = (): void => undefined;
   return {
@@ -64,7 +71,7 @@ describe('createRunCompletionPushNotify', () => {
       membership: membershipOf([{ userId: 'member-1', muted: false }]),
     });
 
-    await notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] });
+    await notify({ conversationId: CONVERSATION_ID, senderUserId: 'sender-1', presentUserIds: [] });
 
     // Preferences read, then the token lookup for the surviving recipient.
     expect(select).toHaveBeenCalledTimes(2);
@@ -86,7 +93,7 @@ describe('createRunCompletionPushNotify', () => {
     });
 
     await notify({
-      conversationId: 'c1',
+      conversationId: CONVERSATION_ID,
       senderUserId: 'sender-1',
       presentUserIds: ['present-member', 'sender-1'],
     });
@@ -107,7 +114,7 @@ describe('createRunCompletionPushNotify', () => {
     });
 
     await expect(
-      notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] })
+      notify({ conversationId: CONVERSATION_ID, senderUserId: 'sender-1', presentUserIds: [] })
     ).resolves.toBeUndefined();
   });
 });
@@ -122,7 +129,7 @@ describe('createChatMessagePushNotify', () => {
     const notify = createChatMessagePushNotify(ENV, db);
 
     await expect(
-      notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] })
+      notify({ conversationId: CONVERSATION_ID, senderUserId: 'sender-1', presentUserIds: [] })
     ).resolves.toBeUndefined();
 
     // Members query, preferences query, then the token lookup.
@@ -134,7 +141,7 @@ describe('createChatMessagePushNotify', () => {
     const notify = createChatMessagePushNotify(ENV, db);
 
     await expect(
-      notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] })
+      notify({ conversationId: CONVERSATION_ID, senderUserId: 'sender-1', presentUserIds: [] })
     ).resolves.toBeUndefined();
 
     // Only the member read runs: the null-userId row is dropped, leaving no
@@ -150,7 +157,7 @@ describe('createChatMessagePushNotify', () => {
     const notify = createChatMessagePushNotify(ENV, db);
 
     await expect(
-      notify({ conversationId: 'c1', senderUserId: 'sender-1', presentUserIds: [] })
+      notify({ conversationId: CONVERSATION_ID, senderUserId: 'sender-1', presentUserIds: [] })
     ).resolves.toBeUndefined();
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { modelId } from './model-id.js';
 import { nanoUSD } from './nano-usd.js';
 import {
   MIN_POOL_FOR_PRICE_PERCENTILE,
@@ -19,11 +20,12 @@ const OLD_RELEASE_MS = NOW_MS - 400 * 24 * 60 * 60 * 1000;
 
 function modelFor(overrides: Partial<PriceableModel> = {}): PriceableModel {
   return {
-    modelId: 'vendor/model',
+    modelId: modelId('vendor/model'),
     inputRateNanoUsd: nanoUSD(1000n),
     outputRateNanoUsd: nanoUSD(2000n),
     contextLength: 128_000,
     providerCap: undefined,
+    releasedAtMs: OLD_RELEASE_MS,
     reasoning: undefined,
     ...overrides,
   };
@@ -106,9 +108,12 @@ describe('isPremiumModel — the recency leg', () => {
   it('classifies a cheap model released inside the window as premium', () => {
     expect(
       isPremiumModel({
-        model: modelFor({ inputRateNanoUsd: nanoUSD(1n), outputRateNanoUsd: nanoUSD(1n) }),
+        model: modelFor({
+          inputRateNanoUsd: nanoUSD(1n),
+          outputRateNanoUsd: nanoUSD(1n),
+          releasedAtMs: NOW_MS - 100 * 24 * 60 * 60 * 1000,
+        }),
         priceThresholdNanoUsd: nanoUSD(1_000_000n),
-        releasedAtMs: NOW_MS - 100 * 24 * 60 * 60 * 1000,
         nowMs: NOW_MS,
       })
     ).toBe(true);
@@ -119,7 +124,6 @@ describe('isPremiumModel — the recency leg', () => {
       isPremiumModel({
         model: modelFor({ inputRateNanoUsd: nanoUSD(1n), outputRateNanoUsd: nanoUSD(1n) }),
         priceThresholdNanoUsd: nanoUSD(1_000_000n),
-        releasedAtMs: OLD_RELEASE_MS,
         nowMs: NOW_MS,
       })
     ).toBe(false);
@@ -127,9 +131,12 @@ describe('isPremiumModel — the recency leg', () => {
 
   it('reads its clock from the caller, so the same inputs always classify alike', () => {
     const input = {
-      model: modelFor({ inputRateNanoUsd: nanoUSD(1n), outputRateNanoUsd: nanoUSD(1n) }),
+      model: modelFor({
+        inputRateNanoUsd: nanoUSD(1n),
+        outputRateNanoUsd: nanoUSD(1n),
+        releasedAtMs: NOW_MS - PREMIUM_RECENCY_MS + 1,
+      }),
       priceThresholdNanoUsd: nanoUSD(1_000_000n),
-      releasedAtMs: NOW_MS - PREMIUM_RECENCY_MS + 1,
     };
     expect(isPremiumModel({ ...input, nowMs: NOW_MS })).toBe(true);
     expect(isPremiumModel({ ...input, nowMs: NOW_MS + PREMIUM_RECENCY_MS })).toBe(false);
@@ -179,7 +186,7 @@ describe('premiumPriceThresholdNanoUsd — the pool percentile the price leg com
   function poolOf(rates: readonly bigint[]): readonly PriceableModel[] {
     return rates.map((rate, index) =>
       modelFor({
-        modelId: `vendor/m${String(index)}`,
+        modelId: modelId(`vendor/m${String(index)}`),
         inputRateNanoUsd: nanoUSD(0n),
         outputRateNanoUsd: nanoUSD(rate),
       })
@@ -202,8 +209,8 @@ describe('premiumPriceThresholdNanoUsd — the pool percentile the price leg com
   });
 
   it('leaves the recency leg deciding when there is no threshold', () => {
-    const model = modelFor();
-    expect(isPremiumModel({ model, releasedAtMs: NOW_MS - 1000, nowMs: NOW_MS })).toBe(true);
-    expect(isPremiumModel({ model, releasedAtMs: OLD_RELEASE_MS, nowMs: NOW_MS })).toBe(false);
+    const fresh = modelFor({ releasedAtMs: NOW_MS - 1000 });
+    expect(isPremiumModel({ model: fresh, nowMs: NOW_MS })).toBe(true);
+    expect(isPremiumModel({ model: modelFor(), nowMs: NOW_MS })).toBe(false);
   });
 });

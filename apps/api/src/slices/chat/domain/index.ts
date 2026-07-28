@@ -8,6 +8,9 @@ export {
   TRIAL_TURN_HOOKS,
 } from './constants.js';
 export {
+  CHAT_CLASSIFIER_INPUT,
+  CHAT_CLASSIFIER_NODE_ID,
+  CHAT_DECISION_NODE_ID,
   assertModelProducesModality,
   buildMediaTurn,
   buildMediaTurnDefinition,
@@ -17,9 +20,16 @@ export {
   buildTurnDefinition,
   createTurnCompileRegistries,
   trialReasoningSelection,
+  turnInputs,
   turnModelPricings,
 } from './turn-definition.js';
-export type { MediaTurnModality, TurnBudget, TurnModelPricing } from './turn-definition.js';
+export type {
+  MediaTurnModality,
+  MultiModelTurnBuild,
+  TurnBudget,
+  TurnClassifierParams,
+  TurnModelPricing,
+} from './turn-definition.js';
 export {
   buildAutoEffortTurnDefinition,
   buildSmartModelTurn,

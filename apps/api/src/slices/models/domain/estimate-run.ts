@@ -5,6 +5,7 @@ import {
   STORAGE_COST_PER_CHARACTER_NANO,
   VALUE_STORE_BYTE_BUDGET_BYTES,
   callShapeFamilyFor,
+  consumedProducerIds,
   nanoUSD,
   smartModelClassifierDimensions,
 } from '@hushbox/shared';
@@ -55,9 +56,9 @@ export type EstimateRun = (definition: WorkflowDefinition) => Result<NanoUSD, Do
  * can only ride the definition the DO is handed. A chat turn stamps it; a general
  * or no-persist definition omits it, so storage is zero and the ceiling is
  * provider cost only. When present the estimator adds input storage ONCE (the
- * prompt, at the definition level), output storage per answer-producing node
- * (tier-sized), the classifier reserve's own storage, and media output storage —
- * the full, settlement-matching hold. This is why the estimator is no longer
+ * prompt, at the definition level) plus output storage for each node whose value
+ * settlement can persist — tier-sized for text, byte-estimated for media. A node
+ * whose output another node consumes is not one of those, and holds none. This is why the estimator is no longer
  * purely structural: a persisting turn's hold must cover the storage it will be
  * billed.
  */
@@ -425,6 +426,25 @@ function webSearchReservation(node: ModelCallNode, enclosure: EnclosureFactors):
   return WEB_SEARCH_RESERVATION_NANO_PER_MODEL * BigInt(enclosure.fanOut) * BigInt(enclosure.loop);
 }
 
+/**
+ * The storage context a node's OUTPUT leg prices against — absent for a node
+ * whose value another node consumes.
+ *
+ * Settlement persists sink outputs, so a consumed value is never stored and no
+ * storage can ever be billed for it. The rule is stated over the class rather
+ * than over any one node: the turn's classifier is only the first consumed
+ * call, and a reserve that special-cased it would have to be revisited for the
+ * second. The definition-level input-storage term is unaffected — the prompt is
+ * stored once per turn regardless of which nodes read it.
+ */
+function outputStorageContextFor(
+  nodeId: string,
+  storageContext: StorageStamp | undefined,
+  consumed: ReadonlySet<string>
+): StorageStamp | undefined {
+  return consumed.has(nodeId) ? undefined : storageContext;
+}
+
 function estimateModelNode(
   node: ModelCallNode,
   enclosure: EnclosureFactors,
@@ -447,11 +467,13 @@ function estimateModelNode(
 }
 
 /**
- * A smartModel node's ceiling: the classifier's BOUNDED worst-case reserve plus
- * the MAX over the candidates' ceilings — exactly ONE candidate answers, so
- * summing candidates would over-hold N×. The classifier is priced through the
- * SAME `classifierReserveLineItems` the candidate builder uses (its real
- * truncated-context + output-cap reserve, NOT a full-context modelCall).
+ * A smartModel node's ceiling: the MAX over the candidates' ceilings — exactly
+ * ONE candidate answers, so summing candidates would over-hold N× — plus a
+ * classifier reserve only when the slot classifies for ITSELF. A slot fed the
+ * turn's decision from outside adds none: the classifier it consumes is a node
+ * of its own and is priced as one. When the reserve does apply it is priced
+ * through the SAME `classifierReserveLineItems` the candidate builder uses (its
+ * real truncated-context + output-cap reserve, NOT a full-context modelCall).
  * `node.candidates` is the ELIGIBLE subset the builder derived over the payer's
  * effective balance, each carrying its OWN affordable `cap(m)` — so each answer
  * leg is priced at that candidate's own cap (not a single shared one), and the
@@ -463,12 +485,12 @@ function estimateModelNode(
  */
 /**
  * The classifier reserve for a smartModel node, priced through the shared core.
- * The provider token item always rides the reserve; the pass-through storage item
- * rides it only when the turn persists (`storageContext` present), tier-sized on
- * its output leg. The reserve is FIXED (nothing scales with the main turn's
- * output), so `outputTokenCeiling` is 0; it scales by the enclosing fanOut/loop —
- * the classifier runs once per enclosing invocation — with the markup applied
- * once to the provider subtotal and storage added raw.
+ * Only the provider token item rides it, on every tier: a classifier's prompt
+ * and answer are consumed rather than persisted, so no storage is reserved for
+ * them however the turn is stamped. The reserve is FIXED (nothing scales with
+ * the main turn's output), so `outputTokenCeiling` is 0; it scales by the
+ * enclosing fanOut/loop — the classifier runs once per enclosing invocation —
+ * with the markup applied once to the provider subtotal.
  */
 /**
  * Guards the enclosure multipliers the classifier reserve passes straight to the
@@ -505,14 +527,9 @@ function classifierReserveNanoUsd(
   node: SmartModelNode,
   classifierDescriptor: ModelDescriptor,
   enclosure: EnclosureFactors,
-  storageContext: StorageStamp | undefined
+  promptedModels: readonly SmartModelNode['candidates'][number][]
 ): Result<bigint, DomainError> {
-  const outputCharsPerToken = outputCharsPerTokenForTier(storageContext?.tier ?? 'trial');
-  const items = classifierReserveLineItems(
-    classifierDescriptor,
-    node.candidates,
-    outputCharsPerToken
-  );
+  const items = classifierReserveLineItems(classifierDescriptor, promptedModels);
   if (items === undefined) {
     return err(
       validationError(`smartModel classifier '${node.classifierModelId}' lacks a per-token rate`)
@@ -522,8 +539,13 @@ function classifierReserveNanoUsd(
   // 1), so only the fanOut/loop enclosure product can be non-safe here.
   const multiplierError = enclosureMultiplierError(enclosure.fanOut, 1, enclosure.loop);
   if (multiplierError !== undefined) return err(multiplierError);
-  const reserveItems: readonly NanoLineItem[] =
-    storageContext === undefined ? items.filter((item) => item.kind === 'provider') : items;
+  // Positive selection, on every tier: a classifier's prompt and answer are
+  // mid-flow values that never rest, so a persisting turn adds no storage to
+  // this reserve. The general authority for that is the consumed-node rule
+  // applied where output storage is decided; this filter is the same rule for
+  // the one classifier that is not a node of its own, and it selects rather
+  // than excludes so a future item cannot join the figure silently.
+  const reserveItems: readonly NanoLineItem[] = items.filter((item) => item.kind === 'provider');
   return ok(
     reservationCeiling(
       { items: reserveItems },
@@ -551,50 +573,77 @@ function estimateSmartModelNode(
       )
     );
   }
-  // The classifier reserve is held iff a classifier generation can happen —
+  // A slot that declares an input schema is fed the turn's decision from
+  // OUTSIDE — the same field the execution reads to tell an envelope from raw
+  // text — so the classifier it consumes is a node of its own and is priced as
+  // one. Holding a reserve here as well would hold twice for one call.
+  if (node.inputSchema !== undefined) {
+    return Result.combine([
+      ...candidateCeilings(node, enclosure, resolveModel, storageContext),
+    ]).map((ceilings) => maxOf(ceilings));
+  }
+  // For a slot that DOES classify for itself, the reserve is held iff a
+  // classifier generation can happen —
   // the SAME shared dimension authority the node execution short-circuits on
   // (`Smart Model routing ∨ effort=auto`), so reserve and charge can never
   // disagree: a single-candidate model-only node bills no classifier and
   // holds none; a pinned+auto (effort-dimension) node bills one and holds one.
   const dimensions = smartModelClassifierDimensions(node);
+  // The prompt names the candidates only when the MODEL dimension is open; an
+  // effort-only classifier lists none, so pricing a model line here would put
+  // this reserve below the shared producer's — the affordable-then-402 direction.
+  // Same authority decides both, so the two lists cannot drift apart.
+  const promptedModels = dimensions.model ? node.candidates : [];
   const classifierReserve =
     dimensions.model || dimensions.effort
-      ? classifierReserveNanoUsd(node, classifierDescriptor, enclosure, storageContext)
+      ? classifierReserveNanoUsd(node, classifierDescriptor, enclosure, promptedModels)
       : ok(0n);
   return Result.combine([
     classifierReserve,
-    // Each candidate answers at its OWN affordable cap — the reservation is the
-    // MAX over the eligible subset of per-candidate cost, so a cheap model's
-    // larger cap and a pricey model's smaller cap are each priced at that
-    // model's own rate (never a single shared cap). The candidate cap overrides
-    // any node-level `maxOutputTokens`; the reasoning-off wire (node.params)
-    // still rides every answer leg. The classifier call never sees these params.
-    ...node.candidates.map((candidate) =>
-      modelCeiling(
-        {
-          modelId: candidate.id,
-          params:
-            candidate.maxOutputTokens === undefined
-              ? node.params
-              : { ...node.params, maxOutputTokens: candidate.maxOutputTokens },
-          maxSteps: 1,
-          ...(node.promptInputTokens === undefined
-            ? {}
-            : { promptInputTokens: node.promptInputTokens }),
-        },
-        enclosure,
-        resolveModel,
-        storageContext
-      )
-    ),
-  ]).map(([classifierReserve, ...candidateCeilings]) => {
-    // Math.max cannot take bigints; a plain scan keeps the money math integral.
-    let maxCandidateCeiling = 0n;
-    for (const candidateCeiling of candidateCeilings) {
-      if (candidateCeiling > maxCandidateCeiling) maxCandidateCeiling = candidateCeiling;
-    }
-    return classifierReserve + maxCandidateCeiling;
-  });
+    ...candidateCeilings(node, enclosure, resolveModel, storageContext),
+  ]).map(([reserve, ...ceilings]) => reserve + maxOf(ceilings));
+}
+
+/**
+ * Each candidate answers at its OWN affordable cap — the reservation is the MAX
+ * over the eligible subset of per-candidate cost, so a cheap model's larger cap
+ * and a pricey model's smaller cap are each priced at that model's own rate
+ * (never a single shared cap). The candidate cap overrides any node-level
+ * `maxOutputTokens`; the reasoning-off wire (node.params) still rides every
+ * answer leg. The classifier call never sees these params.
+ */
+function candidateCeilings(
+  node: SmartModelNode,
+  enclosure: EnclosureFactors,
+  resolveModel: ModelPricingResolver,
+  storageContext: StorageStamp | undefined
+): readonly Result<bigint, DomainError>[] {
+  return node.candidates.map((candidate) =>
+    modelCeiling(
+      {
+        modelId: candidate.id,
+        params:
+          candidate.maxOutputTokens === undefined
+            ? node.params
+            : { ...node.params, maxOutputTokens: candidate.maxOutputTokens },
+        maxSteps: 1,
+        ...(node.promptInputTokens === undefined
+          ? {}
+          : { promptInputTokens: node.promptInputTokens }),
+      },
+      enclosure,
+      resolveModel,
+      storageContext
+    )
+  );
+}
+
+/** MAX over the candidates: exactly one answers, so summing would over-hold N×.
+ * `Math.max` cannot take bigints, so a plain scan keeps the money math integral. */
+function maxOf(ceilings: readonly bigint[]): bigint {
+  let largest = 0n;
+  for (const ceiling of ceilings) if (ceiling > largest) largest = ceiling;
+  return largest;
 }
 
 /**
@@ -606,10 +655,9 @@ function estimateSmartModelNode(
  * The storage stamp rides the DEFINITION and is read per-run: absent (general
  * workflows, and every no-persist definition) the ceiling is provider cost only;
  * a persisting chat turn stamps it (from the TurnBudget, via `withStorageStamp`)
- * and the ceiling additionally covers input storage ONCE (the prompt), output
- * storage per answer-producing node, the classifier reserve's storage, and media
- * output storage — matching what settlement bills, so admission never
- * under-reserves. Storage is pass-through and never marked up. One estimator
+ * and the ceiling additionally covers input storage ONCE (the prompt) plus the
+ * output storage of every node whose value settlement can persist — matching
+ * what settlement bills, so admission never under-reserves. Storage is pass-through and never marked up. One estimator
  * instance serves every run; the per-run storage difference is the stamp, not a
  * closed-over argument (the tier cannot reach this factory — it is built once per
  * DO from env, before any turn's payer is known).
@@ -618,12 +666,18 @@ export function createEstimateRun(resolveModel: ModelPricingResolver): EstimateR
   return (definition) => {
     const storageContext: StorageStamp | undefined = definition.storage;
     const parents = buildParentIndex(definition.nodes);
+    const consumed = consumedProducerIds(definition.nodes);
     const memo = new Map<string, EnclosureFactors>();
     const perNode: Result<bigint, DomainError>[] = [];
     for (const node of definition.nodes) {
       const contribution: Result<bigint, DomainError> = match(node)
         .with({ type: 'modelCall' }, (n) =>
-          estimateModelNode(n, enclosureFor(n.id, parents, memo), resolveModel, storageContext)
+          estimateModelNode(
+            n,
+            enclosureFor(n.id, parents, memo),
+            resolveModel,
+            outputStorageContextFor(n.id, storageContext, consumed)
+          )
         )
         // Fail-closed: a subWorkflow runs a nested definition whose modelCall
         // nodes incur real provider cost, but its `ref` cannot be resolved
@@ -637,7 +691,12 @@ export function createEstimateRun(resolveModel: ModelPricingResolver): EstimateR
           )
         )
         .with({ type: 'smartModel' }, (n) =>
-          estimateSmartModelNode(n, enclosureFor(n.id, parents, memo), resolveModel, storageContext)
+          estimateSmartModelNode(
+            n,
+            enclosureFor(n.id, parents, memo),
+            resolveModel,
+            outputStorageContextFor(n.id, storageContext, consumed)
+          )
         )
         // No direct inference cost; any enclosed modelCall nodes are already
         // priced through the enclosure walker. Enumerated exhaustively so a

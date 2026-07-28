@@ -1,9 +1,17 @@
+import { renderDimensionSection } from '../dimensions/derive.js';
+import { EFFORT_DIMENSION, effortDomainOptions } from '../dimensions/effort.js';
+import { MODEL_DIMENSION } from '../dimensions/model.js';
+import type { DimensionOption } from '../dimensions/types.js';
+
 /**
- * Maximum total characters of conversation context to feed the classifier.
+ * Maximum total characters of conversation excerpt to feed the classifier.
  * Balances signal vs cost — every char × num eligible models adds tokens.
  *
- * The classifier reserve prices this cap rather than the realized text, which
- * is what keeps the reserve valid whatever the caller ends up truncating to.
+ * The classifier reserve prices this cap rather than the realized text, so the
+ * reserve stays valid whatever a caller truncates to — provided the caller emits
+ * no more than the cap. The emitter therefore counts its own section labels and
+ * separators inside this budget rather than adding them on top of it, and a test
+ * where it lives pins that.
  */
 export const MAX_CLASSIFIER_CONTEXT_CHARS = 4000;
 
@@ -49,8 +57,21 @@ export interface ClassifierEligibleModel {
 export interface ClassifierPromptDimensions {
   /** The model dimension: the candidates to route among. */
   eligibleModels?: readonly ClassifierEligibleModel[];
-  /** The effort dimension: classify canonical low | medium | high. */
+  /**
+   * The effort dimension. The options presented are the dimension's own declared
+   * domain in the user's labels, so this is a request for the axis rather than a
+   * choice of scale.
+   */
   classifyEffort?: boolean;
+  /**
+   * The effort options this TURN actually presents, when they are narrower than
+   * the declared domain — a turn's models rarely offer every rung, and
+   * §Reasoning Effort 6 presents the classifier exactly the options the user
+   * saw. Omitted falls back to the declared domain, which is what
+   * {@link computeClassifierPromptOverhead} prices: narrowing can only make the
+   * rendered prompt shorter than the amount reserved for it.
+   */
+  effortOptions?: readonly DimensionOption[];
 }
 
 function truncateDescription(description: string): string {
@@ -69,27 +90,32 @@ function modelList(eligibleModels: readonly ClassifierEligibleModel[]): string {
   return `Available models:\n${lines}`;
 }
 
-const EFFORT_SECTION = `Choose how much reasoning effort the next reply needs: low (simple or
-factual), medium (moderate analysis), or high (deep multi-step reasoning).
-Answer with one of exactly: low, medium, or high.`;
+/**
+ * The effort dimension's section, generated from its registry entry over the
+ * dimension's declared option domain: the declared sentence, the options by
+ * user-facing LABEL, and the dimension's own answer line. Nothing about the
+ * ladder is restated here — adding or renaming a rung changes this section with
+ * no edit to this file (`docs/BILLING.md` §Reasoning Effort 1, 6).
+ */
+function effortSection(presented: readonly DimensionOption[] | undefined): string {
+  return renderDimensionSection(EFFORT_DIMENSION, presented ?? effortDomainOptions());
+}
 
 /**
- * The output-format instruction per dimension composition. Both dimensions
- * classify in ONE generation: the reply is line 1 = model id, line 2 =
- * effort level.
+ * The answer-format instruction. Each dimension answers on its OWN LABELLED
+ * line, never a positional one: that is what lets a dimension be added without
+ * breaking the parsing of the lines already there, and it is the format
+ * `parseClassifierAnswer` reads. The effort dimension's line is named by its own
+ * generated section, so only the model dimension's is named here.
  */
 function outputInstruction(hasModel: boolean, hasEffort: boolean): string {
-  if (hasModel && hasEffort) {
-    return `Reply with exactly two lines and nothing else. Line 1: ONLY the model id
-from the list. Line 2: ONLY the effort level (low, medium, or high). Do not
-explain. Do not quote. Do not add commentary.`;
-  }
-  if (hasEffort) {
-    return `Reply with ONLY the effort level: low, medium, or high. Do not explain.
-Do not quote. Output one word and nothing else.`;
-  }
-  return `Reply with ONLY the model id from the list below. Do not explain. Do not
-quote. Do not add commentary. Output one model id and nothing else.`;
+  const modelLine = `Answer on its own line as \`${MODEL_DIMENSION.id}: <choice>\`, naming a model id from the list.`;
+  const shape =
+    hasModel && hasEffort
+      ? 'Reply with one labelled line per choice and nothing else.'
+      : 'Reply with that one labelled line and nothing else.';
+  const closing = `${shape} Do not explain. Do not quote. Do not add commentary.`;
+  return hasModel ? `${modelLine}\n${closing}` : closing;
 }
 
 /**
@@ -113,7 +139,7 @@ export function buildClassifierSystemPrompt(input: ClassifierPromptDimensions): 
     `You are a request router for HushBox, judging a recent excerpt of the
 user's conversation.`,
     ...(hasModel ? [MODEL_SECTION] : []),
-    ...(hasEffort ? [EFFORT_SECTION] : []),
+    ...(hasEffort ? [effortSection(input.effortOptions)] : []),
     outputInstruction(hasModel, hasEffort),
     ...(input.eligibleModels === undefined ? [] : [modelList(input.eligibleModels)]),
   ];
@@ -121,24 +147,39 @@ user's conversation.`,
 }
 
 /**
- * Exact character count of the classifier prompt template (everything the call
- * carries besides the conversation excerpt) when rendered against the supplied
- * eligible model list. Used by `classifierReserveChars` to size the worst-case
- * classifier overhead in char terms without relying on a guessed constant that
- * can drift from the prompt template.
+ * Worst-case character count of the classifier prompt template (everything the
+ * call carries besides the conversation excerpt) for the supplied model list.
+ * `classifierReserveChars` sizes the classifier's input leg from this, so it has
+ * to be an upper bound BY CONSTRUCTION rather than by measurement.
  *
- * Implementation: render the actual template. This makes the helper a single
- * source of truth — if the template grows or shrinks, the overhead estimate
- * updates with it on the next call. The excerpt itself contributes no overhead:
- * it is charged separately at its full {@link MAX_CLASSIFIER_CONTEXT_CHARS}
- * budget, so the two terms sum without double-counting. No memoization: callers
- * run this once per Smart Model invocation, against a tiny model list (~tens of
- * entries).
+ * Two things make it one. It renders the ACTUAL template, so a template that
+ * grows or shrinks moves the reserve with it on the next call rather than
+ * drifting from a guessed constant. And it prices each model's description leg
+ * at {@link CLASSIFIER_MAX_DESCRIPTION_CHARS} — the declared maximum a render
+ * can emit, since `truncateDescription` clamps every description to exactly
+ * that — so it takes no description at all. That is deliberate: the money layer
+ * consumes counts, rates and identifiers, never catalog free text, and a
+ * description passed in as `?? ''` priced the leg at zero while the executor
+ * rendered the real one.
+ *
+ * The excerpt itself contributes no overhead: it is charged separately at its
+ * full {@link MAX_CLASSIFIER_CONTEXT_CHARS} budget, so the two terms sum without
+ * double-counting. No memoization: callers run this once per Smart Model
+ * invocation, against a tiny model list (~tens of entries).
  */
 export function computeClassifierPromptOverhead(
-  eligibleModels: readonly ClassifierEligibleModel[]
+  eligibleModels: readonly { readonly id: string }[]
 ): number {
   // Rendered with BOTH dimensions requested — the longest composition, so the
   // reserve this feeds is an upper bound whichever dimensions a call classifies.
-  return buildClassifierSystemPrompt({ eligibleModels, classifyEffort: true }).length;
+  return buildClassifierSystemPrompt({
+    eligibleModels: eligibleModels.map((model) => ({
+      id: model.id,
+      description: WORST_CASE_DESCRIPTION,
+    })),
+    classifyEffort: true,
+  }).length;
 }
+
+/** The longest description a render can emit — the cap, exactly. */
+const WORST_CASE_DESCRIPTION = 'x'.repeat(CLASSIFIER_MAX_DESCRIPTION_CHARS);

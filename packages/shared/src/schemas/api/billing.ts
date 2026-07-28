@@ -118,9 +118,12 @@ export type GetSpendableQuery = z.infer<typeof getSpendableQuerySchema>;
 /**
  * Schema for the `GET /billing/spendable` response — the payer's funding
  * snapshot (BILLING §Affordability 1, §Data Structures `FundingSnapshot`).
- * `spendableNanoUsd` is hold-aware — the number admission would gate with when
- * the payer is the caller (it may be negative for an overdrawn self-funding
- * wallet); `heldNanoUsd` is what active holds subtracted, so `spendable + held`
+ * `spendableNanoUsd` is hold-aware and complete for every tier — the number
+ * admission would gate with when the payer is the caller, which is the
+ * purchased wallet's spendable funds at the paid tier and the day's remaining
+ * free allowance below it, so no surface has to compose a funding figure from a
+ * second endpoint (it may be negative once holds exceed the funds behind it);
+ * `heldNanoUsd` is what active holds subtracted, so `spendable + held`
  * reconstructs the hold-blind effective balance the picker greys on. `tier` and
  * `payer` identify WHOSE money those figures are: an owner-funded group turn
  * serves the owner's hold-aware group remaining at the owner's tier, not the

@@ -1,4 +1,5 @@
 import { textTag } from '@hushbox/shared';
+import { portsAccepting } from './model-ports.js';
 import { MODEL_CALL_IMPL_VERSION, SMART_MODEL_IMPL_VERSION } from './live-execution-registry.js';
 import type { NodePortDeclaration, NodeType } from '@hushbox/shared';
 import type { TransformCompute } from '../../media/index.js';
@@ -79,7 +80,7 @@ function smartModelPorts(
 ): NodePortDeclaration | undefined {
   const ids = [node.classifierModelId, ...node.candidates.map((candidate) => candidate.id)];
   if (!ids.every((id) => resolvesAsTextModel(models, id))) return undefined;
-  return { in: [textTag()], out: textTag() };
+  return portsAccepting({ in: [textTag()], out: textTag() }, node.inputSchema);
 }
 
 function resolveValuePorts(
@@ -88,7 +89,8 @@ function resolveValuePorts(
 ): NodePortDeclaration | undefined {
   switch (node.type) {
     case 'modelCall': {
-      return deps.models.resolve(node.model)?.ports;
+      const ports = deps.models.resolve(node.model)?.ports;
+      return ports === undefined ? undefined : portsAccepting(ports, node.inputSchema);
     }
     case 'smartModel': {
       return smartModelPorts(deps.models, node);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { modelId } from './model-id.js';
 import { nanoUSD } from './nano-usd.js';
 import { priceableModelFrom, reasoningPlanModelOf } from './priceable-model.js';
 import type { ModelDescriptor } from './model-descriptor.js';
@@ -24,15 +25,25 @@ function descriptorFor(overrides: Partial<ModelDescriptor> = {}): ModelDescripto
 }
 
 describe('priceableModelFrom', () => {
-  it('projects the six money inputs off a catalog descriptor', () => {
+  it('projects the money inputs off a catalog descriptor', () => {
     expect(priceableModelFrom(descriptorFor())).toEqual({
-      modelId: 'vendor/model',
+      modelId: modelId('vendor/model'),
       inputRateNanoUsd: 300n,
       outputRateNanoUsd: 1500n,
       contextLength: 200_000,
       providerCap: 64_000,
+      releasedAtMs: 1_700_000_000_000,
       reasoning: undefined,
     });
+  });
+
+  it('converts the catalog release date from seconds into milliseconds', () => {
+    // The catalog dates a model in seconds and premium classification compares
+    // milliseconds; a projection that skipped the conversion would date every
+    // model in 1970 and no model would ever classify premium by recency.
+    expect(priceableModelFrom(descriptorFor({ releasedAt: 1_500_000_000 }))?.releasedAtMs).toBe(
+      1_500_000_000_000
+    );
   });
 
   it('carries the reasoning metadata through verbatim', () => {
@@ -72,6 +83,7 @@ describe('priceableModelFrom', () => {
       'outputRateNanoUsd',
       'providerCap',
       'reasoning',
+      'releasedAtMs',
     ]);
   });
 });
@@ -79,11 +91,12 @@ describe('priceableModelFrom', () => {
 describe('reasoningPlanModelOf', () => {
   it('maps the projection onto the reasoning plan input', () => {
     const model: PriceableModel = {
-      modelId: 'vendor/model',
+      modelId: modelId('vendor/model'),
       inputRateNanoUsd: nanoUSD(300n),
       outputRateNanoUsd: nanoUSD(1500n),
       contextLength: 200_000,
       providerCap: 64_000,
+      releasedAtMs: 0,
       reasoning: { supportedEfforts: null },
     };
     expect(reasoningPlanModelOf(model)).toEqual({

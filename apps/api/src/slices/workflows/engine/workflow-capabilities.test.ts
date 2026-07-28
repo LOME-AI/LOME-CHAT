@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { listTag, optionalTag, textTag } from '@hushbox/shared';
+import { jsonTag, listTag, optionalTag, textTag } from '@hushbox/shared';
+import { TURN_DECISION_REDUCER } from '@hushbox/shared';
+import { cheapestClassifierEffort } from '@hushbox/shared/affordability/smart-model/effort-dimension';
+import { TURN_DECISION_SCHEMA_NAME } from '../nodes/turn-decision.js';
 import {
   DEFAULT_WORKFLOW_CAPABILITIES,
   createConstraintRegistry,
@@ -63,6 +66,42 @@ describe('DEFAULT_WORKFLOW_CAPABILITIES', () => {
 
   it('routes a non-string verdict to the empty label', () => {
     expect(predicateCode(DEFAULT_WORKFLOW_CAPABILITIES).get('routeByFirstWord')?.(42)).toBe('');
+  });
+
+  it('registers the decision-envelope schema so json<turnDecision> resolves', () => {
+    const registry = createConstraintRegistry(DEFAULT_WORKFLOW_CAPABILITIES);
+    const entry = registry.resolve('schema', TURN_DECISION_SCHEMA_NAME);
+    expect(entry?.version).toBe(1);
+    expect(entry?.schema.safeParse({ prompt: 'p', modelText: '', effort: 'high' }).success).toBe(
+      true
+    );
+  });
+
+  it('registers the decision reducer over the prompt and an optional classifier answer', () => {
+    const registry = createConstraintRegistry(DEFAULT_WORKFLOW_CAPABILITIES);
+    const entry = registry.resolve('reducer', 'decideTurn');
+    expect(entry?.in).toEqual([textTag(), optionalTag(textTag())]);
+    expect(entry?.out).toEqual(jsonTag(TURN_DECISION_SCHEMA_NAME));
+  });
+
+  it('reduces a classifier answer into the decision envelope', () => {
+    const decide = reducerCode(DEFAULT_WORKFLOW_CAPABILITIES).get('decideTurn');
+    expect(decide?.(['ask me', 'model: openai/gpt-x\neffort: Max'])).toEqual({
+      prompt: 'ask me',
+      modelText: 'openai/gpt-x',
+      effort: 'max',
+    });
+  });
+
+  it('reduces an absent classifier answer through the declared fallback', () => {
+    const decide = reducerCode(DEFAULT_WORKFLOW_CAPABILITIES).get(TURN_DECISION_REDUCER);
+    // The fallback is §Reasoning Effort 8's rule — the axis's cheapest option —
+    // read from the dimension rather than named a second time here.
+    expect(decide?.(['ask me', undefined])).toEqual({
+      prompt: 'ask me',
+      modelText: '',
+      effort: cheapestClassifierEffort(),
+    });
   });
 
   it('registers the plain list join and the two-input text pair reducers', () => {

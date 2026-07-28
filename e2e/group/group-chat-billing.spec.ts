@@ -62,9 +62,9 @@ test.describe('Group Chat Billing', () => {
       const chatPage = new ChatPage(testBobPage);
       await chatPage.expectMessageCostVisible();
 
-      // No free_tier_notice (owner is paying)
+      // No free_allowance_pays (owner is paying)
       await expect(
-        testBobPage.getByTestId(TEST_ID_BUILDERS.budgetMessage('free_tier_notice'))
+        testBobPage.getByTestId(TEST_ID_BUILDERS.budgetMessage('free_allowance_pays'))
       ).not.toBeVisible();
 
       // Alice's balance decreased (owner charged)
@@ -125,14 +125,14 @@ test.describe('Group Chat Billing', () => {
         await helper.setConversationBudget(groupConversation.id, 1000);
       });
 
-      await test.step('Bob navigates and sees free_tier_notice', async () => {
+      await test.step('Bob navigates and sees free_allowance_pays', async () => {
         const chatPage = new ChatPage(testBobPage);
         await chatPage.gotoConversation(groupConversation.id);
         await chatPage.waitForConversationLoaded();
 
         // memberRemaining = 0 → effectiveCents = 0 → personal → free_allowance
         await expect(
-          testBobPage.getByTestId(TEST_ID_BUILDERS.budgetMessage('free_tier_notice'))
+          testBobPage.getByTestId(TEST_ID_BUILDERS.budgetMessage('free_allowance_pays'))
         ).toBeVisible({
           timeout: TIMEOUTS.ASSERT,
         });
@@ -176,14 +176,14 @@ test.describe('Group Chat Billing', () => {
         await helper.setMemberBudget(groupConversation.id, bobMemberId, 500);
       });
 
-      await test.step('Bob navigates and sees free_tier_notice', async () => {
+      await test.step('Bob navigates and sees free_allowance_pays', async () => {
         const chatPage = new ChatPage(testBobPage);
         await chatPage.gotoConversation(groupConversation.id);
         await chatPage.waitForConversationLoaded();
 
         // conversationRemaining = 0 → effectiveCents = 0 → personal → free_allowance
         await expect(
-          testBobPage.getByTestId(TEST_ID_BUILDERS.budgetMessage('free_tier_notice'))
+          testBobPage.getByTestId(TEST_ID_BUILDERS.budgetMessage('free_allowance_pays'))
         ).toBeVisible({
           timeout: TIMEOUTS.ASSERT,
         });
@@ -255,11 +255,11 @@ test.describe('Group Chat Billing', () => {
       await chatPage.expectMessageVisible('Welcome to Bob group');
     });
 
-    await test.step('Alice sees no free_tier_notice (paid tier)', async () => {
+    await test.step('Alice sees no free_allowance_pays (paid tier)', async () => {
       // ownerRemaining = 0 (Bob has $0) → effectiveCents = 0 → personal
-      // Alice is paid tier → personal_balance → no free_tier_notice
+      // Alice is paid tier → personal_balance → no free_allowance_pays
       await expect(
-        authenticatedPage.getByTestId(TEST_ID_BUILDERS.budgetMessage('free_tier_notice'))
+        authenticatedPage.getByTestId(TEST_ID_BUILDERS.budgetMessage('free_allowance_pays'))
       ).not.toBeVisible();
     });
 
@@ -312,9 +312,9 @@ test.describe('Group Chat Billing', () => {
       await sidebar.closeSidebar();
     });
 
-    await test.step('no free_tier_notice when owner-funded', async () => {
+    await test.step('no free_allowance_pays when owner-funded', async () => {
       await expect(
-        testBobPage.getByTestId(TEST_ID_BUILDERS.budgetMessage('free_tier_notice'))
+        testBobPage.getByTestId(TEST_ID_BUILDERS.budgetMessage('free_allowance_pays'))
       ).not.toBeVisible();
     });
 

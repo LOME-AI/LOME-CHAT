@@ -1,4 +1,4 @@
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useLayoutEffect } from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -60,6 +60,7 @@ function stubTokens(): void {
   style.textContent = `
     :root { --background: #faf9f6; --foreground: #1a1a1a; }
     .dark { --background: #1a1816; --foreground: #f2f1ef; }
+    html.a11y-contrast-high { --background: #ffffff; --foreground: #000000; }
   `;
   document.head.append(style);
 }
@@ -72,6 +73,29 @@ const UNPAINTED = { theme: 'light' } as const;
 
 const LIGHT = { theme: 'light', background: '#faf9f6', foreground: '#1a1a1a' } as const;
 const DARK = { theme: 'dark', background: '#1a1816', foreground: '#f2f1ef' } as const;
+
+/**
+ * The View Transitions API, with the timing measured in Chromium: the callback
+ * runs after the handler that started the transition has returned, so whatever
+ * it changes is no longer inside a discrete event. happy-dom ships no
+ * implementation, so without this the theme provider takes its fallback branch
+ * and applies the change synchronously — the one ordering that cannot show this
+ * bug.
+ */
+function stubViewTransitions(): () => void {
+  const owned = Object.getOwnPropertyDescriptor(document, 'startViewTransition');
+  Object.defineProperty(document, 'startViewTransition', {
+    configurable: true,
+    value: (callback: () => void) => {
+      setTimeout(callback, 0);
+      return { finished: Promise.resolve(), ready: Promise.resolve() };
+    },
+  });
+  return () => {
+    if (owned) Object.defineProperty(document, 'startViewTransition', owned);
+    else Reflect.deleteProperty(document, 'startViewTransition');
+  };
+}
 
 function ThemeSwitch(): React.JSX.Element {
   const { triggerTransition } = useTheme();
@@ -163,6 +187,20 @@ function renderSandbox(
   };
 }
 
+/**
+ * A sandbox under the real theme provider. The provider writes to the root
+ * element as it mounts, and the appearance hook watches that element, so the
+ * resulting delivery is drained here inside `act` — left pending it would land
+ * after the test body and update a still-mounted component outside it.
+ */
+async function renderThemedSandbox(
+  props: Partial<React.ComponentProps<typeof DocumentSandbox>> = {}
+): Promise<ReturnType<typeof renderSandbox>> {
+  const rendered = renderSandbox(props, { wrapper: ThemeHarness });
+  await act(async () => {});
+  return rendered;
+}
+
 function statusOf(container: HTMLElement): string | null {
   const element = container.querySelector<HTMLElement>('#document-render-status');
   return element?.dataset['status'] ?? null;
@@ -180,6 +218,10 @@ describe('DocumentSandbox', () => {
     }
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    // Unmount before the page is stripped: the hook watches the root element,
+    // so tearing the stylesheet out from under a live component would fire its
+    // observer outside `act`.
+    cleanup();
     // The theme harness writes through to the real page and to storage, so a
     // test that switched theme would otherwise hand the next one a dark app.
     for (const style of document.querySelectorAll('style[data-tokens]')) style.remove();
@@ -548,9 +590,9 @@ describe('DocumentSandbox', () => {
   });
 
   describe('frame appearance', () => {
-    it('paints a new frame with the appearance the app is showing', () => {
+    it('paints a new frame with the appearance the app is showing', async () => {
       stubTokens();
-      const { toFrame, handshake } = renderSandbox({ code: '<p>x</p>' }, { wrapper: ThemeHarness });
+      const { toFrame, handshake } = await renderThemedSandbox({ code: '<p>x</p>' });
       handshake();
 
       expect(toFrame).toHaveBeenCalledWith({
@@ -565,10 +607,10 @@ describe('DocumentSandbox', () => {
     it('paints a python frame too, before anything is run in it', async () => {
       stubTokens();
       const user = userEvent.setup();
-      const { toFrame, handshake } = renderSandbox(
-        { kind: 'python', code: 'print(1)' },
-        { wrapper: ThemeHarness }
-      );
+      const { toFrame, handshake } = await renderThemedSandbox({
+        kind: 'python',
+        code: 'print(1)',
+      });
       handshake();
       await user.click(screen.getByRole('button', { name: /^run$/i }));
 
@@ -586,7 +628,7 @@ describe('DocumentSandbox', () => {
     it('restyles a live frame without re-driving the document', async () => {
       stubTokens();
       const user = userEvent.setup();
-      const { toFrame, handshake, iframe } = renderSandbox({}, { wrapper: ThemeHarness });
+      const { toFrame, handshake, iframe } = await renderThemedSandbox();
       handshake();
       toFrame.mockClear();
 
@@ -598,8 +640,8 @@ describe('DocumentSandbox', () => {
       expect(screen.getByTitle('Preview')).toBe(iframe);
     });
 
-    it('states the colour scheme even where the tokens do not resolve', () => {
-      const { toFrame, handshake } = renderSandbox({}, { wrapper: ThemeHarness });
+    it('states the colour scheme even where the tokens do not resolve', async () => {
+      const { toFrame, handshake } = await renderThemedSandbox();
       handshake();
 
       expect(toFrame).toHaveBeenCalledWith(
@@ -607,10 +649,61 @@ describe('DocumentSandbox', () => {
       );
     });
 
+    // The path a theme toggle really takes in Chromium and Safari. Measured
+    // there: `startViewTransition` runs its callback after the click handler has
+    // exited, so the state change is no longer inside a discrete event and React
+    // flushes it on a task rather than synchronously — while the class write in
+    // that same callback reaches the observer a microtask earlier. The frame must
+    // still be told one appearance, with its two halves agreeing.
+    it('pairs the theme with its own colours under a view transition', async () => {
+      stubTokens();
+      const restore = stubViewTransitions();
+      try {
+        const user = userEvent.setup();
+        const { toFrame, handshake, iframe } = await renderThemedSandbox();
+        handshake();
+        toFrame.mockClear();
+
+        await user.click(screen.getByRole('button', { name: 'switch theme' }));
+        await act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(toFrame).toHaveBeenCalledTimes(1);
+        expect(toFrame).toHaveBeenCalledWith({ type: 'theme', ...DARK });
+        expect(screen.getByTitle('Preview')).toBe(iframe);
+      } finally {
+        restore();
+      }
+    });
+
+    // The accessibility contrast tiers move the same tokens the theme does, and
+    // a frame that missed one shows a canvas that does not match its panel.
+    it('restyles for a contrast tier the theme never moved', async () => {
+      stubTokens();
+      const { toFrame, handshake, iframe } = await renderThemedSandbox();
+      handshake();
+      toFrame.mockClear();
+
+      await act(async () => {
+        document.documentElement.classList.add('a11y-contrast-high');
+        await Promise.resolve();
+      });
+
+      expect(toFrame).toHaveBeenCalledTimes(1);
+      expect(toFrame).toHaveBeenCalledWith({
+        type: 'theme',
+        theme: 'light',
+        background: '#ffffff',
+        foreground: '#000000',
+      });
+      expect(screen.getByTitle('Preview')).toBe(iframe);
+    });
+
     it('sends no restyle to a frame that has not handed over its port', async () => {
       stubTokens();
       const user = userEvent.setup();
-      const { toFrame } = renderSandbox({}, { wrapper: ThemeHarness });
+      const { toFrame } = await renderThemedSandbox();
 
       await user.click(screen.getByRole('button', { name: 'switch theme' }));
 

@@ -129,7 +129,7 @@ export const streamChatRequestSchema = z
         })
       )
       .min(1),
-    fundingSource: fundingSourceSchema, // client's billing claim — the backend re-derives via resolveFundingDecision()
+    fundingSource: fundingSourceSchema, // client's billing claim — the backend re-derives via resolveFunding()
     webSearchEnabled: z.boolean().optional(),
     customInstructions: z.string().max(5000).optional(),
     forkId: z.uuid().optional(),

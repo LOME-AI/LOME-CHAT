@@ -38,7 +38,7 @@ import { CHAT_TURN_HOOKS, CHAT_TURN_NODE_ID, TRIAL_TURN_HOOKS } from './constant
 import type { TurnBudget, TurnModelPricing } from './turn-definition.js';
 import type { TurnReasoningEntry } from './turn-reasoning.js';
 import type { ModelPricingResolver } from '../../models/index.js';
-import type { ModelDescriptor, WorkflowDefinition } from '@hushbox/shared';
+import type { ModelDescriptor, Node, WorkflowDefinition } from '@hushbox/shared';
 
 function descriptorFor(id: string, behaviors: string[] = []): ModelDescriptor {
   return {
@@ -989,10 +989,14 @@ describe('reasoning-bearing turn builds', () => {
     reasoningBudgetTokens: LOW_B,
   };
 
-  function answerParamsOf(definition: WorkflowDefinition): Record<string, unknown> {
+  function answerNodeOf(definition: WorkflowDefinition): Extract<Node, { type: 'modelCall' }> {
     const answer = definition.nodes.find((node) => node.type === 'modelCall');
     if (answer?.type !== 'modelCall') throw new Error('answer node missing');
-    return answer.params;
+    return answer;
+  }
+
+  function answerParamsOf(definition: WorkflowDefinition): Record<string, unknown> {
+    return answerNodeOf(definition).params;
   }
 
   it('writes the reasoning wire and a B+H completion cap onto the answer node', () => {
@@ -1082,6 +1086,68 @@ describe('reasoning-bearing turn builds', () => {
       { maxOutputTokens: LOW_B + 500, reasoning: { effort: 'low' } },
       { maxOutputTokens: 2048 + 500, reasoning: { max_tokens: 2048 } },
     ]);
+  });
+
+  it('stamps the resolved level beside the wire, so the answer can report it', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const built = buildSingleModelTurn({
+      model: 'answer-model',
+      nodes,
+      constraints,
+      maxOutputTokens: 5000,
+      reasoning: LOW_ENTRY,
+    })._unsafeUnwrap();
+    expect(answerNodeOf(built).reasoningEffort).toBe('low');
+  });
+
+  it('stamps `off` on a hard-off turn, so it is distinguishable from no reasoning', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const built = buildSingleModelTurn({
+      model: 'answer-model',
+      nodes,
+      constraints,
+      maxOutputTokens: 5000,
+      reasoning: {
+        effort: 'off',
+        wire: ReasoningWire.parse({ enabled: false }),
+        reasoningBudgetTokens: 0,
+      },
+    })._unsafeUnwrap();
+    expect(answerNodeOf(built).reasoningEffort).toBe('off');
+  });
+
+  it('stamps no level on a reasoning-free turn', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const built = buildSingleModelTurn({
+      model: 'answer-model',
+      nodes,
+      constraints,
+      maxOutputTokens: 5000,
+    })._unsafeUnwrap();
+    expect(answerNodeOf(built).reasoningEffort).toBeUndefined();
+  });
+
+  it('stamps each sibling its own resolved level, so a downgraded one says so', () => {
+    const { nodes, constraints } = createTurnCompileRegistries(resolver);
+    const built = buildMultiModelTurn({
+      models: ['model-a', 'model-b'],
+      nodes,
+      constraints,
+      maxOutputTokens: 500,
+      reasoning: new Map<string, TurnReasoningEntry>([
+        ['model-a', LOW_ENTRY],
+        [
+          'model-b',
+          {
+            effort: 'lite',
+            wire: ReasoningWire.parse({ max_tokens: 2048 }),
+            reasoningBudgetTokens: 2048,
+          },
+        ],
+      ]),
+    })._unsafeUnwrap();
+    const siblings = built.nodes.filter((node) => node.type === 'modelCall');
+    expect(siblings.map((node) => node.reasoningEffort)).toEqual(['low', 'lite']);
   });
 
   it('leaves a sibling without an entry reasoning-free on a mixed multi-model turn', () => {

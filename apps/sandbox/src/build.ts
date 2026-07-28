@@ -2,6 +2,7 @@ import { cpSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { buildSandboxConfigScript } from './config.js';
+import { appBundleOptions, verifyBundle } from '../../../scripts/verify-bundle.js';
 
 /**
  * Assemble the sandbox origin's deploy directory (`./dist`), which the
@@ -30,17 +31,23 @@ export function buildSandbox(options: BuildSandboxOptions): void {
 }
 
 /* v8 ignore start -- CLI entry, exercised via the `build` package script */
-function main(): void {
+async function main(): Promise<void> {
   const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   buildSandbox({
     publicDir: path.join(packageRoot, 'public'),
     distDir: path.join(packageRoot, 'dist'),
     configScript: buildSandboxConfigScript(process.env),
   });
+  // Verified here rather than from a workflow step, because this is where the
+  // dist is finished: Cloudflare's per-file and file-count caps apply to the
+  // Pyodide payload this copies, and the origin is served straight from these
+  // bytes. Same seam the admin bundle uses, so the TTS expectation stays a
+  // single declaration.
+  await verifyBundle(appBundleOptions(path.resolve(packageRoot, '../..'), 'apps/sandbox'));
   console.log('✓ sandbox dist assembled');
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  await main();
 }
 /* v8 ignore stop */

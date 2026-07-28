@@ -3,12 +3,16 @@ import {
   MediaValue,
   callShapeFamilyFor,
   compileParamSpec,
+  reasoningPlanModelFrom,
   serializeReasoningText,
 } from '@hushbox/shared';
+import { pickClassifiedEffortPlan } from '@hushbox/shared/affordability/smart-model/effort-dimension';
 import { validationError } from '../../../lib/errors/index.js';
 import { FINGERPRINT_CODES } from '../../../lib/telemetry/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import { validateNodeInput } from './node-input.js';
+import { callInputOf, decisionOf } from './turn-decision.js';
+import { portsAccepting } from '../engine/model-ports.js';
 import type {
   CallShapeFamily,
   CompletionTokens,
@@ -21,6 +25,7 @@ import type {
   ModelDescriptor,
   Node,
   NodePortDeclaration,
+  ResolvedReasoningEffort,
   SchemaNameRegistry,
   Usage,
 } from '@hushbox/shared';
@@ -33,6 +38,7 @@ import type {
   ToolLoopOptions,
 } from '../../models/index.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
+import type { TurnDecision } from './turn-decision.js';
 import type {
   NodeBillingMetadata,
   NodeExecution,
@@ -138,6 +144,13 @@ export interface ModelCallStreamContext {
    * callers (e.g. smartModel's text generations), which download nothing.
    */
   readonly remainingBytes?: number;
+  /**
+   * The reasoning rung this call's wire was minted at, carried alongside the
+   * request because the wire cannot be read back for it (two rungs can clamp to
+   * one identical budget). Absent when the call sends no reasoning wire; it
+   * becomes the level recorded against the generation.
+   */
+  readonly resolvedEffort?: ResolvedReasoningEffort;
 }
 
 export interface ModelCallExecutionDeps extends ModelCallStreamDeps {
@@ -151,30 +164,94 @@ export function createModelCallExecution(deps: ModelCallExecutionDeps): NodeExec
   };
 }
 
+/**
+ * What this node sends and what level it sends it at, after applying the turn's
+ * decision to itself.
+ *
+ * Only the effort axis is applied here: the classified level is carved INTO the
+ * completion cap the node already carries, through the one shared wire
+ * derivation, so a classified choice can never spend past what admission
+ * reserved for this model. A node whose params already carry a reasoning wire
+ * has a PINNED effort — the user fixed it, and a runtime decision never
+ * rewrites a pinned dimension; its level rides the node, stamped there by the
+ * build that resolved it. Without an integer cap there is nothing to carve out
+ * of, and a reasoning budget never rides a call with no explicit cap.
+ *
+ * The level is returned alongside the parameters rather than derived from them:
+ * the plan that mints a wire is the only thing that knows which rung it wired.
+ */
+function callAtDecidedEffort(
+  node: ModelCallNode,
+  descriptor: ModelDescriptor,
+  decision: TurnDecision | undefined
+): {
+  readonly parameters: Readonly<Record<string, unknown>>;
+  readonly level: ResolvedReasoningEffort | undefined;
+} {
+  const pinned = { parameters: node.params, level: node.reasoningEffort };
+  if (decision === undefined || 'reasoning' in node.params) return pinned;
+  const cap = node.params['maxOutputTokens'];
+  if (typeof cap !== 'number') return pinned;
+  const plan = pickClassifiedEffortPlan(reasoningPlanModelFrom(descriptor), decision.effort, cap);
+  if (plan === undefined) return pinned;
+  return {
+    parameters: { ...node.params, reasoning: plan.wire, maxOutputTokens: plan.maxTokens },
+    level: plan.level,
+  };
+}
+
+/** The streamed-call context: the run seams this node forwards, plus the rung its wire was minted at. */
+function streamContextOf(
+  ctx: NodeRunContext,
+  remainingBytes: number,
+  level: ResolvedReasoningEffort | undefined
+): ModelCallStreamContext {
+  return {
+    signal: ctx.signal,
+    remainingBytes,
+    ...(level === undefined ? {} : { resolvedEffort: level }),
+    ...(ctx.emit === undefined ? {} : { emit: ctx.emit }),
+    ...(ctx.mapFilePart === undefined ? {} : { mapFilePart: ctx.mapFilePart }),
+  };
+}
+
 async function runModelCall(
   deps: ModelCallExecutionDeps,
   node: ModelCallNode,
   input: readonly unknown[],
   ctx: NodeRunContext
 ): Promise<Result<NodeRunSuccess, NodeRunError>> {
-  const validated = validateNodeInput(deps.binding.ports, deps.schemas, input);
+  const validated = validateNodeInput(
+    portsAccepting(deps.binding.ports, node.inputSchema),
+    deps.schemas,
+    input
+  );
   if (validated.isErr()) return err(validated.error);
-  const part = toInputPart(input[0]);
+  // A node fed the turn's decision reads its prompt off the envelope; a node fed
+  // raw text reads the text. Both arrive on the same single input port.
+  const decision = decisionOf(input[0]);
+  const part = toInputPart(callInputOf(input[0]));
   if (part === undefined) return err({});
   // History and custom instructions are both run-scoped client context on the
   // ctx (the only per-run channel to DO-scoped executions), never baked into
   // the definition. Empty/absent normalizes so a bare run produces exactly the
   // pre-history request shape; custom instructions fold into the base system
-  // prompt at the language adapter.
+  // prompt at the language adapter. The engine withholds BOTH from a routing
+  // call, so this forwards whatever it was handed rather than deciding again.
   const history = ctx.history;
   const customInstructions = ctx.customInstructions;
+  const call = callAtDecidedEffort(node, deps.binding.descriptor, decision);
   const request: InferenceRequest = {
     model: node.model,
     inputs: [part],
-    parameters: node.params,
+    parameters: call.parameters,
     outputs: deps.binding.descriptor.outputs,
     ...(history === undefined || history.length === 0 ? {} : { history: [...history] }),
     ...(customInstructions === undefined ? {} : { customInstructions }),
+    // The one piece of the routing disposition a withheld ctx member cannot
+    // express: the adapter ADDS the base preamble, so the request has to ask
+    // it not to.
+    ...(ctx.routingOnly === true ? { routingOnly: true } : {}),
   };
   // Per-model discrete video-duration pre-flight: a model that declares a
   // supported-duration set rejects an out-of-set requested duration here, before
@@ -189,12 +266,7 @@ async function runModelCall(
   // `budgetBytes − usedBytes()` — becomes the download's byte cap so an
   // oversized video aborts mid-download rather than at the `store()` backstop.
   const remainingBytes = ctx.values.budgetBytes - ctx.values.usedBytes();
-  return streamModelCall(deps, request, {
-    signal: ctx.signal,
-    remainingBytes,
-    ...(ctx.emit === undefined ? {} : { emit: ctx.emit }),
-    ...(ctx.mapFilePart === undefined ? {} : { mapFilePart: ctx.mapFilePart }),
-  });
+  return streamModelCall(deps, request, streamContextOf(ctx, remainingBytes, call.level));
 }
 
 /**
@@ -300,12 +372,12 @@ export async function streamModelCall(
     // Doctrine: an explicit stop or a deadline breach with streamed partial
     // output settles like a normal partial and IS billed; only a run that
     // produced nothing bills nothing.
-    if (isAborted(error)) return settleAbortedPartial(deps, request, accumulator);
+    if (isAborted(error)) return settleAbortedPartial(deps, request, accumulator, ctx);
     if (isInferenceError(error)) return err(inferenceNodeError(error));
     throw error;
   }
   const value = accumulator.media ?? textValueOf(accumulator);
-  const billing = billingMetadataOf(deps.binding.descriptor, request, accumulator);
+  const billing = billingMetadataOf(deps.binding.descriptor, request, accumulator, ctx);
   return decideCost(deps, request, accumulator).map((charge) => ({
     value,
     costNanoUsd: charge.costNanoUsd,
@@ -330,11 +402,12 @@ export async function streamModelCall(
 function settleAbortedPartial(
   deps: ModelCallStreamDeps,
   request: InferenceRequest,
-  accumulator: CallAccumulator
+  accumulator: CallAccumulator,
+  ctx: ModelCallStreamContext
 ): Result<NodeRunSuccess, NodeRunError> {
   const value = accumulator.media ?? textValueOf(accumulator);
   if (value === '') return err({});
-  const billing = billingMetadataOf(deps.binding.descriptor, request, accumulator);
+  const billing = billingMetadataOf(deps.binding.descriptor, request, accumulator, ctx);
   const inlineUsd = usableAbortCostUsd(accumulator);
   if (inlineUsd !== undefined) {
     return ok({
@@ -379,11 +452,17 @@ function usableAbortCostUsd(accumulator: CallAccumulator): number | undefined {
  * the dimension the charge records: token counts for a language generation, the
  * declared image/video dimensions for a media one. A concrete modality every
  * time, derived from the descriptor's declared outputs.
+ *
+ * The reasoning level rides the caller's context rather than being read off the
+ * request: the level is what was asked of the model, the reasoning token count
+ * beside it is what the model did with it, and only the caller that minted the
+ * wire knows which rung it named.
  */
 function billingMetadataOf(
   descriptor: ModelDescriptor,
   request: InferenceRequest,
-  accumulator: CallAccumulator
+  accumulator: CallAccumulator,
+  ctx: ModelCallStreamContext
 ): NodeBillingMetadata {
   const modality = billingModalityOf(descriptor.outputs);
   const tokens = modality === 'text' ? tokensOf(accumulator.usage) : undefined;
@@ -395,6 +474,7 @@ function billingMetadataOf(
     ...(accumulator.generationId === undefined ? {} : { generationId: accumulator.generationId }),
     ...(tokens === undefined ? {} : { tokens }),
     ...(media === undefined ? {} : { media }),
+    ...(ctx.resolvedEffort === undefined ? {} : { reasoningEffort: ctx.resolvedEffort }),
   };
 }
 

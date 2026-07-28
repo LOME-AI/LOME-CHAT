@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Redis } from '@upstash/redis';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { spendableFundsNanoUsd } from '@hushbox/shared';
 import {
   LOCAL_NEON_DEV_CONFIG,
+  allowanceSpending,
   conversationMembers,
   conversationSpending,
   conversations,
@@ -17,14 +18,20 @@ import { sweepLeakedTestWallets } from '../__tests__/orphan-wallet-sweep.js';
 import { createBillingStores } from '../adapters/stores.js';
 import { BILLING_KEYS } from './keys.js';
 import { admitRun } from './admission.js';
-import { conversationBudgetScopeId, memberBudgetScopeId } from './budget-resolution.js';
+import { DAILY_ALLOWANCE_NANO_USD } from './constants.js';
+import { utcDayKey } from './period.js';
+import {
+  conversationBudgetScopeId,
+  memberBudgetScopeId,
+  resolveBudgetScopes,
+} from './budget-resolution.js';
 import {
   holdReadoutAt,
   readActiveHolds,
   readBudgetScopeHolds,
   readFundingSnapshot,
 } from './spendable.js';
-import type { AdmissionDeps } from './admission.js';
+import type { AdmissionDeps, BudgetScope } from './admission.js';
 import type {
   BudgetScopeHoldRef,
   ConversationFundingFacts,
@@ -48,7 +55,18 @@ const deadRedis = new Redis({ url: 'http://localhost:1', token: 'token', retry: 
 const stores = createBillingStores();
 const deps: AdmissionDeps = { redis, db, stores };
 const NOW = new Date('2026-07-03T12:00:00Z');
+/** The next UTC calendar day — a different allowance day key, same seeded rows. */
+const NEXT_DAY = new Date('2026-07-04T00:00:01Z');
 const RUN_CAP = 5;
+
+/** The one scope id an allowance-only resolve yields, for keying its holds hash. */
+function soleScopeId(scopes: readonly BudgetScope[]): string {
+  const scopeId = scopes[0]?.scopeId;
+  if (scopeId === undefined || scopes.length !== 1) {
+    throw new Error('allowance resolve should yield exactly one scope');
+  }
+  return scopeId;
+}
 
 const BYTES = new Uint8Array([1, 2, 3]);
 const createdUserIds: string[] = [];
@@ -631,15 +649,19 @@ describe('readFundingSnapshot — the self-funded arm', () => {
     expect(await redis.hgetall(holdsKey)).toBeNull();
   });
 
-  it('serves a negative spendable for an overdrawn wallet instead of clamping', async () => {
-    const balance = -600_000_000n; // beyond the $0.50 cushion
+  it('serves a negative spendable when holds exceed the cushion instead of clamping', async () => {
+    const balance = 100_000_000n;
+    const held = 700_000_000n; // past balance + cushion
     const userId = await createUser();
     const walletId = await seedWallet(userId, balance);
+    const holdsKey = BILLING_KEYS.walletHolds.buildKey(walletId);
+    await redis.hset(holdsKey, { run: `${String(held)}:${String(NOW.getTime() + 60_000)}` });
 
     const served = await view(userId);
-    expect(served.spendableNanoUsd).toBe(spendableFundsNanoUsd(balance, 'paid'));
+    expect(served.spendableNanoUsd).toBe(spendableFundsNanoUsd(balance, 'paid') - held);
     expect(served.spendableNanoUsd < 0n).toBe(true);
     expect(await redis.exists(BILLING_KEYS.walletSnapshot.buildKey(walletId))).toBe(1);
+    await redis.del(holdsKey);
   });
 
   it('answers not_found for a user without a purchased wallet', async () => {
@@ -660,5 +682,176 @@ describe('readFundingSnapshot — the self-funded arm', () => {
       { userId, conversationFunding: unusedReader, now: NOW }
     );
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+});
+
+describe('readFundingSnapshot — the free-tier arm (BILLING §Funding, §User Tiers)', () => {
+  /** The wallets a free payer holds: an unfunded purchased wallet plus the free one. */
+  async function seedFreePayer(purchasedBalanceNanoUsd = 0n): Promise<{
+    userId: string;
+    freeWalletId: string;
+  }> {
+    const userId = await createUser();
+    await seedWallet(userId, purchasedBalanceNanoUsd);
+    const freeWalletId = await seedWallet(userId, 0n, 'free');
+    return { userId, freeWalletId };
+  }
+
+  /**
+   * The budget scopes the chat admission hook emits for a self-funded free-tier
+   * turn — resolved through the same call, so a gate pin cannot drift into a
+   * re-derivation of the served arithmetic.
+   */
+  async function allowanceScopes(userId: string, now: Date): Promise<readonly BudgetScope[]> {
+    const scopes = await resolveBudgetScopes(stores, db, { now, allowance: { userId } });
+    return scopes._unsafeUnwrap();
+  }
+
+  async function viewAt(userId: string, now: Date): Promise<FundingSnapshot> {
+    const result = await readFundingSnapshot(deps, {
+      userId,
+      conversationFunding: unusedReader,
+      now,
+    });
+    return result._unsafeUnwrap();
+  }
+
+  it("serves the day's remaining allowance as a free payer's spendable", async () => {
+    const { userId } = await seedFreePayer();
+
+    const served = await view(userId);
+    expect(served.tier).toBe('free');
+    expect(served.spendableNanoUsd).toBe(DAILY_ALLOWANCE_NANO_USD);
+  });
+
+  it("subtracts the day's spend from the served allowance", async () => {
+    const { userId } = await seedFreePayer();
+    await db
+      .insert(allowanceSpending)
+      .values({ userId, day: utcDayKey(NOW), spentNanoUsd: 30_000_000n });
+
+    const served = await view(userId);
+    expect(served.spendableNanoUsd).toBe(DAILY_ALLOWANCE_NANO_USD - 30_000_000n);
+    expect(served.heldNanoUsd).toBe(0n);
+  });
+
+  it("reports an allowance-scope hold as held, so spendable + held is the day's remaining", async () => {
+    const estimate = 20_000_000n;
+    const { userId, freeWalletId } = await seedFreePayer();
+    const scopes = await allowanceScopes(userId, NOW);
+    const admitted = await admitRun(deps, {
+      walletId: freeWalletId,
+      holdId: crypto.randomUUID(),
+      estimateNanoUsd: estimate,
+      deadlineSeconds: 300,
+      concurrentRunCap: RUN_CAP,
+      budgets: scopes,
+      now: NOW,
+    });
+    expect(admitted._unsafeUnwrap().admitted).toBe(true);
+
+    const served = await view(userId);
+    expect(served.heldNanoUsd).toBe(estimate);
+    expect(served.spendableNanoUsd + served.heldNanoUsd).toBe(DAILY_ALLOWANCE_NANO_USD);
+    await redis.del(BILLING_KEYS.scopeHolds.buildKey(soleScopeId(scopes)));
+  });
+
+  it('serves the figure admission gates a free-tier turn on', async () => {
+    const { userId, freeWalletId } = await seedFreePayer();
+    await db
+      .insert(allowanceSpending)
+      .values({ userId, day: utcDayKey(NOW), spentNanoUsd: 10_000_000n });
+    const served = await view(userId);
+    const scopes = await allowanceScopes(userId, NOW);
+
+    const refused = await admitRun(deps, {
+      walletId: freeWalletId,
+      holdId: crypto.randomUUID(),
+      estimateNanoUsd: served.spendableNanoUsd + 1n,
+      deadlineSeconds: 300,
+      concurrentRunCap: RUN_CAP,
+      budgets: scopes,
+      now: NOW,
+    });
+    expect(refused._unsafeUnwrap()).toEqual({ admitted: false, reason: 'budget-exceeded' });
+    const admitted = await admitRun(deps, {
+      walletId: freeWalletId,
+      holdId: crypto.randomUUID(),
+      estimateNanoUsd: served.spendableNanoUsd,
+      deadlineSeconds: 300,
+      concurrentRunCap: RUN_CAP,
+      budgets: scopes,
+      now: NOW,
+    });
+    expect(admitted._unsafeUnwrap().admitted).toBe(true);
+    await redis.del(
+      BILLING_KEYS.scopeHolds.buildKey(soleScopeId(scopes)),
+      BILLING_KEYS.walletHolds.buildKey(freeWalletId),
+      BILLING_KEYS.walletSnapshot.buildKey(freeWalletId)
+    );
+  });
+
+  it('serves an overdrawn purchased wallet the allowance figure admission gates its turn on', async () => {
+    // A purchased balance at or below zero cannot fund a turn, so the send path
+    // draws the free wallet and the daily allowance is the whole gate.
+    const { userId, freeWalletId } = await seedFreePayer(-600_000_000n);
+    const served = await view(userId);
+    expect(served.tier).toBe('free');
+    expect(served.spendableNanoUsd).toBe(DAILY_ALLOWANCE_NANO_USD);
+    const scopes = await allowanceScopes(userId, NOW);
+
+    const refused = await admitRun(deps, {
+      walletId: freeWalletId,
+      holdId: crypto.randomUUID(),
+      estimateNanoUsd: served.spendableNanoUsd + 1n,
+      deadlineSeconds: 300,
+      concurrentRunCap: RUN_CAP,
+      budgets: scopes,
+      now: NOW,
+    });
+    expect(refused._unsafeUnwrap()).toEqual({ admitted: false, reason: 'budget-exceeded' });
+    const admitted = await admitRun(deps, {
+      walletId: freeWalletId,
+      holdId: crypto.randomUUID(),
+      estimateNanoUsd: served.spendableNanoUsd,
+      deadlineSeconds: 300,
+      concurrentRunCap: RUN_CAP,
+      budgets: scopes,
+      now: NOW,
+    });
+    expect(admitted._unsafeUnwrap().admitted).toBe(true);
+    await redis.del(
+      BILLING_KEYS.scopeHolds.buildKey(soleScopeId(scopes)),
+      BILLING_KEYS.walletHolds.buildKey(freeWalletId),
+      BILLING_KEYS.walletSnapshot.buildKey(freeWalletId)
+    );
+  });
+
+  it('fails closed with a typed unavailable error when Redis is down', async () => {
+    const { userId } = await seedFreePayer();
+    const result = await readFundingSnapshot(
+      { redis: deadRedis, db, stores },
+      { userId, conversationFunding: unusedReader, now: NOW }
+    );
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+
+  it('serves the next UTC day a full allowance, writing nothing to reset it', async () => {
+    const { userId } = await seedFreePayer();
+    await db
+      .insert(allowanceSpending)
+      .values({ userId, day: utcDayKey(NOW), spentNanoUsd: DAILY_ALLOWANCE_NANO_USD });
+    const exhausted = await view(userId);
+    expect(exhausted.spendableNanoUsd).toBe(0n);
+
+    const served = await viewAt(userId, NEXT_DAY);
+    expect(served.spendableNanoUsd).toBe(DAILY_ALLOWANCE_NANO_USD);
+    // No row exists for the new day and the exhausted one is untouched: the day
+    // key alone moves the figure, so nothing has to run at midnight.
+    const rows = await db
+      .select({ day: allowanceSpending.day, spentNanoUsd: allowanceSpending.spentNanoUsd })
+      .from(allowanceSpending)
+      .where(eq(allowanceSpending.userId, userId));
+    expect(rows).toEqual([{ day: utcDayKey(NOW), spentNanoUsd: DAILY_ALLOWANCE_NANO_USD }]);
   });
 });

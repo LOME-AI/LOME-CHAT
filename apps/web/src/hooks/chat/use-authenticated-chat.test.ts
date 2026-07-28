@@ -773,6 +773,32 @@ describe('useAuthenticatedChat — handleSend', () => {
     expect(mockStopStreaming).toHaveBeenCalledWith(['assistant-1']);
   });
 
+  it('treats RUN_CAPACITY_REACHED as retryable — its copy tells the user to try again', async () => {
+    // The reserved funds return when the run finishes, so this is transient in
+    // exactly the way CONCURRENT_RUN is. Both codes derive their copy from the
+    // same wait-then-retry vocabulary, so offering the copy without the retry
+    // affordance tells the user to do something the UI has removed.
+    const { ChatRequestError } = await import('@/hooks/chat/use-chat-stream');
+    mockStartStream.mockImplementation((_req: unknown, options?: StreamOptions) => {
+      options?.onStart?.({
+        userMessageId: 'u',
+        models: [{ modelId: 'test-model', assistantMessageId: 'assistant-1' }],
+      });
+      return Promise.reject(new ChatRequestError('RUN_CAPACITY_REACHED'));
+    });
+    const { result } = render();
+    await act(async () => {
+      result.current.handleSend('personal_balance');
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mockSetError).toHaveBeenCalledWith(
+        'main',
+        expect.objectContaining({ retryable: true })
+      );
+    });
+  });
+
   it('reports a generic (non-Error-class) failure as non-retryable and refocuses', async () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     mockStartStream.mockRejectedValue(new Error('boom'));

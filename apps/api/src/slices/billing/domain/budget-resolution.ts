@@ -12,7 +12,10 @@ import type { BudgetScope } from './admission.js';
  * remaining headroom per requested scope. The engine's admission hook (chat's
  * `runtime.ts`) calls this to build `AdmissionRequest.budgets`, and the admission
  * Lua gates the run against the `Math.min` of every scope's remaining (plus the
- * owner wallet balance, gated separately by the caller).
+ * owner wallet balance, gated separately by the caller). The served funding
+ * snapshot resolves its free-tier figure through this same function rather than
+ * recomputing a remaining, so the number a composer previews against is the
+ * gate's own.
  *
  * Three ceilings can gate a run, each an independent scope:
  * - the free-tier daily allowance (period-keyed; cap is `DAILY_ALLOWANCE_NANO_USD`);

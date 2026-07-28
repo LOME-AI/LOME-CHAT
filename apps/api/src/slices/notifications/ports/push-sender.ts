@@ -1,3 +1,4 @@
+import type { PushEventPayload } from '@hushbox/shared';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 
@@ -30,15 +31,32 @@ export type PushRecipient =
 
 export interface PushMessage {
   readonly recipients: readonly PushRecipient[];
-  readonly title: string;
-  readonly body: string;
-  readonly data?: Readonly<Record<string, string>>;
+  /**
+   * The generic wire payload — a category and the conversation it points at,
+   * and nothing else. There is deliberately no title, body, or free-form text
+   * field: each transport looks the words up in the shared copy table from the
+   * category, exactly as the service worker does at display time. The remaining
+   * field, `conversationId`, is a bare string in the type, so the composite
+   * validates it against the shared conversation-id schema before dispatch —
+   * that check, not the type, is what stops text riding it. The raw id itself
+   * does reach FCM by design; the collapse-key note below covers that.
+   */
+  readonly payload: PushEventPayload;
   /**
    * The per-conversation collapse alias (a truncated HMAC of the
    * conversationId, never the raw id — the generic-payload law). The composite
    * sender derives and stamps it before dispatch; each transport applies it as
-   * its collapse identity (FCM `collapse_key` + notification `tag`, Web Push
-   * `Topic`). Absent when the message is not conversation-scoped.
+   * its collapse identity, and nowhere else: the FCM `collapse_key`, the APNs
+   * `apns-collapse-id` header, and the Web Push `Topic` header. Absent only on
+   * a message that has not passed through the composite yet — every production
+   * send does, because the composite is the sole construction site.
+   *
+   * The Android notification `tag` is deliberately NOT this alias — it carries
+   * the raw conversationId, and so does the FCM data payload, so the raw id
+   * does reach FCM on the native path by design. The alias protects the
+   * push-service-visible collapse fields, which is what the Web Push transport
+   * (whose payload is encrypted) would otherwise leak. The FCM adapter carries
+   * the reasoning where it sets the tag.
    */
   readonly collapseKey?: string;
 }

@@ -10,7 +10,6 @@ export const SERVICE_NAMES = {
   R2_STORAGE: 'r2-storage',
   R2_GC: 'r2-gc',
   BILLING_MISMATCH: 'billing-mismatch',
-  RESEND: 'resend',
   PUSH_FCM: 'push-fcm',
 } as const;
 

@@ -106,6 +106,7 @@ export type {
   ChargebackLockEmailPort,
   BillingStores,
   LedgerLegInput,
+  LlmCompletionInput,
   PaymentRecord,
   PaymentStatus,
   SpendingUpsert,

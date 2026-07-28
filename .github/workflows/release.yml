@@ -146,6 +146,12 @@ jobs:
           VITE_API_URL: https://api.hushbox.ai
           SANDBOX_ORIGIN_URL: https://sandbox.hushbox.ai
         # END GENERATED: headers-env
+      # The deployed bundle is assembled by the three steps above, not by a
+      # build script, so the bundle guard runs as its own step: after the last
+      # step that adds a file to the dist (the Pages file-count check counts
+      # `_headers`) and before the upload. The step needs no env block.
+      - name: Verify web bundle
+        run: pnpm verify:bundle
       - name: Upload web build artifact
         uses: actions/upload-artifact@v6
         with:

@@ -35,6 +35,7 @@ import { describe, expect, it } from 'vitest';
 
 import { intBetween, mulberry32, pick } from '../__tests__/seeded-prng.js';
 import { EFFORT_OPTION_IDS } from './dimensions/effort.js';
+import { modelId } from './model-id.js';
 import { nanoUSD } from './nano-usd.js';
 import { getTurnOptions } from './turn-options.js';
 import type { Rng } from '../__tests__/seeded-prng.js';
@@ -49,6 +50,9 @@ import type {
   TurnOptions,
 } from './turn-types.js';
 
+/** A fixed instant: premium classification takes its clock as an argument. */
+const NOW_MS = 1_800_000_000_000;
+
 /**
  * Shapes chosen so both arms of every property below occur: a wide cap that fits
  * High's budget, a narrow cap that fits Low's and not Mid's (the quantifier
@@ -58,43 +62,48 @@ import type {
  */
 const CATALOG: readonly PriceableModel[] = [
   {
-    modelId: 'v/wide',
+    modelId: modelId('v/wide'),
     inputRateNanoUsd: nanoUSD(60n),
     outputRateNanoUsd: nanoUSD(150n),
     contextLength: 200_000,
     providerCap: 64_000,
+    releasedAtMs: 0,
     reasoning: { supportedEfforts: ['high', 'medium', 'low'] },
   },
   {
-    modelId: 'v/narrow',
+    modelId: modelId('v/narrow'),
     inputRateNanoUsd: nanoUSD(200n),
     outputRateNanoUsd: nanoUSD(500n),
     contextLength: 128_000,
     providerCap: 9000,
+    releasedAtMs: 0,
     reasoning: { supportedEfforts: ['high', 'medium', 'low'] },
   },
   {
-    modelId: 'v/mandatory',
+    modelId: modelId('v/mandatory'),
     inputRateNanoUsd: nanoUSD(2500n),
     outputRateNanoUsd: nanoUSD(9000n),
     contextLength: 32_000,
     providerCap: 20_000,
+    releasedAtMs: 0,
     reasoning: { supportedEfforts: ['high', 'medium', 'low'], mandatory: true },
   },
   {
-    modelId: 'v/plain',
+    modelId: modelId('v/plain'),
     inputRateNanoUsd: nanoUSD(800n),
     outputRateNanoUsd: nanoUSD(1600n),
     contextLength: 128_000,
     providerCap: 8000,
+    releasedAtMs: 0,
     reasoning: undefined,
   },
   {
-    modelId: 'v/dear',
+    modelId: modelId('v/dear'),
     inputRateNanoUsd: nanoUSD(20_000n),
     outputRateNanoUsd: nanoUSD(90_000n),
     contextLength: 64_000,
     providerCap: 32_000,
+    releasedAtMs: 0,
     reasoning: { supportedEfforts: ['high', 'low'] },
   },
 ];
@@ -120,7 +129,10 @@ function selectionOf(rng: Rng): Selection {
   return {
     answerSources: smartSlot
       ? { models, smartSlot: true }
-      : { models: [models[0] ?? MODEL_IDS[0] ?? '', ...models.slice(1)], smartSlot: false },
+      : {
+          models: [models[0] ?? MODEL_IDS[0] ?? modelId('vendor/none'), ...models.slice(1)],
+          smartSlot: false,
+        },
     modality: 'text',
     pinned: pin === undefined ? {} : { effort: pin },
     webSearch: rng() > 0.75,
@@ -293,7 +305,7 @@ function checkDraw(
   selection: Selection,
   tally: Tally
 ): void {
-  const pair = getTurnOptions(funding, basis, selection, CATALOG);
+  const pair = getTurnOptions(funding, basis, selection, { models: CATALOG, nowMs: NOW_MS });
   const strict = reserveIsPinInvariant(selection);
   if (strict) tally.strictDraws += 1;
   if (!pair.admissible.sendable) tally.unsendable += 1;
@@ -308,7 +320,10 @@ function checkDraw(
   const gateArms = (optionId: OptionId): TurnOptions => {
     const cached = gates.get(optionId);
     if (cached !== undefined) return cached;
-    const produced = getTurnOptions(funding, basis, pinnedTo(selection, optionId), CATALOG);
+    const produced = getTurnOptions(funding, basis, pinnedTo(selection, optionId), {
+      models: CATALOG,
+      nowMs: NOW_MS,
+    });
     gates.set(optionId, produced);
     return produced;
   };

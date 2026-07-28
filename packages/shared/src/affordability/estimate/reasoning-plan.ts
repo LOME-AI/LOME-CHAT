@@ -16,8 +16,8 @@
 
 import { z } from 'zod';
 
-import { CANONICAL_REASONING_EFFORTS } from '../reasoning-effort.js';
-import type { CanonicalReasoningEffort } from '../reasoning-effort.js';
+import { CANONICAL_REASONING_EFFORTS, REASONING_OFF } from '../reasoning-effort.js';
+import type { CanonicalReasoningEffort, ReasoningOff } from '../reasoning-effort.js';
 import type { ModelReasoning } from '../model-descriptor.js';
 
 /**
@@ -91,6 +91,14 @@ export interface ReasoningPlan {
    */
   readonly maxTokens: number;
   readonly wire: ReasoningWire;
+  /**
+   * The rung this plan actually wires — the one fact the wire cannot be read
+   * back for. Two rungs whose budgets clamp to the same ceiling mint an
+   * identical `max_tokens` wire, so recovering the level from the wire would
+   * name the wrong rung; every consumer that must report the level (the
+   * persisted per-generation record) reads it here instead.
+   */
+  readonly level: CanonicalReasoningEffort | ReasoningOff;
 }
 
 export type ReasoningInfeasibleReason =
@@ -301,6 +309,7 @@ export function planReasoning(
       answerHeadroomTokens,
       maxTokens: reasoningBudgetTokens + answerHeadroomTokens,
       wire: offered.wire,
+      level: offered.label,
     },
   };
 }
@@ -334,6 +343,7 @@ export function planReasoningOff(
       answerHeadroomTokens,
       maxTokens: answerHeadroomTokens,
       wire: REASONING_OFF_WIRE,
+      level: REASONING_OFF,
     },
   };
 }

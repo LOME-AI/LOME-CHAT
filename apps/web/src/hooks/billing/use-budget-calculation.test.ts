@@ -596,14 +596,14 @@ describe('useBudgetCalculation', () => {
       ).toBeGreaterThan(result.current.maxOutputTokens);
     });
 
-    it('gates free-tier affordability on the served allowance, never the cushioned spendable', () => {
-      // Zero-balance user: the purchased-wallet spendable is +$0.50 (cushion),
-      // but a depleted daily allowance must still refuse.
+    it('gates free-tier affordability on the served allowance', () => {
+      // A depleted daily allowance refuses. The served figure IS the allowance
+      // remaining for a free payer, so there is nothing else to consult.
       mockUseBalance.mockReturnValue({
         data: makeBalance('0', '0'),
         isPending: false,
       } as UseQueryResult<GetBalanceResponse>);
-      mockUseSpendable.mockReturnValue(makeSpendable('500000000', 'self', 'free'));
+      mockUseSpendable.mockReturnValue(makeSpendable('0', 'self', 'free'));
 
       const { result } = renderHook(() => useBudgetCalculation(defaultInput));
 
@@ -612,6 +612,38 @@ describe('useBudgetCalculation', () => {
       });
 
       expect(result.current.maxOutputTokens).toBe(0);
+    });
+
+    it('sizes a free-tier turn on the HOLD-AWARE served allowance, not the balance endpoint', () => {
+      // The two endpoints disagree by design while a run is in flight:
+      // /billing/balance reports the day's allowance hold-blind (50¢), while
+      // /billing/spendable subtracts the 40¢ this payer's own run reserved and
+      // serves 10¢ — the figure admission gates on. Sizing from the hold-blind
+      // number offers a longer answer than the payer can currently start.
+      mockUseBalance.mockReturnValue({
+        data: makeBalance('0', '500000000'),
+        isPending: false,
+      } as UseQueryResult<GetBalanceResponse>);
+      mockUseSpendable.mockReturnValue(makeSpendable('100000000', 'self', 'free'));
+
+      const { result } = renderHook(() => useBudgetCalculation(defaultInput));
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      const request = {
+        models: [{ pricing: { inputPerToken: 10_000n, outputPerToken: 30_000n } }],
+        inputTokens: BigInt(estimateTokensForTier('free', defaultInput.promptCharacterCount)),
+        inputChars: defaultInput.promptCharacterCount,
+        outputCharsPerToken: outputCharsPerTokenForTier('free'),
+      };
+      const manifest = priceRequest(request);
+      if (!manifest.ok) throw new Error('fixture must price');
+
+      expect(result.current.maxOutputTokens).toBe(
+        Number(affordability(manifest.value, 100_000_000n).maxOutputTokens)
+      );
     });
 
     it('keeps the client-side fixed arm for unauthenticated users (no endpoint exists)', () => {

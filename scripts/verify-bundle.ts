@@ -1,8 +1,6 @@
 /**
- * Build-time guards on a built app bundle, run by each app's build script right
- * after its dist is final, so prod, e2e, and the preview build all pay them.
- *
- * Five classes of problem it turns into a build failure:
+ * Guards on a built app bundle. Six classes of problem it turns into a
+ * verification failure:
  *   - TTS shipped by an app that never asked for it: whether an app carries the
  *     on-device speech engine is a declaration here (`APPS_SHIPPING_TTS`), not
  *     whatever the module graph happened to drag in. The bundler emits the TTS
@@ -14,11 +12,15 @@
  *     still pointing at one) means the wasm ships two or three times — tens of
  *     megabytes in every Pages deploy, APK, and OTA zip.
  *   - onnxruntime version skew: which onnxruntime-common copy ends up in the
- *     worker is decided by pnpm's hoist selection, so a dependency bump can
+ *     worker rests on a workspace package extension that only applies to one
+ *     exact `@huggingface/transformers` version, so a transformers bump can
  *     silently swap it, or split the chunk across two versions.
  *   - worker `new.target` corruption: the iife worker transform rewrites
  *     `new.target` as `import.meta`, which kills the TTS worker on load in
  *     every built site while dev stays green.
+ *   - a static origin's `_headers` gone missing: the file is written by the
+ *     same build step that runs this check, so dropping that step costs the
+ *     origin its CSP silently.
  *   - Cloudflare Pages hard limits: exceeding either one fails the deploy, and
  *     a routine transformers bump is enough to push the ORT wasm past the
  *     per-file cap. Failing here surfaces it at build time instead.
@@ -28,7 +30,9 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ORT_DIR, resolveOrtAssets, type OrtAsset } from './lib/ort-assets-plugin.js';
+import { ORT_DIR, resolveOrtAssets, type OrtAsset } from './lib/build-seam.js';
+import { isMainModule } from './lib/is-main.js';
+import { runMain } from './lib/run-main.js';
 
 // Cloudflare Pages hard limits: 25 MiB per file, 20,000 files per deployment.
 export const PAGES_MAX_FILE_BYTES = 26_214_400;
@@ -36,19 +40,34 @@ export const PAGES_MAX_FILE_COUNT = 20_000;
 
 /**
  * Which apps ship the on-device TTS engine, keyed by workspace-relative app
- * directory. The single place the answer is written down: every verified build
- * reads it through `appBundleOptions`, so no call site can disagree with
- * another. `apps/crawler-view` has no build script yet and is listed anyway, so
- * the guard is already in force the day it gets one.
+ * directory. Read by `appBundleOptions` below, which throws for an app absent
+ * from this map rather than assuming an answer for it.
  */
 const APPS_SHIPPING_TTS = new Map<string, boolean>([
   // The merged web + marketing bundle: blog read-aloud and chat read-aloud.
   ['apps/web', true],
   ['apps/admin', false],
   ['apps/crawler-view', false],
+  // The sandbox origin: static pages plus the self-hosted Pyodide payload.
+  ['apps/sandbox', false],
 ]);
 
-export function appBundleOptions(rootDir: string, appDir: string): VerifyWebBundleOptions {
+/** The dist directory an app builds into unless a build asks for another one. */
+const PRIMARY_DIST_DIR = 'dist';
+
+/**
+ * @param appDir the app's TTS expectation is keyed on this and nothing else.
+ * @param distributionDirName which of that app's dist directories to verify. An app can
+ *   build into more than one — `apps/web` also emits `dist-ios`, `dist-android`
+ *   and `dist-android-direct` from the same vite config for the OTA bundles —
+ *   and every one of them carries the app's single declaration, so the location
+ *   varies here while the expectation stays where it is declared above.
+ */
+export function appBundleOptions(
+  rootDir: string,
+  appDir: string,
+  distributionDirName: string = PRIMARY_DIST_DIR
+): VerifyBundleOptions {
   const shipsTts = APPS_SHIPPING_TTS.get(appDir);
   if (shipsTts === undefined) {
     throw new Error(
@@ -56,21 +75,34 @@ export function appBundleOptions(rootDir: string, appDir: string): VerifyWebBund
         `declare whether it ships the on-device TTS engine`
     );
   }
-  return { distributionDir: path.join(rootDir, appDir, 'dist'), shipsTts };
+  return { distributionDir: path.join(rootDir, appDir, distributionDirName), shipsTts };
+}
+
+/** The web dist directories named as CLI arguments, defaulting to the primary one. */
+export function requestedDistributionDirectories(args: readonly string[]): string[] {
+  return args.length > 0 ? [...args] : [PRIMARY_DIST_DIR];
 }
 
 /**
- * `packages/ui` declares onnxruntime-common purely to decide which copy pnpm
- * hoists: `@huggingface/transformers` imports it as a bare external but does
- * not depend on it, so the shipped `Tensor` is whatever the hoist dir happens
- * to hold. That makes the shipped ORT version a resolution outcome rather than
- * a decision. Reading the pin from here — never copying its value — is what
- * turns it into a build-time invariant.
+ * The workspace file carries the `packageExtensions` entry that declares
+ * onnxruntime-common as a dependency of `@huggingface/transformers`, which
+ * imports it as a bare external without declaring it. That entry is what
+ * decides which ORT copy the TTS worker resolves. Reading the version from
+ * there — never copying its value — is what turns it into a build-time
+ * invariant.
  */
-const UI_PACKAGE_JSON = path.resolve(
+const PNPM_WORKSPACE_YAML = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  '../packages/ui/package.json'
+  '../pnpm-workspace.yaml'
 );
+
+/**
+ * The declared version, matched structurally so a value picked up from any
+ * other block cannot pass for it: the transformers selector, its
+ * `dependencies` map, then the key, each on its own line.
+ */
+const ORT_COMMON_EXTENSION =
+  /^[ \t]+'?@huggingface\/transformers@[^'\s:]+'?:[ \t]*\n[ \t]+dependencies:[ \t]*\n[ \t]+onnxruntime-common:[ \t]*'?([^'\s#]+)/mu;
 
 /** A range would let the shipped copy drift while still satisfying the pin. */
 const EXACT_VERSION = /^\d+\.\d+\.\d+[\w+.-]*$/u;
@@ -78,20 +110,18 @@ const EXACT_VERSION = /^\d+\.\d+\.\d+[\w+.-]*$/u;
 /**
  * The version every ORT copy in the bundle must report.
  *
- * @param uiPackageJson manifest carrying the pin; the default is the real one.
+ * @param workspaceYaml file carrying the extension; the default is the real one.
  */
 export async function declaredOrtCommonVersion(
-  uiPackageJson: string = UI_PACKAGE_JSON
+  workspaceYaml: string = PNPM_WORKSPACE_YAML
 ): Promise<string> {
-  const manifest = JSON.parse(await fs.readFile(uiPackageJson, 'utf8')) as {
-    dependencies?: Record<string, string>;
-  };
-  const declared = manifest.dependencies?.['onnxruntime-common'];
+  const declared = ORT_COMMON_EXTENSION.exec(await fs.readFile(workspaceYaml, 'utf8'))?.[1];
   if (declared === undefined || !EXACT_VERSION.test(declared)) {
     throw new Error(
-      `${uiPackageJson} must pin onnxruntime-common to an exact version ` +
-        `(found ${declared ?? 'no declaration'}) — that pin decides which ORT ` +
-        `copy pnpm hoists into the shipped TTS worker.`
+      `${workspaceYaml} must declare onnxruntime-common at an exact version in the ` +
+        `@huggingface/transformers packageExtensions entry (found ` +
+        `${declared ?? 'no declaration'}) — that entry decides which ORT copy resolves ` +
+        `into the shipped TTS worker.`
     );
   }
   return declared;
@@ -114,7 +144,7 @@ export interface BundleFile {
   readonly bytes: number;
 }
 
-export interface VerifyWebBundleOptions {
+export interface VerifyBundleOptions {
   readonly distributionDir: string;
   /**
    * Whether this bundle is expected to carry the TTS engine. Required rather
@@ -130,8 +160,8 @@ export interface VerifyWebBundleOptions {
   readonly ortAssets?: readonly OrtAsset[];
 }
 
-/** The seam each build script injects, so its own tests need no real dist. */
-export type VerifyBundle = (options: VerifyWebBundleOptions) => Promise<void>;
+/** The seam `build-web-bundle.ts` injects, so its tests need no real dist. */
+export type VerifyBundle = (options: VerifyBundleOptions) => Promise<void>;
 
 async function listBundleFiles(directory: string, prefix = ''): Promise<BundleFile[]> {
   const entries = await fs.readdir(directory, { withFileTypes: true });
@@ -285,9 +315,9 @@ async function checkOrtCommonVersion(
       } else if (found !== expected) {
         violations.push(
           `shipped onnxruntime-common version is ${found}, expected ${expected}: ` +
-            `${file.relativePath} — pnpm hoisted a copy other than the one ` +
-            `packages/ui pins (a dependency bump or a hoist-order change does this ` +
-            `silently)`
+            `${file.relativePath} — a copy other than the one the workspace's ` +
+            `@huggingface/transformers package extension declares resolved instead (a ` +
+            `transformers bump stops that extension applying, silently)`
         );
       }
     }
@@ -385,6 +415,26 @@ function checkNoTtsArtifacts(files: readonly BundleFile[]): string[] {
     );
 }
 
+/** Cloudflare reads response headers for a static origin from this file. */
+const HEADERS_FILE = '_headers';
+
+/**
+ * A TTS-free bundle is one of the small static origins, and each of those gets
+ * its `_headers` written by the same build step that runs this check —
+ * admin's `closeBundle` hook emits it, the sandbox copies it out of `public/`.
+ * Dropping that step costs the origin its CSP and every other security header,
+ * with no other symptom until someone reads a response.
+ */
+function checkHeadersFile(files: readonly BundleFile[]): string[] {
+  if (files.some((file) => file.relativePath === HEADERS_FILE)) {
+    return [];
+  }
+  return [
+    `no ${HEADERS_FILE} at the dist root — this origin ships without its CSP and the ` +
+      `rest of its security headers`,
+  ];
+}
+
 export function checkPagesLimits(files: readonly BundleFile[]): string[] {
   const violations = files
     .filter((file) => file.bytes > PAGES_MAX_FILE_BYTES)
@@ -402,9 +452,7 @@ export function checkPagesLimits(files: readonly BundleFile[]): string[] {
   return violations;
 }
 
-export async function collectWebBundleViolations(
-  options: VerifyWebBundleOptions
-): Promise<string[]> {
+export async function collectBundleViolations(options: VerifyBundleOptions): Promise<string[]> {
   const files = await listBundleFiles(options.distributionDir);
   if (!options.shipsTts) {
     // Every ORT and worker check below presupposes the engine is present: the
@@ -413,7 +461,7 @@ export async function collectWebBundleViolations(
     // zero-artifact assertion replaces all four and is strictly stronger — a
     // bundle with no ORT file can carry neither a stray copy of one nor a
     // chunk referencing one, since the reference is what emits the asset.
-    return [...checkNoTtsArtifacts(files), ...checkPagesLimits(files)];
+    return [...checkNoTtsArtifacts(files), ...checkHeadersFile(files), ...checkPagesLimits(files)];
   }
   const assets = options.ortAssets ?? resolveOrtAssets();
   return [
@@ -426,12 +474,25 @@ export async function collectWebBundleViolations(
   ];
 }
 
-export async function verifyWebBundle(options: VerifyWebBundleOptions): Promise<void> {
-  const violations = await collectWebBundleViolations(options);
+export async function verifyBundle(options: VerifyBundleOptions): Promise<void> {
+  const violations = await collectBundleViolations(options);
   if (violations.length > 0) {
     throw new Error(
-      `Web bundle verification failed (${options.distributionDir}):\n` +
+      `Bundle verification failed (${options.distributionDir}):\n` +
         violations.map((violation) => `  - ${violation}`).join('\n')
     );
   }
 }
+
+/* v8 ignore start -- CLI entry point exercised via the verify:bundle package script */
+if (isMainModule(import.meta.url)) {
+  await runMain(async () => {
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    for (const distributionDirName of requestedDistributionDirectories(process.argv.slice(2))) {
+      const options = appBundleOptions(repoRoot, 'apps/web', distributionDirName);
+      await verifyBundle(options);
+      console.log(`Verified ${options.distributionDir}`);
+    }
+  });
+}
+/* v8 ignore stop */

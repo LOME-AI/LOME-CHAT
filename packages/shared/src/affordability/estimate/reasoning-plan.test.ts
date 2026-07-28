@@ -297,6 +297,7 @@ describe('planReasoning positional wiring', () => {
         answerHeadroomTokens: 500,
         maxTokens: REASONING_BUDGET_TOKENS_BY_EFFORT.high + 500,
         wire: { effort: 'high' },
+        level: 'high',
       },
     });
   });
@@ -338,6 +339,7 @@ describe('planReasoning positional wiring', () => {
         answerHeadroomTokens: 500,
         maxTokens: REASONING_BUDGET_TOKENS_BY_EFFORT.low + 500,
         wire: { max_tokens: REASONING_BUDGET_TOKENS_BY_EFFORT.low },
+        level: 'low',
       },
     });
   });
@@ -443,6 +445,7 @@ describe('planReasoning answer headroom (strictly-greater rule)', () => {
         answerHeadroomTokens: 1,
         maxTokens: REASONING_BUDGET_TOKENS_BY_EFFORT.low + 1,
         wire: { effort: 'low' },
+        level: 'low',
       },
     });
   });
@@ -488,6 +491,7 @@ describe('planReasoningOff (hard off)', () => {
         answerHeadroomTokens: 700,
         maxTokens: 700,
         wire: { enabled: false },
+        level: 'off',
       },
     });
   });

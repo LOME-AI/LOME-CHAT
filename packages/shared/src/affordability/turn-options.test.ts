@@ -6,12 +6,17 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { modelId } from './model-id.js';
+import type { ModelId } from './model-id.js';
 import { nanoUSD } from './nano-usd.js';
 import { ratesFromPricing } from './estimate/run-ceiling.js';
 import { getTurnOptions } from './turn-options.js';
 import { EMPTY_PROMPT_BASIS } from './turn-types.js';
 import type { PriceableModel } from './priceable-model.js';
 import type { FundingSnapshot, PromptBasis, Selection } from './turn-types.js';
+
+/** A fixed instant: premium classification takes its clock as an argument. */
+const NOW_MS = 1_800_000_000_000;
 
 const spy = vi.hoisted(() => ({ record: vi.fn() }));
 
@@ -30,20 +35,22 @@ vi.mock('./turn-core.js', async (importOriginal) => {
 });
 
 const PLAIN: PriceableModel = {
-  modelId: 'vendor/plain',
+  modelId: modelId('vendor/plain'),
   inputRateNanoUsd: nanoUSD(1000n),
   outputRateNanoUsd: nanoUSD(2000n),
   contextLength: 100_000,
   providerCap: 8000,
+  releasedAtMs: 0,
   reasoning: undefined,
 };
 
 const LADDER: PriceableModel = {
-  modelId: 'vendor/ladder',
+  modelId: modelId('vendor/ladder'),
   inputRateNanoUsd: nanoUSD(100n),
   outputRateNanoUsd: nanoUSD(200n),
   contextLength: 200_000,
   providerCap: 64_000,
+  releasedAtMs: 0,
   reasoning: { supportedEfforts: ['high', 'medium', 'low'] },
 };
 
@@ -67,7 +74,10 @@ function fundingOf(spendable: bigint, held = 0n, tier: FundingSnapshot['tier'] =
 
 function selectionOf(models: readonly string[], overrides: Partial<Selection> = {}): Selection {
   return {
-    answerSources: { models: models as [string, ...string[]], smartSlot: false },
+    answerSources: {
+      models: models.map((id) => modelId(id)) as [ModelId, ...ModelId[]],
+      smartSlot: false,
+    },
     modality: 'text',
     pinned: {},
     webSearch: false,
@@ -81,7 +91,7 @@ describe('the returned pair', () => {
       fundingOf(1_000_000_000n),
       BASIS,
       selectionOf(['vendor/plain']),
-      [PLAIN]
+      { models: [PLAIN], nowMs: NOW_MS }
     );
     expect(options.affordable.sendable).toBe(true);
     expect(options.admissible.sendable).toBe(true);
@@ -89,7 +99,10 @@ describe('the returned pair', () => {
   });
 
   it('carries no hold when the turn cannot start', () => {
-    const options = getTurnOptions(fundingOf(1000n), BASIS, selectionOf(['vendor/plain']), [PLAIN]);
+    const options = getTurnOptions(fundingOf(1000n), BASIS, selectionOf(['vendor/plain']), {
+      models: [PLAIN],
+      nowMs: NOW_MS,
+    });
     expect(options.admissible.sendable).toBe(false);
     expect(options.holdNanoUsd).toBeUndefined();
   });
@@ -98,13 +111,19 @@ describe('the returned pair', () => {
 describe('one call, two evaluations', () => {
   it('runs the core exactly twice per call', () => {
     spy.record.mockClear();
-    getTurnOptions(fundingOf(1_000_000_000n), BASIS, selectionOf(['vendor/plain']), [PLAIN]);
+    getTurnOptions(fundingOf(1_000_000_000n), BASIS, selectionOf(['vendor/plain']), {
+      models: [PLAIN],
+      nowMs: NOW_MS,
+    });
     expect(spy.record).toHaveBeenCalledTimes(2);
   });
 
   it('supplies the empty basis on the affordable pass and the composed basis on the other', () => {
     spy.record.mockClear();
-    getTurnOptions(fundingOf(1_000_000_000n), BASIS, selectionOf(['vendor/plain']), [PLAIN]);
+    getTurnOptions(fundingOf(1_000_000_000n), BASIS, selectionOf(['vendor/plain']), {
+      models: [PLAIN],
+      nowMs: NOW_MS,
+    });
     const [first, second] = spy.record.mock.calls;
     expect(first?.[0]).toMatchObject({ basis: EMPTY_PROMPT_BASIS });
     expect(second?.[0]).toMatchObject({ basis: BASIS });
@@ -112,9 +131,10 @@ describe('one call, two evaluations', () => {
 
   it('funds the affordable pass hold-blind and the admissible pass hold-aware', () => {
     spy.record.mockClear();
-    getTurnOptions(fundingOf(600_000_000n, 400_000_000n), BASIS, selectionOf(['vendor/plain']), [
-      PLAIN,
-    ]);
+    getTurnOptions(fundingOf(600_000_000n, 400_000_000n), BASIS, selectionOf(['vendor/plain']), {
+      models: [PLAIN],
+      nowMs: NOW_MS,
+    });
     const [first, second] = spy.record.mock.calls;
     // effectiveBalance = spendable + held; spendable alone gates the send.
     expect(first?.[0]).toMatchObject({ fundingNanoUsd: 1_000_000_000n });
@@ -125,16 +145,16 @@ describe('one call, two evaluations', () => {
 describe('the floor is prompt-independent', () => {
   it('is byte-identical across a keystroke sweep', () => {
     const funding = fundingOf(30_000_000n);
-    const baseline = getTurnOptions(funding, BASIS, selectionOf(['vendor/ladder']), [
-      LADDER,
-      PLAIN,
-    ]).affordable;
+    const baseline = getTurnOptions(funding, BASIS, selectionOf(['vendor/ladder']), {
+      models: [LADDER, PLAIN],
+      nowMs: NOW_MS,
+    }).affordable;
     for (let typed = 0; typed <= 40; typed += 8) {
       const options = getTurnOptions(
         funding,
         { ...BASIS, inputChars: BASIS.inputChars + typed },
         selectionOf(['vendor/ladder']),
-        [LADDER, PLAIN]
+        { models: [LADDER, PLAIN], nowMs: NOW_MS }
       );
       expect(options.affordable).toEqual(baseline);
     }
@@ -142,12 +162,15 @@ describe('the floor is prompt-independent', () => {
 
   it('moves as the prompt grows on the admissible side, which is what makes the pin above meaningful', () => {
     const funding = fundingOf(30_000_000n);
-    const short = getTurnOptions(funding, BASIS, selectionOf(['vendor/ladder']), [LADDER, PLAIN]);
+    const short = getTurnOptions(funding, BASIS, selectionOf(['vendor/ladder']), {
+      models: [LADDER, PLAIN],
+      nowMs: NOW_MS,
+    });
     const long = getTurnOptions(
       funding,
       { ...BASIS, historyChars: 80_000 },
       selectionOf(['vendor/ladder']),
-      [LADDER, PLAIN]
+      { models: [LADDER, PLAIN], nowMs: NOW_MS }
     );
     expect(long.admissible).not.toEqual(short.admissible);
     expect(long.affordable).toEqual(short.affordable);
@@ -156,14 +179,15 @@ describe('the floor is prompt-independent', () => {
 
 describe('the floor is hold-blind', () => {
   it('is byte-identical however much of the balance is reserved', () => {
-    const unheld = getTurnOptions(fundingOf(30_000_000n), BASIS, selectionOf(['vendor/ladder']), [
-      LADDER,
-    ]);
+    const unheld = getTurnOptions(fundingOf(30_000_000n), BASIS, selectionOf(['vendor/ladder']), {
+      models: [LADDER],
+      nowMs: NOW_MS,
+    });
     const held = getTurnOptions(
       fundingOf(1_000_000n, 29_000_000n),
       BASIS,
       selectionOf(['vendor/ladder']),
-      [LADDER]
+      { models: [LADDER], nowMs: NOW_MS }
     );
     expect(held.affordable).toEqual(unheld.affordable);
     expect(held.admissible).not.toEqual(unheld.admissible);
@@ -172,41 +196,43 @@ describe('the floor is hold-blind', () => {
 
 describe('the floor does react to discrete selections', () => {
   it('changes when a dimension is pinned', () => {
-    const open = getTurnOptions(fundingOf(20_000_000n), BASIS, selectionOf(['vendor/ladder']), [
-      LADDER,
-    ]);
+    const open = getTurnOptions(fundingOf(20_000_000n), BASIS, selectionOf(['vendor/ladder']), {
+      models: [LADDER],
+      nowMs: NOW_MS,
+    });
     const pinned = getTurnOptions(
       fundingOf(20_000_000n),
       BASIS,
       selectionOf(['vendor/ladder'], { pinned: { effort: 'high' } }),
-      [LADDER]
+      { models: [LADDER], nowMs: NOW_MS }
     );
     expect(pinned.affordable).not.toEqual(open.affordable);
   });
 
   it('changes when a sibling is added', () => {
-    const solo = getTurnOptions(fundingOf(20_000_000n), BASIS, selectionOf(['vendor/ladder']), [
-      LADDER,
-      PLAIN,
-    ]);
+    const solo = getTurnOptions(fundingOf(20_000_000n), BASIS, selectionOf(['vendor/ladder']), {
+      models: [LADDER, PLAIN],
+      nowMs: NOW_MS,
+    });
     const pair = getTurnOptions(
       fundingOf(20_000_000n),
       BASIS,
       selectionOf(['vendor/ladder', 'vendor/plain']),
-      [LADDER, PLAIN]
+      { models: [LADDER, PLAIN], nowMs: NOW_MS }
     );
     expect(pair.affordable).not.toEqual(solo.affordable);
   });
 
   it('changes when the modality changes', () => {
-    const text = getTurnOptions(fundingOf(20_000_000n), BASIS, selectionOf(['vendor/plain']), [
-      PLAIN,
-    ]);
+    const text = getTurnOptions(fundingOf(20_000_000n), BASIS, selectionOf(['vendor/plain']), {
+      models: [PLAIN],
+      nowMs: NOW_MS,
+    });
     const image = getTurnOptions(
       fundingOf(20_000_000n),
       BASIS,
       selectionOf(['vendor/plain'], { modality: 'image' }),
-      [PLAIN]
+      { models: [PLAIN], nowMs: NOW_MS }
     );
     expect(image.affordable).not.toEqual(text.affordable);
   });
@@ -218,7 +244,7 @@ describe('the inverted output-storage ratios', () => {
       fundingOf(1_000_000_000n, 0n, 'paid'),
       BASIS,
       selectionOf(['vendor/plain']),
-      [PLAIN]
+      { models: [PLAIN], nowMs: NOW_MS }
     );
     // 250 input tokens x 1,000 + 8,000 x (2,000 + 600) + 300,000 input storage.
     expect(options.holdNanoUsd).toBe(21_350_000n);
@@ -229,7 +255,7 @@ describe('the inverted output-storage ratios', () => {
       fundingOf(1_000_000_000n, 0n, 'free'),
       BASIS,
       selectionOf(['vendor/plain']),
-      [PLAIN]
+      { models: [PLAIN], nowMs: NOW_MS }
     );
     // 500 input tokens x 1,000 + 8,000 x (2,000 + 1,200) + 300,000 input storage.
     expect(options.holdNanoUsd).toBe(26_400_000n);
@@ -240,7 +266,7 @@ describe('the inverted output-storage ratios', () => {
       fundingOf(1_000_000_000n),
       { ...BASIS, inputChars: BASIS.inputChars + 1 },
       selectionOf(['vendor/plain']),
-      [PLAIN]
+      { models: [PLAIN], nowMs: NOW_MS }
     );
     // One more character buys a whole extra input token, plus its own storage.
     expect(odd.holdNanoUsd).toBe(21_350_000n + 1000n + 300n);
@@ -253,7 +279,7 @@ describe('a trial turn never persists', () => {
       fundingOf(1_000_000_000n, 0n, 'trial'),
       BASIS,
       selectionOf(['vendor/plain']),
-      [PLAIN]
+      { models: [PLAIN], nowMs: NOW_MS }
     );
     // 500 input tokens x 1,000 + 8,000 x 2,000, and nothing else.
     expect(options.holdNanoUsd).toBe(16_500_000n);
@@ -285,7 +311,7 @@ describe('cache reads', () => {
       fundingOf(1_000_000_000n),
       BASIS,
       selectionOf(['vendor/plain']),
-      [cached]
+      { models: [cached], nowMs: NOW_MS }
     );
     // 250 input tokens at the FULL 1,000-nano rate, not the 1-nano cached rate.
     expect(options.holdNanoUsd).toBe(21_350_000n);
@@ -296,20 +322,20 @@ describe('web search', () => {
   it('reserves 10 calls x $0.005 per model, billable, on a three-model turn', () => {
     const models: readonly PriceableModel[] = [
       PLAIN,
-      { ...PLAIN, modelId: 'vendor/plain-b' },
-      { ...PLAIN, modelId: 'vendor/plain-c' },
+      { ...PLAIN, modelId: modelId('vendor/plain-b') },
+      { ...PLAIN, modelId: modelId('vendor/plain-c') },
     ];
     const withoutSearch = getTurnOptions(
       fundingOf(10_000_000_000n),
       BASIS,
       selectionOf(['vendor/plain', 'vendor/plain-b', 'vendor/plain-c']),
-      models
+      { models: models, nowMs: NOW_MS }
     );
     const withSearch = getTurnOptions(
       fundingOf(10_000_000_000n),
       BASIS,
       selectionOf(['vendor/plain', 'vendor/plain-b', 'vendor/plain-c'], { webSearch: true }),
-      models
+      { models: models, nowMs: NOW_MS }
     );
     expect((withSearch.holdNanoUsd ?? 0n) - (withoutSearch.holdNanoUsd ?? 0n)).toBe(172_500_000n);
   });

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // This app's build script runs the bundle guard on the dist it just
+    // assembled, but `$TURBO_DEFAULT$` covers only files inside the package —
+    // so a change to the guard's rules leaves the hash untouched, and a cache
+    // hit replays a dist verified under the superseded ones. The guard's
+    // sources are named file by file: a `scripts/**` glob is edited constantly
+    // for unrelated reasons and every edit would rebuild the sandbox.
+    // `tts-hosts.ts` needs no entry — no check on this app's TTS-free guard
+    // path reads it. Only `inputs` is overridden; `outputs`, `dependsOn` and
+    // `env` are inherited from the root task.
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*",
+        "../../scripts/verify-bundle.ts",
+        "../../scripts/lib/build-seam.ts",
+        "../../scripts/lib/is-main.ts",
+        "../../scripts/lib/run-main.ts"
+      ]
+    }
+  }
+}

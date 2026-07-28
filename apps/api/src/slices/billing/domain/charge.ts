@@ -1,5 +1,9 @@
 import { utcDayKey } from './period.js';
-import type { CompletionTokens, MediaGenerationFacts } from '@hushbox/shared';
+import type {
+  CompletionTokens,
+  MediaGenerationFacts,
+  ResolvedReasoningEffort,
+} from '@hushbox/shared';
 import type { SettlementTx } from '../../../lib/idempotency/index.js';
 import type { BillingModality, BillingStores, WalletType } from '../ports/index.js';
 
@@ -53,6 +57,13 @@ export interface ChargeInput {
    * generation. Absent for language generations.
    */
   readonly media?: MediaGenerationFacts;
+  /**
+   * The level this generation reasoned at, written to `llm_completions`
+   * alongside the reasoning tokens it spent (`docs/BILLING.md` §Reasoning
+   * Effort 9). Absent when the call carried no reasoning wire — distinct from
+   * `off`, which records that reasoning was deliberately disabled.
+   */
+  readonly reasoningEffort?: ResolvedReasoningEffort;
   /** DB-backed charge idempotency: unique on usage_records and ledger legs. */
   readonly idempotencyKey: string;
   readonly now: Date;
@@ -183,6 +194,20 @@ export async function chargeWithinTx(
   };
 }
 
+/**
+ * The completion row's token counts. A generation that reported no usage — an
+ * interrupted stream — counts zero rather than skipping the row: the row is
+ * what the answer's reasoning level is read back from.
+ */
+function observedTokens(tokens: CompletionTokens | undefined): CompletionTokens {
+  return {
+    inputTokens: tokens?.inputTokens ?? 0,
+    outputTokens: tokens?.outputTokens ?? 0,
+    reasoningTokens: tokens?.reasoningTokens ?? 0,
+    cachedInputTokens: tokens?.cachedInputTokens ?? 0,
+  };
+}
+
 /** Media modalities whose generations record a `media_generations` dimension row. */
 const MEDIA_MODALITIES: ReadonlySet<BillingModality> = new Set<BillingModality>([
   'image',
@@ -195,9 +220,13 @@ const MEDIA_MODALITIES: ReadonlySet<BillingModality> = new Set<BillingModality>(
  * record — `llm_completions` for a language (`text`) generation carrying token
  * counts, `media_generations` for an image/video/audio generation. Only ever
  * reached on a fresh usage insert (never on idempotent replay), so the dimension
- * row is written exactly once alongside its usage record. A generation with no
- * matching dimension facts writes nothing (embeddings, or a language partial
- * with no observed usage).
+ * row is written exactly once alongside its usage record. An embedding
+ * generation matches neither modality and writes nothing.
+ *
+ * Every `text` generation gets its completion row, including a partial that
+ * reported no usage (its counts fall to zero): the row is where the answer's
+ * reasoning level is read back from, so a text generation without one would
+ * persist content the display can never describe.
  */
 async function writeGenerationDimension(
   stores: BillingStores,
@@ -206,13 +235,10 @@ async function writeGenerationDimension(
   usageRecordId: string
 ): Promise<void> {
   if (input.modality === 'text') {
-    if (input.tokens === undefined) return;
     await stores.insertLlmCompletionWithinTx(tx, {
       usageRecordId,
-      inputTokens: input.tokens.inputTokens,
-      outputTokens: input.tokens.outputTokens,
-      reasoningTokens: input.tokens.reasoningTokens,
-      cachedInputTokens: input.tokens.cachedInputTokens,
+      ...observedTokens(input.tokens),
+      ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
     });
     return;
   }

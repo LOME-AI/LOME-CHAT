@@ -14,6 +14,7 @@ import { validationError } from '../../../lib/errors/index.js';
 import { createValueStore } from '../engine/value-store.js';
 import { InferenceError } from '../../models/index.js';
 import { createModelCallExecution } from './model-call-execution.js';
+import { TURN_DECISION_SCHEMA_NAME, TurnDecision } from './turn-decision.js';
 import type {
   FilePartMapper,
   InferenceEvent,
@@ -200,6 +201,33 @@ function makeCtx(emit?: (event: InferenceEvent) => void): NodeRunContext {
   };
 }
 
+describe('createModelCallExecution — a routing-only call', () => {
+  it('marks the provider request routing-only so it carries no base preamble', async () => {
+    const requests: InferenceRequest[] = [];
+    const exec = runExec({
+      provider: capturingProvider([finish()], requests),
+      binding: binding(),
+      schemas,
+    });
+    await exec.run(modelCallNode(), ['[HUSHBOX_CLASSIFIER] pick one'], {
+      ...makeCtx(),
+      routingOnly: true,
+    });
+    expect(requests[0]?.routingOnly).toBe(true);
+  });
+
+  it('leaves an ordinary answer call unmarked', async () => {
+    const requests: InferenceRequest[] = [];
+    const exec = runExec({
+      provider: capturingProvider([finish()], requests),
+      binding: binding(),
+      schemas,
+    });
+    await exec.run(modelCallNode(), ['hi'], makeCtx());
+    expect(requests[0]?.routingOnly).toBeUndefined();
+  });
+});
+
 function fakeTelemetry(): Telemetry {
   return {
     debug: vi.fn(),
@@ -233,6 +261,160 @@ function runExec(
 ): ReturnType<typeof createModelCallExecution> {
   return createModelCallExecution({ usdToBillableNanoUsd: providerUsdToBillableNanoUsd, ...deps });
 }
+
+/** A modelCall consuming the turn's decision envelope rather than raw text. */
+function decidingNode(params: Record<string, unknown> = {}): Extract<Node, { type: 'modelCall' }> {
+  return NodeSchema.parse({
+    id: 'answer',
+    type: 'modelCall',
+    version: 1,
+    out: 'out',
+    model: 'answer-model',
+    params,
+    inputSchema: TURN_DECISION_SCHEMA_NAME,
+    in: { node: 'decide', port: 'out' },
+  }) as Extract<Node, { type: 'modelCall' }>;
+}
+
+/** A modelCall whose effort the user fixed: the level is stamped beside its wire. */
+function pinnedEffortNode(
+  reasoningEffort: string,
+  params: Record<string, unknown>
+): Extract<Node, { type: 'modelCall' }> {
+  return NodeSchema.parse({
+    id: 'answer',
+    type: 'modelCall',
+    version: 1,
+    out: 'out',
+    model: 'answer-model',
+    params,
+    reasoningEffort,
+    inputSchema: TURN_DECISION_SCHEMA_NAME,
+    in: { node: 'decide', port: 'out' },
+  }) as Extract<Node, { type: 'modelCall' }>;
+}
+
+/** The registry a decision-consuming node validates its input through. */
+const decisionSchemas = {
+  resolveSchema: (name: string): z.ZodType | undefined =>
+    name === TURN_DECISION_SCHEMA_NAME ? TurnDecision : undefined,
+};
+
+/** A budget-native reasoning model — it offers the whole canonical ladder. */
+const REASONING_DESCRIPTOR: ModelDescriptor = {
+  ...descriptor(),
+  reasoning: { supportedEfforts: null },
+  limits: { contextLength: 200_000 },
+};
+
+describe('createModelCallExecution — the decision envelope', () => {
+  it("sends the envelope's prompt, never the envelope itself", async () => {
+    const requests: InferenceRequest[] = [];
+    const exec = runExec({
+      provider: capturingProvider([finish()], requests),
+      binding: binding(),
+      schemas: decisionSchemas,
+    });
+    const decision = { prompt: 'write me a poem', modelText: '', effort: 'high' };
+    const result = await exec.run(decidingNode(), [decision], makeCtx());
+    expect(result.isOk()).toBe(true);
+    expect(requests[0]?.inputs).toEqual([{ modality: 'text', text: 'write me a poem' }]);
+  });
+
+  it('applies the classified effort to its own call within the cap admission priced', async () => {
+    const requests: InferenceRequest[] = [];
+    const exec = runExec({
+      provider: capturingProvider([finish()], requests),
+      binding: binding({ descriptor: REASONING_DESCRIPTOR }),
+      schemas: decisionSchemas,
+    });
+    const decision = { prompt: 'p', modelText: '', effort: 'high' };
+    await exec.run(decidingNode({ maxOutputTokens: 40_000 }), [decision], makeCtx());
+    expect(requests[0]?.parameters['reasoning']).toBeDefined();
+    expect(requests[0]?.parameters['maxOutputTokens']).toBe(40_000);
+  });
+
+  it('leaves a pinned effort alone — the decision never overrides what the user fixed', async () => {
+    const requests: InferenceRequest[] = [];
+    const exec = runExec({
+      provider: capturingProvider([finish()], requests),
+      binding: binding({ descriptor: REASONING_DESCRIPTOR }),
+      schemas: decisionSchemas,
+    });
+    const pinned = { effort: 'low' };
+    const decision = { prompt: 'p', modelText: '', effort: 'max' };
+    await exec.run(
+      decidingNode({ maxOutputTokens: 40_000, reasoning: pinned }),
+      [decision],
+      makeCtx()
+    );
+    expect(requests[0]?.parameters['reasoning']).toEqual(pinned);
+  });
+
+  it('sends no reasoning wire when the model has nothing to spend a budget on', async () => {
+    const requests: InferenceRequest[] = [];
+    const exec = runExec({
+      provider: capturingProvider([finish()], requests),
+      binding: binding(),
+      schemas: decisionSchemas,
+    });
+    const decision = { prompt: 'p', modelText: '', effort: 'high' };
+    await exec.run(decidingNode({ maxOutputTokens: 40_000 }), [decision], makeCtx());
+    expect(requests[0]?.parameters).toEqual({ maxOutputTokens: 40_000 });
+  });
+
+  it('records the level the call resolved to, not the level classified', async () => {
+    const exec = runExec({
+      provider: streamOf([finish()]),
+      binding: binding({ descriptor: REASONING_DESCRIPTOR }),
+      schemas: decisionSchemas,
+    });
+    // The cap leaves no whole answer token above Max's budget, so the walk
+    // steps down; the record must name the rung that ran.
+    const decision = { prompt: 'p', modelText: '', effort: 'max' };
+    const result = await exec.run(decidingNode({ maxOutputTokens: 40_000 }), [decision], makeCtx());
+    expect(result._unsafeUnwrap().billing?.reasoningEffort).toBe('high');
+  });
+
+  it('records the level the user pinned, on a call no decision could rewrite', async () => {
+    const exec = runExec({
+      provider: streamOf([finish()]),
+      binding: binding({ descriptor: REASONING_DESCRIPTOR }),
+      schemas: decisionSchemas,
+    });
+    const decision = { prompt: 'p', modelText: '', effort: 'max' };
+    const node = pinnedEffortNode('low', { maxOutputTokens: 40_000, reasoning: { effort: 'low' } });
+    const result = await exec.run(node, [decision], makeCtx());
+    expect(result._unsafeUnwrap().billing?.reasoningEffort).toBe('low');
+  });
+
+  it('records no level on a reasoning-capable call nobody asked to reason', async () => {
+    // The model could reason and the axis has a declared fallback, but this call
+    // was neither pinned nor classified — so no wire was sent, and "reasoning
+    // does not apply" must not be recorded as the fallback rung.
+    const exec = runExec({
+      provider: streamOf([finish()]),
+      binding: binding({ descriptor: REASONING_DESCRIPTOR }),
+      schemas,
+    });
+    const result = await exec.run(
+      modelCallNodeWithParams({ maxOutputTokens: 40_000 }),
+      ['p'],
+      makeCtx()
+    );
+    expect(result._unsafeUnwrap().billing?.reasoningEffort).toBeUndefined();
+  });
+
+  it('fails closed on a malformed value where the envelope was declared', async () => {
+    const exec = runExec({
+      provider: streamOf([finish()]),
+      binding: binding(),
+      schemas: decisionSchemas,
+    });
+    const result = await exec.run(decidingNode(), [{ prompt: 'p', effort: 'turbo' }], makeCtx());
+    expect(result.isErr()).toBe(true);
+  });
+});
 
 describe('createModelCallExecution', () => {
   it('is a streaming execution', () => {

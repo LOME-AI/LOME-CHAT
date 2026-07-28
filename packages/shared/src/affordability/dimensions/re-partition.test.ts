@@ -21,6 +21,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { MINIMUM_OUTPUT_TOKENS } from '../constants.js';
+import { modelId } from '../model-id.js';
 import { nanoUSD } from '../nano-usd.js';
 import { EFFORT_DIMENSION, EFFORT_OPTION_IDS, maxReasoningBudgetTokens } from './effort.js';
 import {
@@ -35,11 +36,12 @@ const HELD_CEILING_TOKENS = 48_000;
 
 function modelFor(reasoning?: PriceableModel['reasoning'], caps = 200_000): PriceableModel {
   return {
-    modelId: `vendor/${JSON.stringify(reasoning ?? null)}-${String(caps)}`,
+    modelId: modelId(`vendor/${JSON.stringify(reasoning ?? null)}-${String(caps)}`),
     inputRateNanoUsd: nanoUSD(1000n),
     outputRateNanoUsd: nanoUSD(2000n),
     contextLength: caps,
     providerCap: caps,
+    releasedAtMs: 0,
     reasoning,
   };
 }

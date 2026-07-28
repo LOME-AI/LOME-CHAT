@@ -32,13 +32,10 @@
  */
 
 import { MINIMUM_OUTPUT_TOKENS } from '../constants.js';
+import { modelId } from '../model-id.js';
 import { nanoUSD } from '../nano-usd.js';
 import { maxCallCostNanoUsd, outlierModelIds } from '../turn-arithmetic.js';
-import {
-  estimateTokensForTier,
-  outputCharsPerTokenForTier,
-  outputStorageRatePerTokenNanoUsd,
-} from './pre-adapters.js';
+import { estimateTokensForTier, outputStorageRatePerTokenNanoUsd } from './pre-adapters.js';
 import { classifierLineItems, classifierReserveChars } from './classifier-line-item.js';
 import { estimateRunCeilingNanoUsd, ratesFromPricing } from './run-ceiling.js';
 import { STORAGE_COST_PER_CHARACTER_NANO } from './storage-rate.js';
@@ -49,36 +46,30 @@ import type { Pricing } from '../model-descriptor.js';
 
 /**
  * The Smart-Model classifier pre-reserve as shared-core {@link NanoLineItem}s:
- * the billable provider `classifier-tokens` item and the pass-through
- * `classifier-storage` item, priced through the shared
+ * the billable provider `classifier-tokens` item, priced through the shared
  * `classifierLineItems` so the reserve's cost formula lives ONCE. The
  * classifier's full truncated-context budget plus the exact prompt overhead
  * (rendered against the candidate list — an upper bound on what the classifier
  * sees once affordability shrinks the list) is the input, a fixed output cap the
- * output, at the classifier's rates; `outputCharsPerToken` (tier-dependent) sizes
- * the storage leg. `undefined` when the classifier lacks a plain per-token rate.
- * Shared with admission (which takes the provider item as-is and adds storage
- * only when the turn persists) and the trial derivation.
+ * output, at the classifier's rates. `undefined` when the classifier lacks a
+ * plain per-token rate. Shared with admission and the trial derivation, and it
+ * carries no storage on any tier — the classifier's prompt and answer never rest.
  */
 export function classifierReserveLineItems(
   classifier: { readonly pricing: Pricing },
   // Only id + description are read (the classifier prompt line), so this accepts
   // the estimator's stamped candidate list as well as full descriptors.
-  textCatalog: readonly { readonly id: string; readonly description?: string | undefined }[],
-  outputCharsPerToken: number
+  textCatalog: readonly { readonly id: string; readonly description?: string | undefined }[]
 ): readonly NanoLineItem[] | undefined {
-  const reserveChars = classifierReserveChars(
-    textCatalog.map((entry) => ({ id: entry.id, description: entry.description ?? '' }))
-  );
+  const reserveChars = classifierReserveChars(textCatalog.map((entry) => ({ id: entry.id })));
   const stage: ClassifierStage = {
     pricing: ratesFromPricing(classifier.pricing),
     // Conservative reserve (2 chars/token, deliberate overestimate) via the
     // shared helper: the classifier reserve is tier-independent on its input leg
     // and always uses the conservative ratio.
     inputTokens: BigInt(estimateTokensForTier('trial', reserveChars)),
-    inputChars: reserveChars,
   };
-  const items = classifierLineItems(stage, outputCharsPerToken);
+  const items = classifierLineItems(stage);
   return items.ok ? items.value : undefined;
 }
 
@@ -168,7 +159,7 @@ function priceableOf(candidate: SmartModelPoolCandidate): PriceableModel | undef
   if (typeof input !== 'bigint' || typeof output !== 'bigint') return undefined;
   if (candidate.contextLength === undefined) return undefined;
   return {
-    modelId: candidate.id,
+    modelId: modelId(candidate.id),
     inputRateNanoUsd: nanoUSD(input),
     outputRateNanoUsd: nanoUSD(output),
     contextLength: candidate.contextLength,
@@ -176,6 +167,11 @@ function priceableOf(candidate: SmartModelPoolCandidate): PriceableModel | undef
     // Reasoning plays no part in `maxCallCost`: the ceiling it prices is a
     // physical bound, and reasoning tokens are output tokens inside it.
     reasoning: undefined,
+    // The epoch stands in for a release date a pool candidate does not carry.
+    // This projection exists only to price `maxCallCost`, and premium
+    // classification is never run against it — a classification here would grade
+    // a date this shape cannot supply.
+    releasedAtMs: 0,
   };
 }
 
@@ -226,11 +222,7 @@ function classifierWorstCaseNanoUsd(
   classifier: { readonly pricing: Pricing },
   textCatalog: readonly SmartModelCandidateId[]
 ): bigint | undefined {
-  const items = classifierReserveLineItems(
-    classifier,
-    textCatalog,
-    outputCharsPerTokenForTier('trial')
-  );
+  const items = classifierReserveLineItems(classifier, textCatalog);
   return items?.find((item) => item.kind === 'provider')?.fixedNano;
 }
 
@@ -378,18 +370,12 @@ export function admitSmartModel(
   const pool = priceSmartModelPool(candidates, promptInputTokens, storage);
   if (pool === null) return null;
   const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-  const classifier = byId.get(pool.classifierModelId);
   // The fixed reserve every candidate's cap is sized against: the billable
-  // classifier provider cost, its pass-through storage, and the one-off input
-  // (prompt) storage — all storage-inclusive when the turn persists, so the cap
-  // math matches what the admission estimator actually holds (no storage-edge
-  // affordable-then-402, the free-tier keystone).
-  /* v8 ignore next 2 -- classifierModelId is sorted[0].id of `candidates`, so
-     the byId lookup cannot miss; the ternary only narrows undefined for the compiler */
-  const classifierStorage =
-    classifier === undefined ? 0n : classifierStorageNanoUsd(classifier, candidates, storage);
-  const fixedReserve =
-    pool.classifierWorstCaseNanoUsd + classifierStorage + inputStorageNanoUsd(storage);
+  // classifier provider cost plus the one-off input (prompt) storage, which the
+  // turn does pay when it persists — so the cap math matches what the admission
+  // estimator holds (no storage-edge affordable-then-402, the free-tier
+  // keystone). The classifier itself contributes no storage on any tier.
+  const fixedReserve = pool.classifierWorstCaseNanoUsd + inputStorageNanoUsd(storage);
   const context: CapContext = {
     promptInputTokens,
     outputStoragePerToken: outputStoragePerTokenNanoUsd(storage),
@@ -481,16 +467,10 @@ export function smartModelMinimumRequiredNanoUsd(
   promptInputTokens?: number,
   storage?: SmartModelStorageContext
 ): bigint | null {
-  const pool = priceSmartModelPool(candidates, promptInputTokens);
+  const pool = priceSmartModelPool(candidates, promptInputTokens, storage);
   if (pool === null) return null;
   const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-  const classifier = byId.get(pool.classifierModelId);
-  /* v8 ignore next 2 -- classifierModelId is sorted[0].id of `candidates`, so
-     the byId lookup cannot miss; the ternary only narrows undefined for the compiler */
-  const classifierStorage =
-    classifier === undefined ? 0n : classifierStorageNanoUsd(classifier, candidates, storage);
-  const fixedReserve =
-    pool.classifierWorstCaseNanoUsd + classifierStorage + inputStorageNanoUsd(storage);
+  const fixedReserve = pool.classifierWorstCaseNanoUsd + inputStorageNanoUsd(storage);
   const outputStoragePerToken = outputStoragePerTokenNanoUsd(storage);
   let minimum: bigint | undefined;
   for (const priced of pool.priced) {
@@ -514,19 +494,6 @@ function outputStoragePerTokenNanoUsd(storage: SmartModelStorageContext | undefi
 /** The one-off prompt input-storage cost (0 when the turn does not persist). */
 function inputStorageNanoUsd(storage: SmartModelStorageContext | undefined): bigint {
   return storage === undefined ? 0n : BigInt(storage.inputChars) * STORAGE_COST_PER_CHARACTER_NANO;
-}
-
-/** The classifier's pass-through storage line (0 when the turn does not persist). */
-function classifierStorageNanoUsd(
-  classifier: SmartModelPoolCandidate,
-  candidates: readonly SmartModelPoolCandidate[],
-  storage: SmartModelStorageContext | undefined
-): bigint {
-  if (storage === undefined) return 0n;
-  const items = classifierReserveLineItems(classifier, candidates, storage.outputCharsPerToken);
-  /* v8 ignore next 2 -- a non-null pool guarantees a priceable classifier, and
-     classifierLineItems always emits a storage item; `?? 0n` narrows only */
-  return items?.find((item) => item.kind === 'storage')?.fixedNano ?? 0n;
 }
 
 /** One candidate's balance-independent cost basis: billable input cost at the

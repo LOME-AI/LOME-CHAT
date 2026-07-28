@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { newsletterSubscribers, sharedMessages, users } from '@hushbox/db';
-import { ERROR_CODES, NewsletterStatus } from '@hushbox/shared';
+import { ERROR_CODES, NewsletterStatus, notificationCopyForCategory } from '@hushbox/shared';
 import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manifest.js';
 import { CF_ACCESS_JWT_HEADER, mintDevAdminToken } from '../../middleware/pipeline-admin.js';
 import { setVersionOverride } from '../../middleware/version-override.js';
@@ -740,18 +740,24 @@ export function createDevManifest() {
       // and subscription endpoints are credentials and are deliberately not
       // exposed — a recipient shows as its platform and owner only.
       .get('/push', routeClass('dev-only'), (c) => {
-        const sends = listCapturedPushes().map(({ id, message }) => ({
-          id,
-          category: message.data?.['category'] ?? null,
-          tag: message.collapseKey ?? null,
-          title: message.title,
-          body: message.body,
-          payload: message.data ?? {},
-          recipients: message.recipients.map((recipient) => ({
-            platform: recipient.platform,
-            userId: recipient.userId,
-          })),
-        }));
+        const sends = listCapturedPushes().map(({ id, message }) => {
+          // The viewer shows the words a device would show, which no longer
+          // ride the message: it resolves them from the category through the
+          // same shared table the transports and the service worker use.
+          const copy = notificationCopyForCategory(message.payload.category);
+          return {
+            id,
+            category: message.payload.category,
+            tag: message.collapseKey ?? null,
+            title: copy.title,
+            body: copy.body,
+            payload: message.payload,
+            recipients: message.recipients.map((recipient) => ({
+              platform: recipient.platform,
+              userId: recipient.userId,
+            })),
+          };
+        });
         return c.json({ sends });
       }),
   });

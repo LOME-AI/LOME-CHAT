@@ -8,6 +8,7 @@ import {
   optionalTag,
   PolicyHooks,
   textTag,
+  TURN_DECISION_REDUCER,
 } from '@hushbox/shared';
 import { err, ok } from '../../../lib/result/index.js';
 import { forbiddenError, notFoundError, validationError } from '../../../lib/errors/index.js';
@@ -227,6 +228,7 @@ function smartModelNodeDefinition(): WorkflowDefinition {
     id: 'answer',
     classifierModelId: 'answer-model',
     candidates: [{ id: 'answer-model', description: 'cheap' }, { id: 'hard-model' }],
+    accepts: textTag(),
     in: inputs.ports.prompt,
   });
   return buildWorkflow({
@@ -351,6 +353,36 @@ function chainDefinition(): WorkflowDefinition {
     hooks: HOOKS,
     inputs,
     nodes: [first, second, third],
+    registries: registries(),
+  })._unsafeUnwrap().definition;
+}
+
+/**
+ * Two levels, the first CONSUMED by the second: the first node bills but is no
+ * sink, so it surfaces no run output of its own — the shape a turn-level
+ * classifier has.
+ */
+function consumedFirstDefinition(): WorkflowDefinition {
+  const inputs = workflowInputs({ prompt: textTag() });
+  const first = modelCall({
+    id: 'first',
+    model: 'first-model',
+    accepts: textTag(),
+    in: inputs.ports.prompt,
+    produces: textTag(),
+  });
+  const second = modelCall({
+    id: 'second',
+    model: 'second-model',
+    accepts: textTag(),
+    in: first.out,
+    produces: textTag(),
+  });
+  return buildWorkflow({
+    deadlineClass: 'text',
+    hooks: HOOKS,
+    inputs,
+    nodes: [first, second],
     registries: registries(),
   })._unsafeUnwrap().definition;
 }
@@ -743,6 +775,335 @@ const ROUTE_PREDICATES = {
   routeByLabel: (input: unknown): string =>
     (input as { label?: string } | undefined)?.label ?? 'fallback',
 };
+
+/**
+ * classifier -> fanIn -> answer: the decision-envelope shape. The classifier's
+ * output is consumed rather than displayed; the answer's is displayed.
+ */
+function consumedProducerDefinition(): WorkflowDefinition {
+  const inputs = workflowInputs({ prompt: textTag() });
+  const classify = modelCall({
+    id: 'classify',
+    model: 'answer-model',
+    accepts: textTag(),
+    in: inputs.ports.prompt,
+    produces: textTag(),
+  });
+  const decide = fanIn({
+    id: 'decide',
+    reducer: 'classifyText',
+    accepts: [textTag()] as const,
+    ins: [classify.out],
+    produces: jsonTag(CLASSIFICATION),
+  });
+  const answer = modelCall({
+    id: 'answer',
+    model: 'answer-model',
+    accepts: jsonTag(CLASSIFICATION),
+    in: decide.out,
+    produces: textTag(),
+  });
+  return buildWorkflow({
+    deadlineClass: 'text',
+    hooks: HOOKS,
+    inputs,
+    nodes: [classify, decide, answer],
+    registries: registries(),
+  })._unsafeUnwrap().definition;
+}
+
+/**
+ * The shipped decision shape: an ordinary `modelCall` classifies and the
+ * REGISTERED decision reducer reads its answer at the optional-answer position,
+ * which is what makes that call derivably the turn's classifier.
+ */
+function turnClassifierDefinition(): WorkflowDefinition {
+  const inputs = workflowInputs({ prompt: textTag(), classifierPrompt: textTag() });
+  const classify = modelCall({
+    id: 'classify',
+    model: 'first-model',
+    accepts: textTag(),
+    in: inputs.ports.classifierPrompt,
+    produces: textTag(),
+    optional: true,
+    onError: 'skip',
+  });
+  const decide = fanIn({
+    id: 'decide',
+    reducer: TURN_DECISION_REDUCER,
+    accepts: [textTag(), optionalTag(textTag())] as const,
+    ins: [inputs.ports.prompt, classify.out],
+    produces: jsonTag(CLASSIFICATION),
+  });
+  const answer = modelCall({
+    id: 'answer',
+    model: 'answer-model',
+    accepts: jsonTag(CLASSIFICATION),
+    in: decide.out,
+    produces: textTag(),
+  });
+  return buildWorkflow({
+    deadlineClass: 'text',
+    hooks: HOOKS,
+    inputs,
+    nodes: [classify, decide, answer],
+    registries: registries(),
+  })._unsafeUnwrap().definition;
+}
+
+describe('createWorkflowExecutor — the turn classifier is handed no client context', () => {
+  const HISTORY: readonly ChatHistoryMessage[] = [
+    { role: 'user', content: 'first question' },
+    { role: 'assistant', content: 'first answer' },
+  ];
+
+  interface SeenContext {
+    readonly history: readonly ChatHistoryMessage[] | undefined;
+    readonly customInstructions: string | undefined;
+  }
+
+  function runWithClientContext(seen: Map<string, SeenContext>): ReturnType<typeof startRun> {
+    const capture = (id: string): FakeExecutionOptions['behaviors'][string] => ({
+      run: (_input, ctx) => {
+        seen.set(id, {
+          history: ctx.history,
+          customInstructions: ctx.customInstructions,
+        });
+        return Promise.resolve(ok({ value: 'model: answer-model', costNanoUsd: 0n }));
+      },
+    });
+    return startRun({
+      definition: turnClassifierDefinition(),
+      behaviors: { 'first-model': capture('classify'), 'answer-model': capture('answer') },
+      reducers: { [TURN_DECISION_REDUCER]: (inputs) => ({ label: String(inputs[0]) }) },
+      inputs: { prompt: textInput('hi'), classifierPrompt: textInput('[CLASSIFY] hi') },
+      history: HISTORY,
+      customInstructions: 'answer only in French',
+    });
+  }
+
+  it('withholds the conversation history from the classifier call', async () => {
+    const seen = new Map<string, SeenContext>();
+    await expect(runWithClientContext(seen).done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(seen.get('classify')?.history).toBeUndefined();
+  });
+
+  it('withholds the custom instructions from the classifier call', async () => {
+    const seen = new Map<string, SeenContext>();
+    await expect(runWithClientContext(seen).done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(seen.get('classify')?.customInstructions).toBeUndefined();
+  });
+
+  it('still hands both to the answering sibling that consumes the decision', async () => {
+    const seen = new Map<string, SeenContext>();
+    await expect(runWithClientContext(seen).done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(seen.get('answer')).toEqual({
+      history: HISTORY,
+      customInstructions: 'answer only in French',
+    });
+  });
+});
+
+/**
+ * The shipped multi-model `auto` shape at its real width: one classifier, the
+ * decision reducer, and THREE sibling answers that each read the decision.
+ */
+function threeSiblingClassifierDefinition(): WorkflowDefinition {
+  const inputs = workflowInputs({ prompt: textTag(), classifierPrompt: textTag() });
+  const classify = modelCall({
+    id: 'classify',
+    model: 'first-model',
+    accepts: textTag(),
+    in: inputs.ports.classifierPrompt,
+    produces: textTag(),
+    optional: true,
+    onError: 'skip',
+  });
+  const decide = fanIn({
+    id: 'decide',
+    reducer: TURN_DECISION_REDUCER,
+    accepts: [textTag(), optionalTag(textTag())] as const,
+    ins: [inputs.ports.prompt, classify.out],
+    produces: jsonTag(CLASSIFICATION),
+  });
+  const siblings = ['answer-model', 'hard-model', 'second-model'].map((model, index) =>
+    modelCall({
+      id: `answer${String(index)}`,
+      model,
+      accepts: jsonTag(CLASSIFICATION),
+      in: decide.out,
+      produces: textTag(),
+      optional: true,
+      onError: 'skip',
+    })
+  );
+  return buildWorkflow({
+    deadlineClass: 'text',
+    hooks: HOOKS,
+    inputs,
+    nodes: [classify, decide, ...siblings],
+    registries: registries(),
+  })._unsafeUnwrap().definition;
+}
+
+describe('createWorkflowExecutor — a classified multi-model turn bills its successful subset', () => {
+  /** One sibling's outcome, keyed by the model its node runs. */
+  type Outcome = 'succeeds' | 'fails';
+
+  function threeSiblings(
+    outcomes: Readonly<Record<string, Outcome>>,
+    classifier: FakeExecutionOptions['behaviors'][string] = respondWith('effort: Low')
+  ): ReturnType<typeof startRun> {
+    const behaviors: Record<string, FakeBehavior> = { 'first-model': classifier };
+    for (const [model, outcome] of Object.entries(outcomes)) {
+      behaviors[model] = outcome === 'fails' ? failWith() : billingFor(model);
+    }
+    return startRun({
+      definition: threeSiblingClassifierDefinition(),
+      behaviors,
+      reducers: { [TURN_DECISION_REDUCER]: (inputs) => ({ label: String(inputs[0]) }) },
+      inputs: { prompt: textInput('hi'), classifierPrompt: textInput('[CLASSIFY] hi') },
+    });
+  }
+
+  const ALL_THREE = {
+    'answer-model': 'succeeds',
+    'hard-model': 'succeeds',
+    'second-model': 'succeeds',
+  } as const;
+
+  it('bills the successful subset when one sibling fails', async () => {
+    const run = threeSiblings({ ...ALL_THREE, 'hard-model': 'fails' });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(run.settlements[0]?.charges.map((charge) => charge.modelId)).toEqual([
+      'answer-model',
+      'second-model',
+    ]);
+  });
+
+  it('persists and bills nothing when every sibling fails', async () => {
+    const run = threeSiblings({
+      'answer-model': 'fails',
+      'hard-model': 'fails',
+      'second-model': 'fails',
+    });
+    await run.done;
+    expect(run.settlements[0]?.charges ?? []).toEqual([]);
+    expect(Object.keys(run.settlements[0]?.outputs ?? {})).toEqual([]);
+  });
+
+  it('makes the LAST successful sibling the fork tip', async () => {
+    // Settlement persists sink outputs in declaration order and forks off the
+    // last, so the ORDER of this record is the fork tip, not an incidental
+    // detail of the walk.
+    const run = threeSiblings({ ...ALL_THREE, 'second-model': 'fails' });
+    await run.done;
+    expect(Object.keys(run.settlements[0]?.outputs ?? {})).toEqual(['answer0', 'answer1']);
+  });
+
+  it('settles the partial when the user stops a classified turn mid-flight', async () => {
+    // The third outcome §Multi-Model 4 names, and the one carve-out from
+    // saved ⟺ billed: a user stop bills what was consumed.
+    const hanging = streamThenHang('half an answer', 5n, {
+      modelId: 'second-model',
+      providerName: 'p',
+      modality: 'text',
+    });
+    const run = startRun({
+      definition: threeSiblingClassifierDefinition(),
+      behaviors: {
+        'first-model': respondWith('effort: Low'),
+        'answer-model': billingFor('answer-model'),
+        'hard-model': billingFor('hard-model'),
+        'second-model': hanging,
+      },
+      reducers: { [TURN_DECISION_REDUCER]: (inputs) => ({ label: String(inputs[0]) }) },
+      inputs: { prompt: textInput('hi'), classifierPrompt: textInput('[CLASSIFY] hi') },
+    });
+    await hanging.hanging;
+    run.stop('user-stop');
+    await run.done;
+    expect(run.settlements[0]?.charges.map((charge) => charge.modelId)).toContain('answer-model');
+  });
+
+  it('keeps the classifier out of the persisted set — it has no content of its own', async () => {
+    const run = threeSiblings(ALL_THREE);
+    await run.done;
+    expect(Object.keys(run.settlements[0]?.outputs ?? {})).toEqual([
+      'answer0',
+      'answer1',
+      'answer2',
+    ]);
+  });
+});
+
+describe('createWorkflowExecutor — a failing classifier degrades, it does not kill the turn', () => {
+  /** The three sibling ids the classifying multi-model shape declares. */
+  function threeSiblingRun(classifier: FakeExecutionOptions['behaviors'][string]): {
+    readonly run: ReturnType<typeof startRun>;
+    readonly answered: string[];
+  } {
+    const answered: string[] = [];
+    const run = startRun({
+      definition: turnClassifierDefinition(),
+      behaviors: {
+        'first-model': classifier,
+        'answer-model': {
+          run: (input) => {
+            answered.push(String((input[0] as { label?: string } | undefined)?.label));
+            return Promise.resolve(
+              ok({
+                value: 'an answer',
+                costNanoUsd: 7n,
+                billing: { modelId: 'answer-model', providerName: 'p', modality: 'text' as const },
+              })
+            );
+          },
+        },
+      },
+      reducers: { [TURN_DECISION_REDUCER]: (inputs) => ({ label: String(inputs[0]) }) },
+      inputs: { prompt: textInput('hi'), classifierPrompt: textInput('[CLASSIFY] hi') },
+    });
+    return { run, answered };
+  }
+
+  it('answers the turn when the classifier call fails outright', async () => {
+    // The old internal path fell back to the cheapest candidate with no charge;
+    // wired as an ordinary node, only `optional` + `onError: skip` keeps that
+    // property — without them a routing hiccup is a dead paid turn.
+    const { run, answered } = threeSiblingRun(failWith());
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(answered).toHaveLength(1);
+  });
+
+  it('bills only the sibling on a turn whose classifier failed', async () => {
+    const { run } = threeSiblingRun(failWith());
+    await run.done;
+    expect(run.settlements[0]?.charges.map((charge) => charge.billableCostNanoUsd)).toEqual([7n]);
+  });
+
+  it("reaches the sibling with the reducer's fallback rather than no decision at all", async () => {
+    // The skip leaves the reducer an ABSENT answer, which is the typed failure
+    // path its optional second input exists for — so the sibling still receives
+    // a decision, and the declared fallback is what fills it.
+    const { run, answered } = threeSiblingRun(failWith());
+    await run.done;
+    expect(answered[0]).not.toBe('undefined');
+  });
+});
+
+describe('createWorkflowExecutor — the streaming disposition', () => {
+  it('withholds the stream from a node whose output is consumed rather than displayed', async () => {
+    const run = startRun({
+      definition: consumedProducerDefinition(),
+      behaviors: { 'answer-model': streamingEcho() },
+      reducers: { classifyText: (inputs) => ({ label: String(inputs[0]) }) },
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    const streamed = new Set(run.emitted.map((event) => event.streamId.split('#')[0]));
+    expect(streamed).toEqual(new Set(['answer']));
+  });
+});
 
 describe('createWorkflowExecutor — the streaming chat turn', () => {
   it('streams the terminal node through the run emit seam', async () => {
@@ -1345,6 +1706,37 @@ describe('createWorkflowExecutor — deadline and stop', () => {
     expect(run.settlements).toEqual([]);
   });
 
+  it("carries an earlier level's consumed charge into a stopped partial's settlement", async () => {
+    // The shape a turn-level classifier creates: an earlier node bills, its value
+    // is CONSUMED (so it is no sink and surfaces no output), and a later node is
+    // stopped mid-stream. The stop settles its billable partial, and the earlier
+    // charge must ride it — otherwise that spend is absorbed. Which content the
+    // classifier-shaped charge then anchors to is the settlement's rule.
+    const behavior = streamThenHang('partial answer', 7n, {
+      modelId: 'second-model',
+      providerName: 'p',
+      modality: 'text',
+    });
+    const run = startRun({
+      definition: consumedFirstDefinition(),
+      behaviors: {
+        'first-model': streamingEcho(3n, {
+          modelId: 'first-model',
+          providerName: 'p',
+          modality: 'text',
+        }),
+        'second-model': behavior,
+      },
+    });
+    await behavior.hanging;
+    run.stop('user-stop');
+    await expect(run.done).resolves.toEqual({ outcome: 'stopped' });
+    const settlement = run.settlements[0];
+    expect(settlement?.charges.map((charge) => charge.key)).toEqual(['first', 'second']);
+    // Only the stopped node's value is a sink; the consumed one surfaces nothing.
+    expect(Object.keys(settlement?.outputs ?? {})).toEqual(['second']);
+  });
+
   it('settles the streamed partial on an explicit user stop', async () => {
     const behavior = streamThenHang('partial answer');
     const run = startRun({
@@ -1802,6 +2194,76 @@ describe('createWorkflowExecutor — concurrent multi-model siblings', () => {
         isEstimated: false,
       },
     ]);
+  });
+
+  it('bills nothing for a sibling whose value failed output validation, while a committed sibling bills', async () => {
+    // The provider call SUCCEEDED and reported a cost, but the value fails the
+    // runtime `zodFor(out)` gate (a number where the declared port is text).
+    // Siblings are declared `onError: 'skip'`, so the run still succeeds — and
+    // that is what makes an uncommitted generation's charge reachable at
+    // settlement. It must be absorbed, not billed: BILLING.md §Multi-Model 4
+    // bills the successful subset, and a validation-failed node is not in it.
+    const run = startRun({
+      definition: multiModelDefinition(['first-model', 'second-model']),
+      behaviors: {
+        'first-model': respondWith(42, 5000n, {
+          modelId: 'first-model',
+          providerName: 'p',
+          modality: 'text',
+        }),
+        'second-model': respondWith('real answer', 7n, {
+          modelId: 'second-model',
+          providerName: 'p',
+          modality: 'text',
+        }),
+      },
+    });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    const settlement = run.settlements[0];
+    // One charge, the committed sibling's. The uncommitted one is absorbed.
+    expect(settlement?.charges.map((charge) => charge.key)).toEqual(['m1']);
+    expect(settlement?.charges[0]?.billableCostNanoUsd).toBe(7n);
+    expect(Object.keys(settlement?.outputs ?? {})).toEqual(['m1']);
+  });
+
+  it("counts an uncommitted generation's spend toward the circuit even though it bills nothing", async () => {
+    // The asymmetry that makes absorbed-but-counted safe, and the reason it is a
+    // TEST rather than a comment: billing is gated on the commit, the ACCRUAL is
+    // not. Moving the accrual below the commit to match would be a silent change
+    // — a model returning malformed output would then spend real provider money
+    // on every attempt while contributing nothing to the circuit that exists to
+    // stop exactly that, so the platform's exposure would stop being bounded by
+    // `hold × K`.
+    //
+    // `m0` succeeds at the provider and spends 5000n, but its value (a number
+    // under a text port) never commits, so it bills nothing. That 5000n alone
+    // must still cross the 500n circuit limit.
+    const run = startRun({
+      definition: multiModelDefinition(['first-model', 'second-model']),
+      behaviors: {
+        'first-model': respondWith(42, 5000n, {
+          modelId: 'first-model',
+          providerName: 'p',
+          modality: 'text',
+        }),
+        'second-model': respondWith('real answer', 0n, {
+          modelId: 'second-model',
+          providerName: 'p',
+          modality: 'text',
+        }),
+      },
+      decision: grantWithLimit(500n),
+    });
+    await expect(run.done).resolves.toEqual({
+      outcome: 'failed',
+      code: ERROR_CODES.INSUFFICIENT_ADMISSION,
+    });
+    // The absorbed figure names the uncommitted generation's cost exactly, which
+    // is the direct assertion that it accrued: nothing else in this run spent.
+    const [error] = vi.mocked(run.telemetry.captureError).mock.calls[0]!;
+    expect(error).toMatchObject({ absorbedNanoUsd: '5000' });
+    // A trip settles nothing, so the committed sibling is not billed either.
+    expect(run.settlements).toEqual([]);
   });
 
   it('aborts the in-flight siblings when one trips the cost circuit mid-node', async () => {

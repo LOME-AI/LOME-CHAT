@@ -14,10 +14,14 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { modelId } from './model-id.js';
 import { nanoUSD } from './nano-usd.js';
 import { getTurnOptions } from './turn-options.js';
 import type { PriceableModel } from './priceable-model.js';
 import type { FundingSnapshot, PromptBasis, Selection } from './turn-types.js';
+
+/** A fixed instant: premium classification takes its clock as an argument. */
+const NOW_MS = 1_800_000_000_000;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -84,11 +88,12 @@ describe('the scan can fail', () => {
 });
 
 const MODEL: PriceableModel = {
-  modelId: 'vendor/model',
+  modelId: modelId('vendor/model'),
   inputRateNanoUsd: nanoUSD(500n),
   outputRateNanoUsd: nanoUSD(1500n),
   contextLength: 120_000,
   providerCap: 16_000,
+  releasedAtMs: 0,
   reasoning: { supportedEfforts: ['high', 'medium', 'low'] },
 };
 
@@ -108,7 +113,7 @@ const BASIS: PromptBasis = {
 };
 
 const SELECTION: Selection = {
-  answerSources: { models: ['vendor/model'], smartSlot: true },
+  answerSources: { models: [modelId('vendor/model')], smartSlot: true },
   modality: 'text',
   pinned: {},
   webSearch: true,
@@ -116,8 +121,8 @@ const SELECTION: Selection = {
 
 describe('behavioural purity', () => {
   it('returns deep-equal output for identical input', () => {
-    const first = getTurnOptions(FUNDING, BASIS, SELECTION, [MODEL]);
-    const second = getTurnOptions(FUNDING, BASIS, SELECTION, [MODEL]);
+    const first = getTurnOptions(FUNDING, BASIS, SELECTION, { models: [MODEL], nowMs: NOW_MS });
+    const second = getTurnOptions(FUNDING, BASIS, SELECTION, { models: [MODEL], nowMs: NOW_MS });
     expect(second).toEqual(first);
   });
 
@@ -126,7 +131,7 @@ describe('behavioural purity', () => {
     const basis = structuredClone(BASIS);
     const selection = structuredClone(SELECTION);
     const catalog = [structuredClone(MODEL)];
-    getTurnOptions(funding, basis, selection, catalog);
+    getTurnOptions(funding, basis, selection, { models: catalog, nowMs: NOW_MS });
     expect(funding).toEqual(FUNDING);
     expect(basis).toEqual(BASIS);
     expect(selection).toEqual(SELECTION);

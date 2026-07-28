@@ -1,18 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  CLASSIFIER_EFFORT_DIMENSION_MARKER,
-  CLASSIFIER_MODEL_DIMENSION_MARKER,
-  CLASSIFIER_OUTPUT_TOKEN_CAP,
-  CLASSIFIER_SYSTEM_PROMPT_MARKER,
-  Node as NodeSchema,
-  serializeReasoningText,
-  textTag,
-} from '@hushbox/shared';
+import { Node as NodeSchema, serializeReasoningText, textTag } from '@hushbox/shared';
 import { REASONING_BUDGET_TOKENS_BY_EFFORT } from '@hushbox/shared/affordability/estimate/reasoning-plan';
 import { providerUsdToBillableNanoUsd } from '../../billing/index.js';
 import { ok } from '../../../lib/result/index.js';
 import { InferenceError } from '../../models/index.js';
 import { createSmartModelExecution } from './smart-model-execution.js';
+import { TURN_DECISION_SCHEMA_NAME, TurnDecision } from './turn-decision.js';
 import type {
   InferenceEvent,
   InferenceRequest,
@@ -21,7 +14,6 @@ import type {
   Node,
 } from '@hushbox/shared';
 import type { ModelProvider } from '../../models/index.js';
-import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { NodeRunContext } from '../engine/execution-registry.js';
 import type { ModelBinding } from './model-call-execution.js';
 import type { SmartModelExecutionDeps } from './smart-model-execution.js';
@@ -108,12 +100,6 @@ function providerByModel(
   };
 }
 
-/** The text of one request input part ('' for absent/non-text — assertions then fail loudly). */
-function textOf(part: InferenceRequest['inputs'][number] | undefined): string {
-  return part?.modality === 'text' ? part.text : '';
-}
-
-const CLASSIFIER_EVENTS: readonly InferenceEvent[] = [textDelta(HARD), finish(0.001, 'gen-cls')];
 const CHEAP_ANSWER: readonly InferenceEvent[] = [
   textDelta('cheap answer'),
   finish(0.002, 'gen-cheap'),
@@ -129,7 +115,6 @@ function makeDeps(
 ): SmartModelExecutionDeps {
   return {
     provider,
-    classifier: binding(CHEAP),
     candidates: new Map([
       [CHEAP, binding(CHEAP)],
       [HARD, binding(HARD)],
@@ -140,22 +125,8 @@ function makeDeps(
   };
 }
 
-/** A Telemetry spy: records warn/captureError so degrade breadcrumbs can be asserted. */
-function fakeTelemetry(): Telemetry {
-  return {
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    emitMetric: vi.fn(),
-    captureError: vi.fn(),
-  };
-}
-
 interface CtxOptions {
   readonly history?: NodeRunContext['history'];
-  readonly signal?: AbortSignal;
-  readonly accrue?: (costNanoUsd: bigint) => void;
   readonly customInstructions?: string;
 }
 
@@ -167,469 +138,268 @@ function makeCtx(emitted: InferenceEvent[], options: CtxOptions = {}): NodeRunCo
     } as unknown as NodeRunContext['values'],
     clock: { now: () => 0 },
     rng: { random: () => 0.5 },
-    signal: options.signal ?? new AbortController().signal,
+    signal: new AbortController().signal,
     emit: (event): void => {
       emitted.push(event);
     },
     ...(options.history === undefined ? {} : { history: options.history }),
-    ...(options.accrue === undefined ? {} : { accrue: options.accrue }),
     ...(options.customInstructions === undefined
       ? {}
       : { customInstructions: options.customInstructions }),
   };
 }
 
-describe('createSmartModelExecution — classify → resolve → answer', () => {
-  it('routes to the classified candidate and bills both generations under one node', async () => {
-    const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
-    const emitted: InferenceEvent[] = [];
-    const execution = createSmartModelExecution(makeDeps(provider));
-    expect(execution.streaming).toBe(true);
+/** A node whose single input port declares the decision envelope. */
+function decisionNode(
+  overrides: Record<string, unknown> = {}
+): Extract<Node, { type: 'smartModel' }> {
+  return smartNode({
+    inputSchema: TURN_DECISION_SCHEMA_NAME,
+    in: { node: 'decide', port: 'out' },
+    ...overrides,
+  });
+}
 
-    const result = await execution.run(smartNode(), ['pick a model for me'], makeCtx(emitted));
-    const success = result._unsafeUnwrap();
-    expect(success.value).toBe('hard answer');
-    expect(success.costNanoUsd).toBe(providerUsdToBillableNanoUsd(0.004));
-    expect(success.isEstimated).toBe(false);
-    const tokens = { inputTokens: 3, outputTokens: 5, reasoningTokens: 0, cachedInputTokens: 0 };
-    expect(success.billing).toEqual({
-      modelId: HARD,
-      providerName: 'p',
-      modality: 'text',
-      generationId: 'gen-hard',
-      tokens,
-    });
-    expect(success.auxiliaryCharges).toEqual([
-      {
-        keySuffix: 'classifier',
-        billing: {
-          modelId: CHEAP,
-          providerName: 'p',
-          modality: 'text',
-          generationId: 'gen-cls',
-          tokens,
-        },
-        billableCostNanoUsd: providerUsdToBillableNanoUsd(0.001),
-        isEstimated: false,
-      },
-    ]);
+/** Deps whose schema registry can resolve the decision envelope's schema name. */
+function envelopeDeps(
+  provider: ModelProvider,
+  overrides: Partial<SmartModelExecutionDeps> = {}
+): SmartModelExecutionDeps {
+  return makeDeps(provider, {
+    schemas: {
+      resolveSchema: (name: string) =>
+        name === TURN_DECISION_SCHEMA_NAME ? TurnDecision : undefined,
+    },
+    ...overrides,
+  });
+}
+
+/** One decision envelope, as the registered reducer produces it. */
+function decision(overrides: Partial<TurnDecision> = {}): TurnDecision {
+  return { prompt: 'pick a model for me', modelText: '', effort: 'medium', ...overrides };
+}
+
+describe('createSmartModelExecution — the decision envelope', () => {
+  it("answers on the envelope's prompt when its input port declares the decision", async () => {
+    const requests: InferenceRequest[] = [];
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
+    const execution = createSmartModelExecution(envelopeDeps(provider));
+    const result = await execution.run(
+      decisionNode(),
+      [decision({ modelText: HARD })],
+      makeCtx([])
+    );
+    expect(result.isOk()).toBe(true);
+    expect(requests.at(-1)?.inputs).toEqual([{ modality: 'text', text: 'pick a model for me' }]);
   });
 
-  it('sends the classifier its own prompt: marker + candidate lines, capped output, no history', async () => {
+  it('performs NO classifier call when a decision is present — one provider call, no aux charge', async () => {
     const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
-    const execution = createSmartModelExecution(makeDeps(provider));
-    const history = [{ role: 'assistant' as const, content: 'previous reply' }];
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
+    const execution = createSmartModelExecution(envelopeDeps(provider));
 
-    await execution.run(smartNode(), ['what is a monad?'], makeCtx([], { history }));
+    const result = await execution.run(
+      decisionNode(),
+      [decision({ modelText: HARD })],
+      makeCtx([])
+    );
 
-    const classifierRequest = requests[0];
-    expect(classifierRequest?.model).toBe(CHEAP);
-    expect(classifierRequest?.parameters).toEqual({ maxOutputTokens: CLASSIFIER_OUTPUT_TOKEN_CAP });
-    expect(classifierRequest).not.toHaveProperty('history');
-    const system = textOf(classifierRequest?.inputs[0]);
-    const user = textOf(classifierRequest?.inputs[1]);
-    expect(system).toContain(CLASSIFIER_SYSTEM_PROMPT_MARKER);
-    expect(system).toContain(`- ${CHEAP} — cheap and fast`);
-    expect(system).toContain(`- ${HARD} — strong reasoning`);
-    // The truncated context is the latest exchange: the prompt input plus the
-    // last assistant message from the run history.
-    expect(user).toContain('what is a monad?');
-    expect(user).toContain('previous reply');
+    // The slot consumes the decision; it never buys one. One provider call, and
+    // no auxiliary charge, because no auxiliary generation happened here.
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.model).toBe(HARD);
+    expect(result._unsafeUnwrap().auxiliaryCharges ?? []).toEqual([]);
   });
 
-  it('renders an id-only prompt line for a candidate without a description', async () => {
-    const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
-    const execution = createSmartModelExecution(makeDeps(provider));
-    const node = smartNode({
-      candidates: [{ id: CHEAP }, { id: HARD, description: 'strong reasoning' }],
-    });
+  it("binds the model the decision names, resolved within this node's candidate list", async () => {
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, []);
+    const execution = createSmartModelExecution(envelopeDeps(provider));
 
-    await execution.run(node, ['prompt'], makeCtx([]));
+    const result = await execution.run(
+      decisionNode(),
+      [decision({ modelText: HARD })],
+      makeCtx([])
+    );
 
-    expect(textOf(requests[0]?.inputs[0])).toContain(`- ${CHEAP} —`);
+    expect(result._unsafeUnwrap().billing?.modelId).toBe(HARD);
   });
 
+  it('binds the cheapest candidate when the decision names nothing in the list', async () => {
+    const requests: InferenceRequest[] = [];
+    const provider = providerByModel({ [CHEAP]: CHEAP_ANSWER }, requests);
+    const execution = createSmartModelExecution(envelopeDeps(provider));
+
+    const result = await execution.run(
+      decisionNode(),
+      [decision({ modelText: 'maybe use a horse?' })],
+      makeCtx([])
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(result._unsafeUnwrap().billing?.modelId).toBe(CHEAP);
+  });
+
+  it('binds the cheapest candidate when no decision reaches the slot at all', async () => {
+    const requests: InferenceRequest[] = [];
+    const provider = providerByModel({ [CHEAP]: CHEAP_ANSWER }, requests);
+    const execution = createSmartModelExecution(makeDeps(provider));
+
+    // A raw-text port is the absent-decision case: the failure path is a typed
+    // absent value, so the declared fallback answers and nothing is classified.
+    const result = await execution.run(smartNode(), ['prompt'], makeCtx([]));
+
+    expect(requests).toHaveLength(1);
+    expect(result._unsafeUnwrap().billing?.modelId).toBe(CHEAP);
+    // Still badged: the chip reads "the routing pipeline ran", never "a
+    // classifier billed", so a fallback with no decision badges just the same.
+    // The display path's `isSmartModel` comment rests on this.
+    expect(result._unsafeUnwrap().smartModelRan).toBe(true);
+  });
+});
+
+describe('createSmartModelExecution — the bound answer call', () => {
   it('sends the answer call the full run history and the node params, streaming its events', async () => {
     const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
     const emitted: InferenceEvent[] = [];
-    const execution = createSmartModelExecution(makeDeps(provider));
+    const execution = createSmartModelExecution(envelopeDeps(provider));
     const history = [
       { role: 'user' as const, content: 'earlier question' },
       { role: 'assistant' as const, content: 'earlier answer' },
     ];
 
-    await execution.run(smartNode(), ['follow-up'], makeCtx(emitted, { history }));
+    await execution.run(
+      decisionNode(),
+      [decision({ prompt: 'follow-up', modelText: HARD })],
+      makeCtx(emitted, { history })
+    );
 
-    const answerRequest = requests[1];
+    const answerRequest = requests[0];
     expect(answerRequest?.model).toBe(HARD);
     expect(answerRequest?.inputs).toEqual([{ modality: 'text', text: 'follow-up' }]);
     expect(answerRequest?.parameters).toEqual({ temperature: 0.5 });
     expect(answerRequest?.history).toEqual(history);
-    // Only the ANSWER generation rides the client stream — classifier tokens
-    // are routing internals, never user-visible content. The stream labels
-    // itself first with the RESOLVED model.
+    // The bound answer is the ONLY generation this node runs, and it labels the
+    // stream with the model it bound.
     expect(emitted).toEqual([{ kind: 'stream-start', modelId: HARD }, ...HARD_ANSWER]);
+    expect(emitted.filter((event) => event.kind === 'stream-start')).toHaveLength(1);
   });
 
-  it('threads run-scoped custom instructions onto the ANSWER request only, never the classifier', async () => {
+  it('threads run-scoped custom instructions onto the answer request', async () => {
     const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
-    const execution = createSmartModelExecution(makeDeps(provider));
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
+    const execution = createSmartModelExecution(envelopeDeps(provider));
 
     await execution.run(
-      smartNode(),
-      ['follow-up'],
+      decisionNode(),
+      [decision({ modelText: HARD })],
       makeCtx([], { customInstructions: 'answer in French' })
     );
 
-    // Classifier (requests[0]) is routing-internal: fixed params, no instructions.
-    expect(requests[0]?.parameters).toEqual({ maxOutputTokens: CLASSIFIER_OUTPUT_TOKEN_CAP });
-    expect(requests[0]).not.toHaveProperty('customInstructions');
-    // Answer (requests[1]) carries the instructions in the dedicated field,
-    // sourced from the run-scoped ctx; the node params ride unperturbed.
-    const answerRequest = requests[1];
-    expect(answerRequest?.customInstructions).toBe('answer in French');
-    expect(answerRequest?.parameters).toEqual({ temperature: 0.5 });
+    expect(requests[0]?.customInstructions).toBe('answer in French');
+    expect(requests[0]?.parameters).toEqual({ temperature: 0.5 });
   });
 
   it('omits custom instructions from the answer request when the context carries none', async () => {
     const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
-    const execution = createSmartModelExecution(makeDeps(provider));
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
+    const execution = createSmartModelExecution(envelopeDeps(provider));
 
-    await execution.run(smartNode(), ['follow-up'], makeCtx([]));
+    await execution.run(decisionNode(), [decision({ modelText: HARD })], makeCtx([]));
 
-    expect(requests[1]).not.toHaveProperty('customInstructions');
-    expect(requests[1]?.parameters).toEqual({ temperature: 0.5 });
-  });
-
-  it('labels the answer stream with the classifier-RESOLVED model id, classifier invisible', async () => {
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, []);
-    const emitted: InferenceEvent[] = [];
-    const execution = createSmartModelExecution(makeDeps(provider));
-
-    await execution.run(smartNode(), ['pick a model for me'], makeCtx(emitted));
-
-    // First event = the resolved model's label — never the classifier's.
-    expect(emitted[0]).toEqual({ kind: 'stream-start', modelId: HARD });
-    // Exactly one stream label: the classifier generation emitted nothing.
-    expect(emitted.filter((event) => event.kind === 'stream-start')).toHaveLength(1);
-  });
-
-  it('labels the single-candidate short-circuit stream with the only candidate', async () => {
-    const provider = providerByModel({ [CHEAP]: CHEAP_ANSWER }, []);
-    const emitted: InferenceEvent[] = [];
-    const execution = createSmartModelExecution(
-      makeDeps(provider, { candidates: new Map([[CHEAP, binding(CHEAP)]]) })
-    );
-    const node = smartNode({ candidates: [{ id: CHEAP, description: 'cheap and fast' }] });
-
-    await execution.run(node, ['prompt'], makeCtx(emitted));
-
-    expect(emitted[0]).toEqual({ kind: 'stream-start', modelId: CHEAP });
-  });
-
-  it('accrues the classifier cost through ctx.accrue before starting the answer call', async () => {
-    const order: string[] = [];
-    const requests: InferenceRequest[] = [];
-    const inner = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
-    const provider: ModelProvider = {
-      infer: (request, requestDescriptor, options) => {
-        order.push(`call:${request.model}`);
-        return inner.infer(request, requestDescriptor, options);
-      },
-    };
-    const accrue = vi.fn((cost: bigint) => {
-      order.push(`accrue:${String(cost)}`);
-    });
-    const execution = createSmartModelExecution(makeDeps(provider));
-
-    await execution.run(smartNode(), ['prompt'], makeCtx([], { accrue }));
-
-    expect(order).toEqual([
-      `call:${CHEAP}`,
-      `accrue:${String(providerUsdToBillableNanoUsd(0.001))}`,
-      `call:${HARD}`,
-    ]);
-  });
-
-  it('falls back to the cheapest candidate on an unresolvable classifier output, keeping its charge', async () => {
-    const provider = providerByModel(
-      {
-        [CHEAP]: [textDelta('no idea, maybe use a horse?'), finish(0.001, 'gen-cls')],
-      },
-      []
-    );
-    // The classifier and the cheapest candidate are the same model; the fake
-    // must serve the classifier prompt first, then the fallback answer.
-    let calls = 0;
-    const twoPhase: ModelProvider = {
-      infer: (request, requestDescriptor, options) => {
-        calls += 1;
-        if (calls === 1) return provider.infer(request, requestDescriptor, options);
-        return (async function* stream(): AsyncGenerator<InferenceEvent> {
-          await Promise.resolve();
-          for (const event of CHEAP_ANSWER) yield event;
-        })();
-      },
-    };
-    const execution = createSmartModelExecution(makeDeps(twoPhase));
-
-    const result = await execution.run(smartNode(), ['prompt'], makeCtx([]));
-    const success = result._unsafeUnwrap();
-    expect(success.value).toBe('cheap answer');
-    expect(success.billing?.modelId).toBe(CHEAP);
-    // The classifier ran and produced a generation: its charge stands even
-    // though its routing output was discarded.
-    expect(success.auxiliaryCharges).toHaveLength(1);
-    expect(success.auxiliaryCharges?.[0]?.billing.generationId).toBe('gen-cls');
-  });
-
-  it('falls back to the cheapest candidate on a classifier error, with no classifier charge', async () => {
-    let calls = 0;
-    const provider: ModelProvider = {
-      infer: () => {
-        calls += 1;
-        return (async function* stream(): AsyncGenerator<InferenceEvent> {
-          await Promise.resolve();
-          if (calls === 1) throw new InferenceError('upstream_error', 'classifier down');
-          for (const event of CHEAP_ANSWER) yield event;
-        })();
-      },
-    };
-    const execution = createSmartModelExecution(makeDeps(provider));
-
-    const result = await execution.run(smartNode(), ['prompt'], makeCtx([]));
-    const success = result._unsafeUnwrap();
-    expect(success.value).toBe('cheap answer');
-    expect(success.billing?.modelId).toBe(CHEAP);
-    // No generation, no charge: the failed classifier call billed nothing.
-    expect(success.auxiliaryCharges ?? []).toEqual([]);
-    // The pipeline still ran, so the answer is badged Smart Model regardless of
-    // the classifier having billed nothing (legacy stagesRun parity).
-    expect(success.smartModelRan).toBe(true);
-  });
-
-  it('badges the fallback answer and degrades gracefully on a THROWN unclassified classifier error', async () => {
-    let calls = 0;
-    const provider: ModelProvider = {
-      infer: () => {
-        calls += 1;
-        return (async function* stream(): AsyncGenerator<InferenceEvent> {
-          await Promise.resolve();
-          // A plain, unclassified throw from the classifier generation — NOT an
-          // InferenceError, NOT an abort. Legacy caught any classifier throw and
-          // still ran the stage; the node must degrade to the fallback, not fail.
-          if (calls === 1) throw new Error('classifier exploded');
-          for (const event of CHEAP_ANSWER) yield event;
-        })();
-      },
-    };
-    const telemetry = fakeTelemetry();
-    const execution = createSmartModelExecution(makeDeps(provider, { telemetry }));
-
-    const result = await execution.run(smartNode(), ['prompt'], makeCtx([]));
-    const success = result._unsafeUnwrap();
-    expect(success.value).toBe('cheap answer');
-    expect(success.billing?.modelId).toBe(CHEAP);
-    // No generation completed, so no charge — yet the pipeline ran, so badged.
-    expect(success.auxiliaryCharges ?? []).toEqual([]);
-    expect(success.smartModelRan).toBe(true);
-    // The degrade logs a non-Sentry structured breadcrumb — model id only, never
-    // the error, prompt, or output — and never fires a Sentry defect.
-    expect(telemetry.warn).toHaveBeenCalledWith(expect.any(String), { modelName: CHEAP });
-    expect(telemetry.captureError).not.toHaveBeenCalled();
-  });
-
-  it('badges the answer with smartModelRan on the happy classify → answer path', async () => {
-    const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
-    const execution = createSmartModelExecution(makeDeps(provider));
-
-    const result = await execution.run(smartNode(), ['prompt'], makeCtx([]));
-    expect(result._unsafeUnwrap().smartModelRan).toBe(true);
-  });
-
-  it('badges the single-candidate short-circuit — the Smart pipeline still ran (legacy parity)', async () => {
-    const provider = providerByModel({ [CHEAP]: CHEAP_ANSWER }, []);
-    const execution = createSmartModelExecution(
-      makeDeps(provider, { candidates: new Map([[CHEAP, binding(CHEAP)]]) })
-    );
-    const node = smartNode({ candidates: [{ id: CHEAP, description: 'cheap and fast' }] });
-
-    const result = await execution.run(node, ['prompt'], makeCtx([]));
-    expect(result._unsafeUnwrap().smartModelRan).toBe(true);
-  });
-
-  it('still fails the node (does NOT degrade) on a thrown unclassified error from the ANSWER call', async () => {
-    let calls = 0;
-    const provider: ModelProvider = {
-      infer: () => {
-        calls += 1;
-        return (async function* stream(): AsyncGenerator<InferenceEvent> {
-          await Promise.resolve();
-          if (calls === 1) {
-            for (const event of CLASSIFIER_EVENTS) yield event;
-            return;
-          }
-          // The widened catch is scoped to the classifier ONLY: an unclassified
-          // throw from the ANSWER call is still a genuine defect that propagates.
-          throw new Error('answer exploded');
-        })();
-      },
-    };
-    const execution = createSmartModelExecution(makeDeps(provider));
-
-    await expect(execution.run(smartNode(), ['prompt'], makeCtx([]))).rejects.toThrow(
-      /answer exploded/
-    );
-  });
-
-  it('still propagates a defect thrown AFTER the classifier stream (routing logic), not swallowed', async () => {
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, []);
-    const execution = createSmartModelExecution(makeDeps(provider));
-    // ctx.accrue runs after the classifier stream resolves, OUTSIDE the widened
-    // catch: a defect there is genuine and must still surface, proving the catch
-    // was not over-widened to swallow the classifier stage's post-call routing.
-    const accrue = (): void => {
-      throw new Error('accrue exploded');
-    };
-
-    await expect(execution.run(smartNode(), ['prompt'], makeCtx([], { accrue }))).rejects.toThrow(
-      /accrue exploded/
-    );
-  });
-
-  it('labels the classifier-error fallback stream with the resolved fallback model id', async () => {
-    let calls = 0;
-    const provider: ModelProvider = {
-      infer: () => {
-        calls += 1;
-        return (async function* stream(): AsyncGenerator<InferenceEvent> {
-          await Promise.resolve();
-          if (calls === 1) throw new InferenceError('upstream_error', 'classifier down');
-          for (const event of CHEAP_ANSWER) yield event;
-        })();
-      },
-    };
-    const emitted: InferenceEvent[] = [];
-    const execution = createSmartModelExecution(makeDeps(provider));
-
-    const result = await execution.run(smartNode(), ['prompt'], makeCtx(emitted));
-    const success = result._unsafeUnwrap();
-    expect(success.value).toBe('cheap answer');
-    // Branch-invariant label: the fallback path must emit the resolved-model
-    // stream-start exactly like the happy path (RC-3 pin).
-    expect(emitted[0]).toEqual({ kind: 'stream-start', modelId: CHEAP });
-    expect(emitted.filter((event) => event.kind === 'stream-start')).toHaveLength(1);
-  });
-
-  it('skips the classifier entirely for a single candidate — one call, zero classifier charge', async () => {
-    const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CHEAP_ANSWER }, requests);
-    const execution = createSmartModelExecution(
-      makeDeps(provider, { candidates: new Map([[CHEAP, binding(CHEAP)]]) })
-    );
-    const node = smartNode({ candidates: [{ id: CHEAP, description: 'cheap and fast' }] });
-
-    const result = await execution.run(node, ['prompt'], makeCtx([]));
-    const success = result._unsafeUnwrap();
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.model).toBe(CHEAP);
-    expect(success.billing?.modelId).toBe(CHEAP);
-    expect(success.auxiliaryCharges ?? []).toEqual([]);
-  });
-
-  it('refuses the answer call when the classifier accrual tripped the circuit (aborted signal)', async () => {
-    const controller = new AbortController();
-    const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
-    const execution = createSmartModelExecution(makeDeps(provider));
-    // Mirrors the interpreter's accrue: crossing the limit aborts synchronously.
-    const accrue = (): void => {
-      controller.abort();
-    };
-
-    const result = await execution.run(
-      smartNode(),
-      ['prompt'],
-      makeCtx([], { signal: controller.signal, accrue })
-    );
-    expect(result.isErr()).toBe(true);
-    // The classifier call happened; the answer call must not.
-    expect(requests).toHaveLength(1);
-  });
-
-  it('truncates a user-only history to an empty assistant side', async () => {
-    const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
-    const execution = createSmartModelExecution(makeDeps(provider));
-    const history = [{ role: 'user' as const, content: 'only questions so far' }];
-
-    await execution.run(smartNode(), ['prompt'], makeCtx([], { history }));
-
-    // No assistant turn exists yet, so the AI sections are omitted entirely.
-    expect(textOf(requests[0]?.inputs[1])).not.toContain('[AI START]');
+    expect(requests[0]).not.toHaveProperty('customInstructions');
+    expect(requests[0]?.parameters).toEqual({ temperature: 0.5 });
   });
 
   it('normalizes an empty run history to a history-free answer request', async () => {
     const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
-    const execution = createSmartModelExecution(makeDeps(provider));
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
+    const execution = createSmartModelExecution(envelopeDeps(provider));
 
-    await execution.run(smartNode(), ['prompt'], makeCtx([], { history: [] }));
+    await execution.run(
+      decisionNode(),
+      [decision({ modelText: HARD })],
+      makeCtx([], { history: [] })
+    );
 
-    expect(requests[1]).not.toHaveProperty('history');
+    expect(requests[0]).not.toHaveProperty('history');
   });
 
-  it('treats a non-text classifier value as unresolvable and falls back', async () => {
-    const mediaDone: InferenceEvent = {
-      kind: 'media-done',
-      index: 0,
-      value: {
-        ref: 'media/c/m/u',
-        mimeType: 'image/png',
-        modality: 'image',
-        byteLength: 3,
-        metadata: {},
-      },
-    };
-    let calls = 0;
-    const provider: ModelProvider = {
-      infer: () => {
-        calls += 1;
-        return (async function* stream(): AsyncGenerator<InferenceEvent> {
-          await Promise.resolve();
-          if (calls === 1) {
-            yield mediaDone;
-            yield finish(0.001, 'gen-cls');
-            return;
-          }
-          for (const event of CHEAP_ANSWER) yield event;
-        })();
-      },
-    };
-    const execution = createSmartModelExecution(makeDeps(provider));
+  it("applies the bound candidate's OWN admission-stamped cap over the node params", async () => {
+    const requests: InferenceRequest[] = [];
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
+    const execution = createSmartModelExecution(envelopeDeps(provider));
+    const node = decisionNode({
+      candidates: [
+        { id: CHEAP, description: 'cheap and fast', maxOutputTokens: 111 },
+        { id: HARD, description: 'strong reasoning', maxOutputTokens: 222 },
+      ],
+      params: { temperature: 0.5, maxOutputTokens: 999 },
+    });
 
-    const result = await execution.run(smartNode(), ['prompt'], makeCtx([]));
-    const success = result._unsafeUnwrap();
-    expect(success.billing?.modelId).toBe(CHEAP);
-    // The classifier generation still ran, so its charge stands.
-    expect(success.auxiliaryCharges).toHaveLength(1);
+    await execution.run(node, [decision({ modelText: HARD })], makeCtx([]));
+
+    expect(requests[0]?.parameters['maxOutputTokens']).toBe(222);
   });
 
-  it('throws a defect when the resolved candidate has no binding (broken wiring)', async () => {
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, []);
+  it('serializes the answer value with streamed reasoning intact (same-field doctrine)', async () => {
+    const provider = providerByModel(
+      {
+        [HARD]: [
+          { kind: 'reasoning-delta', index: 0, content: 'thinking…' },
+          textDelta('the answer'),
+          finish(0.004, 'gen-hard'),
+        ],
+      },
+      []
+    );
+    const execution = createSmartModelExecution(envelopeDeps(provider));
+
+    const result = await execution.run(
+      decisionNode(),
+      [decision({ modelText: HARD })],
+      makeCtx([])
+    );
+
+    expect(result._unsafeUnwrap().value).toBe(serializeReasoningText('thinking…', 'the answer'));
+  });
+
+  it('badges a model-routing turn with smartModelRan', async () => {
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, []);
+    const execution = createSmartModelExecution(envelopeDeps(provider));
+
+    const result = await execution.run(
+      decisionNode(),
+      [decision({ modelText: HARD })],
+      makeCtx([])
+    );
+
+    expect(result._unsafeUnwrap().smartModelRan).toBe(true);
+  });
+
+  it('badges the single-candidate slot — the routing pipeline still ran (legacy parity)', async () => {
+    const requests: InferenceRequest[] = [];
+    const provider = providerByModel({ [CHEAP]: CHEAP_ANSWER }, requests);
     const execution = createSmartModelExecution(
-      makeDeps(provider, { candidates: new Map([[CHEAP, binding(CHEAP)]]) })
+      envelopeDeps(provider, { candidates: new Map([[CHEAP, binding(CHEAP)]]) })
     );
-    await expect(execution.run(smartNode(), ['prompt'], makeCtx([]))).rejects.toThrow(
-      /no binding for resolved candidate/
+    const node = decisionNode({ candidates: [{ id: CHEAP, description: 'cheap and fast' }] });
+
+    const result = await execution.run(node, [decision()], makeCtx([]));
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.model).toBe(CHEAP);
+    expect(result._unsafeUnwrap().smartModelRan).toBe(true);
+  });
+
+  it('throws a defect when the bound candidate has no binding (broken wiring)', async () => {
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, []);
+    const execution = createSmartModelExecution(
+      envelopeDeps(provider, { candidates: new Map([[CHEAP, binding(CHEAP)]]) })
     );
+    await expect(
+      execution.run(decisionNode(), [decision({ modelText: HARD })], makeCtx([]))
+    ).rejects.toThrow(/no binding for resolved candidate/);
   });
 
   it('fails as an ordinary node failure on a non-text input', async () => {
@@ -655,11 +425,11 @@ function reasoningBinding(id: string): ModelBinding {
 
 const ANSWER_CAP = REASONING_BUDGET_TOKENS_BY_EFFORT.high + 10_000;
 
-/** A single-candidate pinned+auto node: effort dimension only. */
+/** A single-candidate pinned+auto node: the effort dimension only. */
 function pinnedAutoNode(
   overrides: Record<string, unknown> = {}
 ): Extract<Node, { type: 'smartModel' }> {
-  return smartNode({
+  return decisionNode({
     candidates: [{ id: HARD, description: 'strong reasoning' }],
     classify: { model: false, effort: true },
     params: { maxOutputTokens: ANSWER_CAP },
@@ -671,268 +441,190 @@ function pinnedAutoDeps(
   provider: ModelProvider,
   overrides: Partial<SmartModelExecutionDeps> = {}
 ): SmartModelExecutionDeps {
-  return makeDeps(provider, {
+  return envelopeDeps(provider, {
     candidates: new Map([[HARD, reasoningBinding(HARD)]]),
     ...overrides,
   });
 }
 
-describe('createSmartModelExecution — effort dimension (generalized classifier stage)', () => {
-  it('pinned + auto: one effort-only classifier generation, wire applied, charge rides, NOT badged', async () => {
+describe('createSmartModelExecution — the effort axis', () => {
+  it("pinned + auto: the decision's level rides the answer wire, cap unchanged, NOT badged", async () => {
     const requests: InferenceRequest[] = [];
-    const provider = providerByModel(
-      {
-        [CHEAP]: [textDelta('high'), finish(0.001, 'gen-cls')],
-        [HARD]: HARD_ANSWER,
-      },
-      requests
-    );
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
     const execution = createSmartModelExecution(pinnedAutoDeps(provider));
 
-    const result = await execution.run(pinnedAutoNode(), ['prove a theorem'], makeCtx([]));
+    const result = await execution.run(
+      pinnedAutoNode(),
+      [decision({ prompt: 'prove a theorem', effort: 'high' })],
+      makeCtx([])
+    );
     const success = result._unsafeUnwrap();
 
-    // Exactly one classifier generation + one answer generation.
-    expect(requests).toHaveLength(2);
-    const system = textOf(requests[0]?.inputs[0]);
-    expect(system).toContain(CLASSIFIER_SYSTEM_PROMPT_MARKER);
-    expect(system).toContain(CLASSIFIER_EFFORT_DIMENSION_MARKER);
-    expect(system).not.toContain(CLASSIFIER_MODEL_DIMENSION_MARKER);
-    expect(system).not.toContain('Available models:');
-    // The classified level rides the answer call as the plan's wire; the
-    // completion cap stays the built (already-reserved) cap.
-    expect(requests[1]?.model).toBe(HARD);
-    expect(requests[1]?.parameters['reasoning']).toEqual({ effort: 'high' });
-    expect(requests[1]?.parameters['maxOutputTokens']).toBe(ANSWER_CAP);
-    // The classifier charge settles with the answer; the turn is NOT badged
-    // Smart Model — the user pinned the model.
-    expect(success.auxiliaryCharges).toHaveLength(1);
+    // One generation: the answer. The decided level rides it as the plan's wire,
+    // and the completion cap stays the built (already-reserved) cap.
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.model).toBe(HARD);
+    expect(requests[0]?.parameters['reasoning']).toEqual({ effort: 'high' });
+    expect(requests[0]?.parameters['maxOutputTokens']).toBe(ANSWER_CAP);
+    // The turn is NOT badged Smart Model — the user pinned the model.
     expect(success.smartModelRan).toBeUndefined();
   });
 
-  it('parses a reasoning-streaming classifier value via the shared parser (.answer, never the raw value)', async () => {
+  it('resolves both axes from one decision (Smart Model + auto), badged', async () => {
     const requests: InferenceRequest[] = [];
-    // The classifier model itself streams reasoning: streamModelCall yields a
-    // canonical-inline-prefixed value. Resolution must read the parsed
-    // answer — the raw value starts with '<think>' and would resolve nowhere.
-    const classifierValue: readonly InferenceEvent[] = [
-      { kind: 'reasoning-delta', index: 0, content: 'the user wants deep analysis' },
-      textDelta('low'),
-      finish(0.001, 'gen-cls'),
-    ];
-    const provider = providerByModel({ [CHEAP]: classifierValue, [HARD]: HARD_ANSWER }, requests);
-    const execution = createSmartModelExecution(pinnedAutoDeps(provider));
-
-    await execution.run(pinnedAutoNode(), ['prompt'], makeCtx([]));
-
-    expect(requests[1]?.parameters['reasoning']).toEqual({ effort: 'low' });
-  });
-
-  it('resolves both dimensions from one two-line generation (Smart Model + auto), badged', async () => {
-    const requests: InferenceRequest[] = [];
-    const provider = providerByModel(
-      {
-        [CHEAP]: [textDelta(`${HARD}\nmedium`), finish(0.001, 'gen-cls')],
-        [HARD]: HARD_ANSWER,
-      },
-      requests
-    );
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
     const execution = createSmartModelExecution(
-      makeDeps(provider, {
+      envelopeDeps(provider, {
         candidates: new Map([
           [CHEAP, binding(CHEAP)],
           [HARD, reasoningBinding(HARD)],
         ]),
       })
     );
-    const node = smartNode({
+    const node = decisionNode({
       classify: { model: true, effort: true },
       params: { maxOutputTokens: ANSWER_CAP },
     });
 
-    const result = await execution.run(node, ['prompt'], makeCtx([]));
-    const success = result._unsafeUnwrap();
-
-    expect(requests).toHaveLength(2);
-    const system = textOf(requests[0]?.inputs[0]);
-    expect(system).toContain(CLASSIFIER_MODEL_DIMENSION_MARKER);
-    expect(system).toContain(CLASSIFIER_EFFORT_DIMENSION_MARKER);
-    expect(requests[1]?.model).toBe(HARD);
-    expect(requests[1]?.parameters['reasoning']).toEqual({ effort: 'medium' });
-    expect(success.smartModelRan).toBe(true);
-    expect(success.auxiliaryCharges).toHaveLength(1);
-  });
-
-  it('falls back to medium on an unresolvable effort output — the charge stands', async () => {
-    const requests: InferenceRequest[] = [];
-    const provider = providerByModel(
-      {
-        [CHEAP]: [textDelta('turbo-max-overdrive'), finish(0.001, 'gen-cls')],
-        [HARD]: HARD_ANSWER,
-      },
-      requests
+    const result = await execution.run(
+      node,
+      [decision({ modelText: HARD, effort: 'medium' })],
+      makeCtx([])
     );
-    const execution = createSmartModelExecution(pinnedAutoDeps(provider));
 
-    const result = await execution.run(pinnedAutoNode(), ['prompt'], makeCtx([]));
-    const success = result._unsafeUnwrap();
-
-    expect(requests[1]?.parameters['reasoning']).toEqual({ effort: 'medium' });
-    expect(success.auxiliaryCharges).toHaveLength(1);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.model).toBe(HARD);
+    expect(requests[0]?.parameters['reasoning']).toEqual({ effort: 'medium' });
+    expect(result._unsafeUnwrap().smartModelRan).toBe(true);
   });
 
-  it('still applies the medium fallback when the classifier call ERRORS (no charge)', async () => {
-    let calls = 0;
-    const requests: InferenceRequest[] = [];
-    const provider: ModelProvider = {
-      infer: (request) => {
-        requests.push(request);
-        calls += 1;
-        return (async function* stream(): AsyncGenerator<InferenceEvent> {
-          await Promise.resolve();
-          if (calls === 1) throw new InferenceError('upstream_error', 'classifier down');
-          for (const event of HARD_ANSWER) yield event;
-        })();
-      },
-    };
-    const execution = createSmartModelExecution(pinnedAutoDeps(provider));
-
-    const result = await execution.run(pinnedAutoNode(), ['prompt'], makeCtx([]));
-    const success = result._unsafeUnwrap();
-
-    expect(requests[1]?.parameters['reasoning']).toEqual({ effort: 'medium' });
-    expect(success.auxiliaryCharges ?? []).toEqual([]);
-    expect(success.smartModelRan).toBeUndefined();
-  });
-
-  it('leaves the answer params untouched when the resolved candidate is not reasoning-capable', async () => {
-    const requests: InferenceRequest[] = [];
-    const provider = providerByModel(
-      {
-        [CHEAP]: [textDelta(`${CHEAP}\nhigh`), finish(0.001, 'gen-cls')],
-      },
-      requests
-    );
-    let calls = 0;
-    const twoPhase: ModelProvider = {
-      infer: (request, requestDescriptor, options) => {
-        calls += 1;
-        if (calls === 1) return provider.infer(request, requestDescriptor, options);
-        requests.push(request);
-        return (async function* stream(): AsyncGenerator<InferenceEvent> {
-          await Promise.resolve();
-          for (const event of CHEAP_ANSWER) yield event;
-        })();
-      },
-    };
+  it('records the level the answer call resolved to', async () => {
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, []);
     const execution = createSmartModelExecution(
-      makeDeps(twoPhase, {
+      envelopeDeps(provider, {
         candidates: new Map([
           [CHEAP, binding(CHEAP)],
           [HARD, reasoningBinding(HARD)],
         ]),
       })
     );
-    const node = smartNode({
+    const node = decisionNode({
       classify: { model: true, effort: true },
       params: { maxOutputTokens: ANSWER_CAP },
     });
 
-    await execution.run(node, ['prompt'], makeCtx([]));
+    const result = await execution.run(
+      node,
+      [decision({ modelText: HARD, effort: 'medium' })],
+      makeCtx([])
+    );
 
-    const answer = requests.at(-1);
-    expect(answer?.model).toBe(CHEAP);
-    expect(answer?.parameters['reasoning']).toBeUndefined();
-    expect(answer?.parameters['maxOutputTokens']).toBe(ANSWER_CAP);
+    expect(result._unsafeUnwrap().billing?.reasoningEffort).toBe('medium');
   });
 
-  it('runs reasoning-free when the node carries no completion cap (G2: no cap, no budget wire)', async () => {
+  it('invents no effort of its own when the slot was handed no decision', async () => {
     const requests: InferenceRequest[] = [];
-    const provider = providerByModel(
-      {
-        [CHEAP]: [textDelta('high'), finish(0.001, 'gen-cls')],
-        [HARD]: HARD_ANSWER,
-      },
-      requests
-    );
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
     const execution = createSmartModelExecution(pinnedAutoDeps(provider));
-    const node = pinnedAutoNode({ params: {} });
+    // A raw-text port: no decision reached the slot, which means no classifier
+    // ran for it. §Reasoning Effort 5 forbids a silent static level in that
+    // case, and the ONE declared fallback lives in the reducer — the only place
+    // that knows the axis's cheapest option. So the built params ride unchanged
+    // rather than a second fallback answering the same question here.
+    const node = pinnedAutoNode({ inputSchema: undefined, in: { node: 'input', port: 'prompt' } });
 
     await execution.run(node, ['prompt'], makeCtx([]));
 
-    expect(requests[1]?.parameters['reasoning']).toBeUndefined();
+    expect(requests[0]?.parameters['reasoning']).toBeUndefined();
   });
 
-  it('steps the classified level down when its budget cannot fit the built completion cap', async () => {
+  it('leaves the answer params untouched when the bound candidate is not reasoning-capable', async () => {
     const requests: InferenceRequest[] = [];
-    const provider = providerByModel(
-      {
-        [CHEAP]: [textDelta('high'), finish(0.001, 'gen-cls')],
-        [HARD]: HARD_ANSWER,
-      },
-      requests
+    const provider = providerByModel({ [CHEAP]: CHEAP_ANSWER }, requests);
+    const execution = createSmartModelExecution(
+      envelopeDeps(provider, {
+        candidates: new Map([
+          [CHEAP, binding(CHEAP)],
+          [HARD, reasoningBinding(HARD)],
+        ]),
+      })
     );
+    const node = decisionNode({
+      classify: { model: true, effort: true },
+      params: { maxOutputTokens: ANSWER_CAP },
+    });
+
+    await execution.run(node, [decision({ modelText: CHEAP, effort: 'high' })], makeCtx([]));
+
+    expect(requests[0]?.model).toBe(CHEAP);
+    expect(requests[0]?.parameters['reasoning']).toBeUndefined();
+    expect(requests[0]?.parameters['maxOutputTokens']).toBe(ANSWER_CAP);
+  });
+
+  it('runs reasoning-free when the node carries no completion cap (no cap, no budget wire)', async () => {
+    const requests: InferenceRequest[] = [];
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
     const execution = createSmartModelExecution(pinnedAutoDeps(provider));
-    // A cap with no headroom above the high budget: the nearest feasible
-    // offered level below (medium) wins; the cap itself never grows.
+
+    await execution.run(
+      pinnedAutoNode({ params: {} }),
+      [decision({ effort: 'high' })],
+      makeCtx([])
+    );
+
+    expect(requests[0]?.parameters['reasoning']).toBeUndefined();
+  });
+
+  it('steps the decided level down when its budget cannot fit the built completion cap', async () => {
+    const requests: InferenceRequest[] = [];
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
+    const execution = createSmartModelExecution(pinnedAutoDeps(provider));
+    // A cap with no headroom above the high budget: the nearest feasible offered
+    // level below (medium) wins; the cap itself never grows.
     const node = pinnedAutoNode({
       params: { maxOutputTokens: REASONING_BUDGET_TOKENS_BY_EFFORT.high },
     });
 
-    await execution.run(node, ['prompt'], makeCtx([]));
+    await execution.run(node, [decision({ effort: 'high' })], makeCtx([]));
 
-    expect(requests[1]?.parameters['reasoning']).toEqual({ effort: 'medium' });
-    expect(requests[1]?.parameters['maxOutputTokens']).toBe(REASONING_BUDGET_TOKENS_BY_EFFORT.high);
+    expect(requests[0]?.parameters['reasoning']).toEqual({ effort: 'medium' });
+    expect(requests[0]?.parameters['maxOutputTokens']).toBe(REASONING_BUDGET_TOKENS_BY_EFFORT.high);
   });
 
-  it('short-circuits with NO classifier call when only the model dimension is declared on a single candidate', async () => {
+  it('leaves the built params alone when neither axis is open for this node', async () => {
     const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
-    const execution = createSmartModelExecution(pinnedAutoDeps(provider));
-    const node = smartNode({
-      candidates: [{ id: HARD }],
-      classify: { model: true, effort: false },
+    const provider = providerByModel({ [CHEAP]: CHEAP_ANSWER }, requests);
+    const execution = createSmartModelExecution(
+      envelopeDeps(provider, { candidates: new Map([[CHEAP, binding(CHEAP)]]) })
+    );
+    // Neither axis declared: the decision carries an effort, and the node must
+    // not apply it — a closed axis is the user's own pinned choice.
+    const node = decisionNode({
+      candidates: [{ id: CHEAP, description: 'cheap and fast' }],
+      classify: { model: false, effort: false },
+      params: { maxOutputTokens: ANSWER_CAP },
     });
 
-    const result = await execution.run(node, ['prompt'], makeCtx([]));
+    await execution.run(node, [decision({ modelText: HARD, effort: 'max' })], makeCtx([]));
 
-    expect(requests).toHaveLength(1);
-    expect(result._unsafeUnwrap().smartModelRan).toBe(true);
-  });
-
-  it('serializes the answer value with streamed reasoning intact (same-field doctrine untouched)', async () => {
-    const requests: InferenceRequest[] = [];
-    const provider = providerByModel(
-      {
-        [CHEAP]: [textDelta('low'), finish(0.001, 'gen-cls')],
-        [HARD]: [
-          { kind: 'reasoning-delta', index: 0, content: 'thinking…' },
-          textDelta('the answer'),
-          finish(0.004, 'gen-hard'),
-        ],
-      },
-      requests
-    );
-    const execution = createSmartModelExecution(pinnedAutoDeps(provider));
-
-    const result = await execution.run(pinnedAutoNode(), ['prompt'], makeCtx([]));
-    expect(result._unsafeUnwrap().value).toBe(serializeReasoningText('thinking…', 'the answer'));
+    expect(requests[0]?.model).toBe(CHEAP);
+    expect(requests[0]?.parameters['reasoning']).toBeUndefined();
   });
 });
 
-describe('createSmartModelExecution — hard-off wire ("none" composite turn)', () => {
-  /** A hard-off node: the 'none' build stamps the off wire into the params. */
-  function hardOffNode(): Extract<Node, { type: 'smartModel' }> {
-    return smartNode({
-      params: { maxOutputTokens: ANSWER_CAP, reasoning: { enabled: false } },
-    });
-  }
+/** A hard-off ("none") composite node: the built off wire is shared node data. */
+function hardOffNode(): Extract<Node, { type: 'smartModel' }> {
+  return decisionNode({
+    params: { maxOutputTokens: ANSWER_CAP, reasoning: { enabled: false } },
+  });
+}
 
-  it('sends the explicit off wire to a reasoning-capable non-mandatory resolved candidate', async () => {
+describe('createSmartModelExecution — hard-off wire ("none" composite turn)', () => {
+  it('sends the explicit off wire to a reasoning-capable non-mandatory bound candidate', async () => {
     const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
     const execution = createSmartModelExecution(
-      makeDeps(provider, {
+      envelopeDeps(provider, {
         candidates: new Map([
           [CHEAP, binding(CHEAP)],
           [HARD, reasoningBinding(HARD)],
@@ -940,17 +632,32 @@ describe('createSmartModelExecution — hard-off wire ("none" composite turn)', 
       })
     );
 
-    await execution.run(hardOffNode(), ['prompt'], makeCtx([]));
+    await execution.run(hardOffNode(), [decision({ modelText: HARD })], makeCtx([]));
 
-    // Hard off, never parameter omission — and the cap stays plain-turn sized.
-    expect(requests[1]?.model).toBe(HARD);
-    expect(requests[1]?.parameters['reasoning']).toEqual({ enabled: false });
-    expect(requests[1]?.parameters['maxOutputTokens']).toBe(ANSWER_CAP);
+    // Hard off, never omission — the cap stays plain-turn sized.
+    expect(requests[0]?.model).toBe(HARD);
+    expect(requests[0]?.parameters['reasoning']).toEqual({ enabled: false });
+    expect(requests[0]?.parameters['maxOutputTokens']).toBe(ANSWER_CAP);
   });
 
-  it('strips the off wire when the resolved candidate has MANDATORY reasoning (cannot disable)', async () => {
-    const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
+  it('records `off` for the candidate that kept the explicit off wire', async () => {
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, []);
+    const execution = createSmartModelExecution(
+      envelopeDeps(provider, {
+        candidates: new Map([
+          [CHEAP, binding(CHEAP)],
+          [HARD, reasoningBinding(HARD)],
+        ]),
+      })
+    );
+
+    const result = await execution.run(hardOffNode(), [decision({ modelText: HARD })], makeCtx([]));
+
+    expect(result._unsafeUnwrap().billing?.reasoningEffort).toBe('off');
+  });
+
+  it('records no level for the candidate the off wire was stripped from', async () => {
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, []);
     const mandatory: ModelBinding = {
       ...reasoningBinding(HARD),
       descriptor: {
@@ -959,7 +666,7 @@ describe('createSmartModelExecution — hard-off wire ("none" composite turn)', 
       },
     };
     const execution = createSmartModelExecution(
-      makeDeps(provider, {
+      envelopeDeps(provider, {
         candidates: new Map([
           [CHEAP, binding(CHEAP)],
           [HARD, mandatory],
@@ -967,70 +674,93 @@ describe('createSmartModelExecution — hard-off wire ("none" composite turn)', 
       })
     );
 
-    await execution.run(hardOffNode(), ['prompt'], makeCtx([]));
+    const result = await execution.run(hardOffNode(), [decision({ modelText: HARD })], makeCtx([]));
 
-    expect(requests[1]?.model).toBe(HARD);
-    expect(requests[1]?.parameters['reasoning']).toBeUndefined();
-    expect(requests[1]?.parameters['maxOutputTokens']).toBe(ANSWER_CAP);
+    expect(result._unsafeUnwrap().billing?.reasoningEffort).toBeUndefined();
+  });
+
+  it('strips the off wire when the bound candidate has MANDATORY reasoning (cannot disable)', async () => {
+    const requests: InferenceRequest[] = [];
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
+    const mandatory: ModelBinding = {
+      ...reasoningBinding(HARD),
+      descriptor: {
+        ...reasoningBinding(HARD).descriptor,
+        reasoning: { supportedEfforts: null, mandatory: true },
+      },
+    };
+    const execution = createSmartModelExecution(
+      envelopeDeps(provider, {
+        candidates: new Map([
+          [CHEAP, binding(CHEAP)],
+          [HARD, mandatory],
+        ]),
+      })
+    );
+
+    await execution.run(hardOffNode(), [decision({ modelText: HARD })], makeCtx([]));
+
+    expect(requests[0]?.model).toBe(HARD);
+    expect(requests[0]?.parameters['reasoning']).toBeUndefined();
+    expect(requests[0]?.parameters['maxOutputTokens']).toBe(ANSWER_CAP);
   });
 
   it('passes a non-off reasoning param through untouched (only the off wire is per-candidate)', async () => {
     const requests: InferenceRequest[] = [];
-    const provider = providerByModel({ [CHEAP]: CLASSIFIER_EVENTS, [HARD]: HARD_ANSWER }, requests);
-    const execution = createSmartModelExecution(makeDeps(provider));
-    const node = smartNode({
+    const provider = providerByModel({ [HARD]: HARD_ANSWER }, requests);
+    const execution = createSmartModelExecution(
+      envelopeDeps(provider, {
+        candidates: new Map([
+          [CHEAP, binding(CHEAP)],
+          [HARD, reasoningBinding(HARD)],
+        ]),
+      })
+    );
+    const node = decisionNode({
       params: { maxOutputTokens: ANSWER_CAP, reasoning: { effort: 'low' } },
     });
 
-    await execution.run(node, ['prompt'], makeCtx([]));
+    await execution.run(node, [decision({ modelText: HARD })], makeCtx([]));
 
-    expect(requests[1]?.parameters['reasoning']).toEqual({ effort: 'low' });
+    expect(requests[0]?.parameters['reasoning']).toEqual({ effort: 'low' });
   });
 
-  it('strips the off wire when the resolved candidate is not reasoning-capable', async () => {
+  it('strips the off wire when the bound candidate is not reasoning-capable', async () => {
     const requests: InferenceRequest[] = [];
-    let calls = 0;
-    // The classifier resolves CHEAP (non-reasoning), so both calls hit the
-    // same model id — dispatch canned events by call order, not model.
-    const twoPhase: ModelProvider = {
-      infer: (request) => {
-        requests.push(request);
-        calls += 1;
-        const events = calls === 1 ? [textDelta(CHEAP), finish(0.001, 'gen-cls')] : CHEAP_ANSWER;
-        return (async function* stream(): AsyncGenerator<InferenceEvent> {
-          await Promise.resolve();
-          for (const event of events) yield event;
-        })();
-      },
-    };
-    const execution = createSmartModelExecution(makeDeps(twoPhase));
+    const provider = providerByModel({ [CHEAP]: CHEAP_ANSWER }, requests);
+    const execution = createSmartModelExecution(
+      envelopeDeps(provider, { candidates: new Map([[CHEAP, binding(CHEAP)]]) })
+    );
+    const node = decisionNode({
+      candidates: [{ id: CHEAP, description: 'cheap and fast' }],
+      params: { maxOutputTokens: ANSWER_CAP, reasoning: { enabled: false } },
+    });
 
-    await execution.run(hardOffNode(), ['prompt'], makeCtx([]));
+    await execution.run(node, [decision()], makeCtx([]));
 
-    expect(requests[1]?.model).toBe(CHEAP);
-    expect(requests[1]?.parameters['reasoning']).toBeUndefined();
-    expect(requests[1]?.parameters['maxOutputTokens']).toBe(ANSWER_CAP);
+    expect(requests[0]?.parameters['reasoning']).toBeUndefined();
   });
 });
 
 describe('createSmartModelExecution — remaining failure edges', () => {
   it('fails the node when the answer call itself fails', async () => {
-    let calls = 0;
     const provider: ModelProvider = {
-      infer: (request) => {
-        calls += 1;
-        return (async function* stream(): AsyncGenerator<InferenceEvent> {
+      infer: (request) =>
+        (async function* stream(): AsyncGenerator<InferenceEvent> {
           await Promise.resolve();
-          if (calls === 1) {
-            for (const event of CLASSIFIER_EVENTS) yield event;
-            return;
+          if (request.model !== '') {
+            throw new InferenceError('upstream_error', `${request.model} down`);
           }
-          throw new InferenceError('upstream_error', `${request.model} down`);
-        })();
-      },
+          yield textDelta('unreachable');
+        })(),
     };
-    const execution = createSmartModelExecution(makeDeps(provider));
-    const result = await execution.run(smartNode(), ['prompt'], makeCtx([]));
+    const execution = createSmartModelExecution(envelopeDeps(provider));
+
+    const result = await execution.run(
+      decisionNode(),
+      [decision({ modelText: HARD })],
+      makeCtx([])
+    );
     expect(result.isErr()).toBe(true);
   });
 });

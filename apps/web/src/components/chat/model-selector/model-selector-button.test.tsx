@@ -6,8 +6,13 @@ import type { Model } from '@hushbox/shared';
 
 // The modal's floor hook rides the billing query stack — irrelevant to the
 // button's own behavior, so it is mocked at the module seam.
-vi.mock('@/hooks/billing/use-prompt-budget', () => ({
-  useModelFloor: () => ({ isPending: false, isBelowFloor: () => false }),
+// The picker's verdict source. Mocked here so this stays a unit test of the
+// BUTTON: the real hook reaches react-query, the catalog and the model store.
+vi.mock('@/hooks/billing/use-turn-options', () => ({
+  useTurnOptions: () => ({
+    isPending: false,
+    options: { affordable: { all: [] } },
+  }),
 }));
 
 // Mock models hook to break the import chain that requires VITE_API_URL

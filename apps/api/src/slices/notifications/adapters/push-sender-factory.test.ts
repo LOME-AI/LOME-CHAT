@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { createPushSenderFromEnv, listCapturedPushes } from './push-sender-factory.js';
 import { createCollapseAliasDeriver } from './collapse-alias.js';
-import type { Database } from '@hushbox/db';
 import type { PushMessage } from '../ports/index.js';
 
-const stubDb = {} as unknown as Database;
 const TAG_SECRET = 'test-collapse-alias-key';
 
 let serviceAccountJson: string;
@@ -41,29 +39,34 @@ const productionEnv = {
   VAPID_SUBJECT: 'mailto:test@hushbox.ai',
 };
 
+const CONVERSATION_ID = '018f4e2a-1c3b-7d4e-9f0a-1b2c3d4e5f60';
+
 const conversationMessage: PushMessage = {
   recipients: [{ platform: 'ios', userId: 'u1', token: 'tok-1' }],
-  title: 'New message',
-  body: 'You have a new message in a conversation.',
-  data: { category: 'message', conversationId: '018f4e2a-1c3b-7d4e-9f0a-1b2c3d4e5f60' },
+  payload: { category: 'message', conversationId: CONVERSATION_ID },
+};
+
+const emptyMessage: PushMessage = {
+  recipients: [],
+  payload: { category: 'message', conversationId: CONVERSATION_ID },
 };
 
 describe('createPushSenderFromEnv', () => {
   it('fails fast when NODE_ENV is unset', () => {
-    expect(() => createPushSenderFromEnv({}, stubDb)).toThrow(/NODE_ENV/);
+    expect(() => createPushSenderFromEnv({})).toThrow(/NODE_ENV/);
   });
 
   it('fails fast when the collapse-alias secret is unset', () => {
-    expect(() => createPushSenderFromEnv({ NODE_ENV: 'development' }, stubDb)).toThrow(
+    expect(() => createPushSenderFromEnv({ NODE_ENV: 'development' })).toThrow(
       /NOTIFICATION_TAG_SECRET/
     );
   });
 
   it('backs the composite with the mock in local dev', async () => {
-    const sender = createPushSenderFromEnv(
-      { NODE_ENV: 'development', NOTIFICATION_TAG_SECRET: TAG_SECRET },
-      stubDb
-    );
+    const sender = createPushSenderFromEnv({
+      NODE_ENV: 'development',
+      NOTIFICATION_TAG_SECRET: TAG_SECRET,
+    });
 
     // The mock reports every native target delivered; no network is touched.
     const result = await sender.send(conversationMessage);
@@ -71,20 +74,21 @@ describe('createPushSenderFromEnv', () => {
   });
 
   it('backs the composite with the mock in CI', async () => {
-    const sender = createPushSenderFromEnv(
-      { NODE_ENV: 'development', CI: 'true', NOTIFICATION_TAG_SECRET: TAG_SECRET },
-      stubDb
-    );
+    const sender = createPushSenderFromEnv({
+      NODE_ENV: 'development',
+      CI: 'true',
+      NOTIFICATION_TAG_SECRET: TAG_SECRET,
+    });
 
     const result = await sender.send(conversationMessage);
     expect(result._unsafeUnwrap().successCount).toBe(1);
   });
 
   it('captures every mock-delivered send with the composite-derived collapse alias', async () => {
-    const sender = createPushSenderFromEnv(
-      { NODE_ENV: 'development', NOTIFICATION_TAG_SECRET: TAG_SECRET },
-      stubDb
-    );
+    const sender = createPushSenderFromEnv({
+      NODE_ENV: 'development',
+      NOTIFICATION_TAG_SECRET: TAG_SECRET,
+    });
     const before = listCapturedPushes().length;
 
     const sent = await sender.send(conversationMessage);
@@ -92,18 +96,16 @@ describe('createPushSenderFromEnv', () => {
 
     const captured = listCapturedPushes().slice(before);
     expect(captured).toHaveLength(1);
-    const expectedAlias = await createCollapseAliasDeriver(TAG_SECRET)(
-      conversationMessage.data?.['conversationId'] ?? ''
-    );
+    const expectedAlias = await createCollapseAliasDeriver(TAG_SECRET)(CONVERSATION_ID);
     expect(captured[0]?.message.collapseKey).toBe(expectedAlias);
-    expect(captured[0]?.message.data).toEqual(conversationMessage.data);
+    expect(captured[0]?.message.payload).toEqual(conversationMessage.payload);
   });
 
   it('captures each platform partition of a mixed send separately', async () => {
-    const sender = createPushSenderFromEnv(
-      { NODE_ENV: 'development', NOTIFICATION_TAG_SECRET: TAG_SECRET },
-      stubDb
-    );
+    const sender = createPushSenderFromEnv({
+      NODE_ENV: 'development',
+      NOTIFICATION_TAG_SECRET: TAG_SECRET,
+    });
     const before = listCapturedPushes().length;
 
     const sent = await sender.send({
@@ -128,13 +130,13 @@ describe('createPushSenderFromEnv', () => {
   });
 
   it('captures nothing when the real transports are selected', async () => {
-    const sender = createPushSenderFromEnv(
-      { ...productionEnv, FCM_SERVICE_ACCOUNT_JSON: serviceAccountJson },
-      stubDb
-    );
+    const sender = createPushSenderFromEnv({
+      ...productionEnv,
+      FCM_SERVICE_ACCOUNT_JSON: serviceAccountJson,
+    });
     const before = listCapturedPushes().length;
 
-    const sent = await sender.send({ recipients: [], title: 'x', body: 'y' });
+    const sent = await sender.send(emptyMessage);
     expect(sent.isOk()).toBe(true);
 
     expect(listCapturedPushes()).toHaveLength(before);
@@ -142,35 +144,29 @@ describe('createPushSenderFromEnv', () => {
 
   it('fails fast in production without FCM credentials', () => {
     expect(() =>
-      createPushSenderFromEnv(
-        { NODE_ENV: 'production', NOTIFICATION_TAG_SECRET: TAG_SECRET },
-        stubDb
-      )
+      createPushSenderFromEnv({ NODE_ENV: 'production', NOTIFICATION_TAG_SECRET: TAG_SECRET })
     ).toThrow(/FCM_PROJECT_ID/);
   });
 
   it('fails fast in production without VAPID keys', () => {
     expect(() =>
-      createPushSenderFromEnv(
-        {
-          NODE_ENV: 'production',
-          NOTIFICATION_TAG_SECRET: TAG_SECRET,
-          FCM_PROJECT_ID: 'hushbox-prod',
-          FCM_SERVICE_ACCOUNT_JSON: serviceAccountJson,
-        },
-        stubDb
-      )
+      createPushSenderFromEnv({
+        NODE_ENV: 'production',
+        NOTIFICATION_TAG_SECRET: TAG_SECRET,
+        FCM_PROJECT_ID: 'hushbox-prod',
+        FCM_SERVICE_ACCOUNT_JSON: serviceAccountJson,
+      })
     ).toThrow(/VAPID/);
   });
 
   it('constructs the real composite in production with all credentials', async () => {
-    const sender = createPushSenderFromEnv(
-      { ...productionEnv, FCM_SERVICE_ACCOUNT_JSON: serviceAccountJson },
-      stubDb
-    );
+    const sender = createPushSenderFromEnv({
+      ...productionEnv,
+      FCM_SERVICE_ACCOUNT_JSON: serviceAccountJson,
+    });
 
     // An empty send exercises no transport, proving construction succeeded.
-    const result = await sender.send({ recipients: [], title: 'x', body: 'y' });
+    const result = await sender.send(emptyMessage);
     expect(result._unsafeUnwrap()).toEqual({
       successCount: 0,
       failureCount: 0,

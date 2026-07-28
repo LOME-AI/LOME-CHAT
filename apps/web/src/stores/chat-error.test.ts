@@ -145,9 +145,9 @@ describe('createChatError', () => {
       failedContent: 'Hello',
     });
 
-    expect(error.content).toBe(
-      'This conversation is already generating a response. Wait for it to finish, then try again.'
-    );
+    // The store passes copy through, so the assertion is that it is unchanged
+    // — never a second home for the sentence itself.
+    expect(error.content).toBe(message);
   });
 
   it('preserves custom user messages unchanged', () => {

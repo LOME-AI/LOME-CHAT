@@ -5,13 +5,15 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  sharp: ^0.34.5
-  vite: npm:rolldown-vite@7.3.1
-  shell-quote: ^1.8.4
   kysely: ^0.28.17
-  qs: ^6.15.2
-  yaml: ^2.9.0
   minimatch@<3.1.4: ^3.1.5
+  qs: ^6.15.2
+  sharp: ^0.34.5
+  shell-quote: ^1.8.4
+  vite: npm:rolldown-vite@7.3.1
+  yaml: ^2.9.0
+
+packageExtensionsChecksum: sha256-cJaACgkhhUtJz1d1bVdP3GFpauNSNvrt67th3f7Zj/g=
 
 patchedDependencies:
   astro@5.18.2:
@@ -1047,9 +1049,6 @@ importers:
       lucide-react:
         specifier: ^0.577.0
         version: 0.577.0(react@19.2.7)
-      onnxruntime-common:
-        specifier: 1.22.0-dev.20250409-89f8206ba4
-        version: 1.22.0-dev.20250409-89f8206ba4
       sonner:
         specifier: ^2.0.7
         version: 2.0.7(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -12291,6 +12290,7 @@ snapshots:
   '@huggingface/transformers@3.8.1':
     dependencies:
       '@huggingface/jinja': 0.5.9
+      onnxruntime-common: 1.22.0-dev.20250409-89f8206ba4
       onnxruntime-node: 1.21.0
       onnxruntime-web: 1.22.0-dev.20250409-89f8206ba4
       sharp: 0.34.5

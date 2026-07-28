@@ -1,10 +1,10 @@
 import * as React from 'react';
-import { parseNanoUSD } from '@hushbox/shared';
+import { tierCanAccessPremium } from '@hushbox/shared';
 import { useSession } from '@/lib/auth';
 import { useModelStore } from '@/stores/model';
-import { useBalance } from '@/hooks/billing/billing.js';
+import { useSpendable } from '@/hooks/billing/use-spendable.js';
 import { useModels, getAccessibleModelIds } from '@/hooks/models/models.js';
-import type { Model, ChatModality, GetBalanceResponse } from '@hushbox/shared';
+import type { Model, ChatModality, UserTier } from '@hushbox/shared';
 import type { SelectedModelEntry } from '@/stores/model';
 import type { ModelsData } from '@/hooks/models/models.js';
 
@@ -12,20 +12,29 @@ interface ValidationStateParams {
   modelsData: ModelsData | undefined;
   isSessionPending: boolean;
   isAuthenticated: boolean;
-  balanceData: GetBalanceResponse | undefined;
+  /** The PAYER's served tier (`GET /billing/spendable`); absent while it loads. */
+  servedTier: UserTier | undefined;
 }
 
 type ValidationState = { isReady: false } | { isReady: true; canAccessPremium: boolean };
 
+/**
+ * Premium access from the SERVED tier, never from a balance: the balance
+ * endpoint is not an affordability input (BILLING §Affordability 4), and the
+ * tier that decides premium is the payer's, which the funding snapshot names.
+ * This hook only CHOOSES a fallback — it greys nothing — but choosing from a
+ * second derivation of the same fact is how the two drift.
+ */
 function getValidationState(params: ValidationStateParams): ValidationState {
-  const { modelsData, isSessionPending, isAuthenticated, balanceData } = params;
+  const { modelsData, isSessionPending, isAuthenticated, servedTier } = params;
 
   if (!modelsData) return { isReady: false };
   if (isSessionPending) return { isReady: false };
-  if (isAuthenticated && !balanceData) return { isReady: false };
+  if (isAuthenticated && servedTier === undefined) return { isReady: false };
 
-  const purchasedNano = balanceData ? parseNanoUSD(balanceData.purchased.balanceNanoUsd) : 0n;
-  const canAccessPremium = isAuthenticated && purchasedNano > 0n;
+  // Unauthenticated payers have no endpoint by design; no tier reaches premium
+  // except paid, so their answer is the same either way.
+  const canAccessPremium = servedTier !== undefined && tierCanAccessPremium(servedTier);
 
   return { isReady: true, canAccessPremium };
 }
@@ -34,28 +43,27 @@ interface ValidateModalityParams {
   modality: ChatModality;
   current: SelectedModelEntry[];
   models: Model[];
-  premiumIds: Set<string>;
-  canAccessPremium: boolean;
   textFallback: SelectedModelEntry | undefined;
 }
 
 /**
  * Returns the next selection list for a modality, or `undefined` if no change is needed.
  *
- * Drops entries that no longer exist in the API or that the user can't access (premium).
- * For the text modality, empties after filtering are replaced with the strongest
- * accessible text model so the UI always has a primary model to render.
+ * Drops ONLY entries the catalog no longer carries. A premium model the payer
+ * cannot currently reach is deliberately KEPT: it renders marked with its
+ * reason, and removing it from the store is the "hide what you cannot afford"
+ * shape the product rule forbids (BILLING §Data Structures — options are marked,
+ * never filtered). It also silently rewrote a user's selection on a balance
+ * change, which is a selection the user never made.
  */
 function validateModality(params: ValidateModalityParams): SelectedModelEntry[] | undefined {
-  const { modality, current, models, premiumIds, canAccessPremium, textFallback } = params;
+  const { modality, current, models, textFallback } = params;
   // Empty text is impossible at runtime (subscriber guard + merge restore it);
   // empty image/audio/video is legitimate and is repopulated by useResolveDefaultModel.
   if (current.length === 0) return undefined;
 
   const validIds = new Set(models.map((m) => m.id));
-  const filtered = current.filter(
-    (entry) => validIds.has(entry.id) && (canAccessPremium || !premiumIds.has(entry.id))
-  );
+  const filtered = current.filter((entry) => validIds.has(entry.id));
 
   if (filtered.length === current.length) return undefined;
 
@@ -70,7 +78,7 @@ const MODALITIES: readonly ChatModality[] = ['text', 'image', 'audio', 'video'];
 
 export function useModelValidation(): void {
   const { data: session, isPending: isSessionPending } = useSession();
-  const { data: balanceData } = useBalance();
+  const { data: spendableData } = useSpendable(null);
   const { data: modelsData } = useModels();
   const selections = useModelStore((state) => state.selections);
   const setSelectedModels = useModelStore((state) => state.setSelectedModels);
@@ -94,7 +102,7 @@ export function useModelValidation(): void {
       modelsData,
       isSessionPending,
       isAuthenticated,
-      balanceData,
+      servedTier: spendableData?.tier,
     });
 
     if (!state.isReady || !modelsData) return;
@@ -119,13 +127,11 @@ export function useModelValidation(): void {
         modality,
         current: selections[modality],
         models: modalityModels,
-        premiumIds,
-        canAccessPremium,
         textFallback,
       });
       if (next !== undefined) {
         setSelectedModels(modality, next);
       }
     }
-  }, [modelsData, session?.user, isSessionPending, balanceData, selections, setSelectedModels]);
+  }, [modelsData, session?.user, isSessionPending, spendableData, selections, setSelectedModels]);
 }

@@ -668,8 +668,24 @@ Three properties follow, and they are the reason for this shape:
   carrier for the model dimension and consumes the envelope rather than making its own call.
 
 The classifier's charge has no content of its own. It is anchored onto the turn's first
-persisted content, exactly as the run-level prompt storage fee is — a turn-level charge with
-no anchor is silently absorbed by the platform, which would make the reserve a lie.
+**persisted** content — a turn-level charge with no anchor is silently absorbed by the platform,
+which would make the reserve a lie.
+
+**The run-level prompt storage fee is NOT that precedent, and the difference is load-bearing.** That
+fee is not anchored at all: it is folded onto the charge at index 0, on the reasoning that the first
+charge is always a succeeded generation. Introducing a turn-level node breaks that reasoning in two
+places at once, and both must be closed by whichever change introduces it:
+
+- the turn-level charge becomes index 0, so the prompt storage fee attaches to a charge that has no
+  anchor and is therefore dropped — the fee vanishes silently;
+- an all-siblings-failed turn stops having zero charges, so a detector that reads "no charges" as
+  "everything failed" no longer fires, and settlement can commit having persisted nothing and billed
+  nothing while reporting success.
+
+**Streaming is withheld by the graph, not by a flag.** A node whose output is consumed rather than
+displayed emits nothing, and that set is already computable from the compiled definition — so the
+disposition is derived, never declared. A declared per-node stream flag would be a second authority
+for a fact the graph already fixes, free to contradict it.
 
 ### Mechanisms rejected, and why
 

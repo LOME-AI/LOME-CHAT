@@ -4,7 +4,7 @@
  * primitives their own way — the chat slice (`resolvePayerWallet` + the route
  * tier gate) from Postgres, the client (`resolveClientBilling` via
  * `deriveClientFundingInputs`) from its budgets / models endpoints — and then
- * call {@link resolveFundingDecision}. Because there is a single decision
+ * call {@link resolveFunding}. Because there is a single decision
  * function, a scenario can be pinned once here and both sides are bound to the
  * same RULE; a change to that rule that split the two verdicts becomes a failure
  * of this table.
@@ -16,7 +16,7 @@
  * note above them.
  *
  * Both legs are exercised:
- *  - the SERVER leg calls {@link resolveFundingDecision} on the raw nano-USD
+ *  - the SERVER leg calls {@link resolveFunding} on the raw nano-USD
  *    {@link FundingInputs} (how the chat slice feeds it), and
  *  - the CLIENT leg feeds the equivalent nano-USD {@link ClientBillingInput}
  *    through the client's own {@link deriveClientFundingInputs} shell into the
@@ -28,11 +28,7 @@
  * never reaches this core.
  */
 import { describe, expect, it } from 'vitest';
-import {
-  resolveFundingDecision,
-  type FundingDecision,
-  type FundingInputs,
-} from './funding-decision.js';
+import { resolveFunding, type FundingDecision, type FundingInputs } from './funding-decision.js';
 import { deriveClientFundingInputs, type ClientBillingInput } from './client-billing.js';
 
 interface Scenario {
@@ -63,7 +59,6 @@ const MATRIX: readonly Scenario[] = [
       tier: 'paid',
       purchasedBalanceNanoUsd: ONE,
       spendableNanoUsd: ONE,
-      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
       estimatedMinimumCostNanoUsd: 0n,
     },
@@ -90,7 +85,6 @@ const MATRIX: readonly Scenario[] = [
       tier: 'free',
       purchasedBalanceNanoUsd: 0n,
       spendableNanoUsd: 0n,
-      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
       estimatedMinimumCostNanoUsd: 0n,
     },
@@ -117,7 +111,6 @@ const MATRIX: readonly Scenario[] = [
       tier: 'free',
       purchasedBalanceNanoUsd: 0n,
       spendableNanoUsd: 0n,
-      freeAllowanceNanoUsd: 0n,
       isPremiumModel: true,
       estimatedMinimumCostNanoUsd: 0n,
     },
@@ -139,7 +132,6 @@ const MATRIX: readonly Scenario[] = [
       tier: 'free',
       purchasedBalanceNanoUsd: 0n,
       spendableNanoUsd: 0n,
-      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
       estimatedMinimumCostNanoUsd: 0n,
       group: { effectiveRemainingNanoUsd: ONE, ownerBalanceNanoUsd: ONE },
@@ -162,7 +154,6 @@ const MATRIX: readonly Scenario[] = [
       tier: 'free',
       purchasedBalanceNanoUsd: 0n,
       spendableNanoUsd: 0n,
-      freeAllowanceNanoUsd: 0n,
       isPremiumModel: true,
       estimatedMinimumCostNanoUsd: 0n,
       group: { effectiveRemainingNanoUsd: ONE, ownerBalanceNanoUsd: ONE },
@@ -185,7 +176,6 @@ const MATRIX: readonly Scenario[] = [
       tier: 'paid',
       purchasedBalanceNanoUsd: ONE,
       spendableNanoUsd: ONE,
-      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
       estimatedMinimumCostNanoUsd: 0n,
       group: { effectiveRemainingNanoUsd: 0n, ownerBalanceNanoUsd: ONE },
@@ -213,7 +203,6 @@ const MATRIX: readonly Scenario[] = [
       tier: 'free',
       purchasedBalanceNanoUsd: 0n,
       spendableNanoUsd: 0n,
-      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
       estimatedMinimumCostNanoUsd: 0n,
       group: { effectiveRemainingNanoUsd: 0n, ownerBalanceNanoUsd: ONE },
@@ -241,7 +230,6 @@ const MATRIX: readonly Scenario[] = [
       tier: 'guest',
       purchasedBalanceNanoUsd: 0n,
       spendableNanoUsd: 0n,
-      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
       estimatedMinimumCostNanoUsd: 0n,
       group: { effectiveRemainingNanoUsd: ONE, ownerBalanceNanoUsd: ONE },
@@ -264,7 +252,6 @@ const MATRIX: readonly Scenario[] = [
       tier: 'guest',
       purchasedBalanceNanoUsd: 0n,
       spendableNanoUsd: 0n,
-      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
       estimatedMinimumCostNanoUsd: 0n,
       group: { effectiveRemainingNanoUsd: 0n, ownerBalanceNanoUsd: ONE },
@@ -293,7 +280,6 @@ const MATRIX: readonly Scenario[] = [
       tier: 'paid',
       purchasedBalanceNanoUsd: ONE,
       spendableNanoUsd: ONE,
-      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
       estimatedMinimumCostNanoUsd: ONE,
       group: { effectiveRemainingNanoUsd: ONE, ownerBalanceNanoUsd: ONE },
@@ -316,7 +302,6 @@ const MATRIX: readonly Scenario[] = [
       tier: 'paid',
       purchasedBalanceNanoUsd: ONE,
       spendableNanoUsd: ONE,
-      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
       estimatedMinimumCostNanoUsd: ONE,
       group: { effectiveRemainingNanoUsd: ONE - 1n, ownerBalanceNanoUsd: ONE - 1n },
@@ -344,7 +329,6 @@ const MATRIX: readonly Scenario[] = [
       tier: 'guest',
       purchasedBalanceNanoUsd: 0n,
       spendableNanoUsd: 0n,
-      freeAllowanceNanoUsd: 0n,
       isPremiumModel: false,
       estimatedMinimumCostNanoUsd: ONE,
       group: { effectiveRemainingNanoUsd: ONE - 1n, ownerBalanceNanoUsd: ONE - 1n },
@@ -355,19 +339,19 @@ const MATRIX: readonly Scenario[] = [
 
 describe('§2.K funding-scenario contract', () => {
   it.each(MATRIX)('server leg — $name', ({ inputs, expected }) => {
-    expect(resolveFundingDecision(inputs)).toEqual(expected);
+    expect(resolveFunding(inputs)).toEqual(expected);
   });
 
   it.each(MATRIX)('client leg — $name', ({ clientInputs, expected }) => {
     // The client's production shell (deriveClientFundingInputs) feeds the SAME
     // core, so its decision must match the server's for the same scenario.
-    expect(resolveFundingDecision(deriveClientFundingInputs(clientInputs))).toEqual(expected);
+    expect(resolveFunding(deriveClientFundingInputs(clientInputs))).toEqual(expected);
   });
 
   it('binds both sides — client and server resolve every scenario identically', () => {
     for (const { inputs, clientInputs } of MATRIX) {
-      expect(resolveFundingDecision(deriveClientFundingInputs(clientInputs))).toEqual(
-        resolveFundingDecision(inputs)
+      expect(resolveFunding(deriveClientFundingInputs(clientInputs))).toEqual(
+        resolveFunding(inputs)
       );
     }
   });

@@ -299,11 +299,11 @@ describe('BudgetMessages', () => {
         {
           id: 'test',
           type: 'info',
-          message: 'Free preview. Sign up for full access.',
+          message: 'Sample info. Sign up for details.',
           segments: [
-            { text: 'Free preview. ' },
+            { text: 'Sample info. ' },
             { text: 'Sign up', link: '/signup' },
-            { text: ' for full access.' },
+            { text: ' for details.' },
           ],
         },
       ];
@@ -320,11 +320,11 @@ describe('BudgetMessages', () => {
         {
           id: 'test',
           type: 'info',
-          message: 'Using free allowance. Top up for longer conversations.',
+          message: 'Sample warning. Top up for details.',
           segments: [
-            { text: 'Using free allowance. ' },
+            { text: 'Sample warning. ' },
             { text: 'Top up', link: '/billing' },
-            { text: ' for longer conversations.' },
+            { text: ' for details.' },
           ],
         },
       ];
@@ -340,19 +340,19 @@ describe('BudgetMessages', () => {
         {
           id: 'test',
           type: 'error',
-          message: 'Insufficient balance. Top up or try a more affordable model.',
+          message: 'Sample error. Top up for details.',
           segments: [
-            { text: 'Insufficient balance. ' },
+            { text: 'Sample error. ' },
             { text: 'Top up', link: '/billing' },
-            { text: ' or try a more affordable model.' },
+            { text: ' for details.' },
           ],
         },
       ];
       render(<BudgetMessages errors={errors} />);
 
-      expect(screen.getByText(/Insufficient balance\./)).toBeInTheDocument();
+      expect(screen.getByText(/Sample error\./)).toBeInTheDocument();
       expect(screen.getByText('Top up')).toBeInTheDocument();
-      expect(screen.getByText(/or try a more affordable model\./)).toBeInTheDocument();
+      expect(screen.getByText(/for details\./)).toBeInTheDocument();
     });
 
     it('renders billing link correctly', () => {
@@ -360,11 +360,11 @@ describe('BudgetMessages', () => {
         {
           id: 'test',
           type: 'info',
-          message: 'Using free allowance. Top up for longer conversations.',
+          message: 'Sample warning. Top up for details.',
           segments: [
-            { text: 'Using free allowance. ' },
+            { text: 'Sample warning. ' },
             { text: 'Top up', link: '/billing' },
-            { text: ' for longer conversations.' },
+            { text: ' for details.' },
           ],
         },
       ];
@@ -379,11 +379,11 @@ describe('BudgetMessages', () => {
         {
           id: 'test',
           type: 'info',
-          message: 'Free preview. Sign up for full access.',
+          message: 'Sample info. Sign up for details.',
           segments: [
-            { text: 'Free preview. ' },
+            { text: 'Sample info. ' },
             { text: 'Sign up', link: '/signup' },
-            { text: ' for full access.' },
+            { text: ' for details.' },
           ],
         },
       ];
@@ -442,19 +442,23 @@ describe('BudgetMessages', () => {
 
     it('reappears after condition cycles off then on', async () => {
       const user = userEvent.setup();
-      const errors: BudgetError[] = [{ id: 'low_balance', type: 'warning', message: 'Low' }];
+      const errors: BudgetError[] = [
+        { id: 'answer_may_be_shortened', type: 'warning', message: 'Low' },
+      ];
       const { rerender } = render(<BudgetMessages errors={errors} />);
 
-      await user.click(screen.getByTestId('budget-dismiss-low_balance'));
+      await user.click(screen.getByTestId('budget-dismiss-answer_may_be_shortened'));
       await waitFor(() => {
-        expect(screen.queryByTestId('budget-message-low_balance')).not.toBeInTheDocument();
+        expect(
+          screen.queryByTestId('budget-message-answer_may_be_shortened')
+        ).not.toBeInTheDocument();
       });
 
       rerender(<BudgetMessages errors={[]} />);
 
       rerender(<BudgetMessages errors={errors} />);
 
-      expect(screen.getByTestId('budget-message-low_balance')).toBeInTheDocument();
+      expect(screen.getByTestId('budget-message-answer_may_be_shortened')).toBeInTheDocument();
     });
 
     it('dismissing one message does not hide others', async () => {

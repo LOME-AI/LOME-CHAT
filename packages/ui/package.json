@@ -52,7 +52,6 @@
     "framer-motion": "^12.40.0",
     "kokoro-js": "^1.2.1",
     "lucide-react": "^0.577.0",
-    "onnxruntime-common": "1.22.0-dev.20250409-89f8206ba4",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
     "vaul": "^1.1.2",

@@ -84,6 +84,18 @@ export const TIMEOUTS = {
    * saturated host without scaling at runtime.
    */
   MAILBOX_DELIVERY: 15_000,
+  /**
+   * The on-device text-to-speech worker has spawned, evaluated its module graph
+   * (kokoro-js plus the ONNX runtime), taken delivery of the load message and
+   * issued its first model-file request. Sized as an upper bound on that boot,
+   * not as the thing being measured: what proves the worker alive is the
+   * request itself, which a worker that died on load never issues, so the
+   * budget only has to be wide enough that a saturated host cannot make a live
+   * worker look dead. It stays far below the engine's own 120s load timeout, so
+   * a stalled download cannot reach that timeout inside this budget and turn a
+   * held request into an error state.
+   */
+  TTS_WORKER_BOOT: 30_000,
   /** A single web-first assertion. */
   ASSERT: 10_000,
   /** A fast, near-immediate expectation. */

@@ -60,17 +60,41 @@ describe('truncateForClassifier', () => {
     expect(out).toContain('[AI END]:');
   });
 
-  it('caps total captured content at MAX_CLASSIFIER_CONTEXT_CHARS', () => {
+  /**
+   * The guarantee: nothing this function returns is longer than the shared
+   * excerpt budget — section labels and separators included, because they are
+   * part of the returned string and the classifier is billed for the whole of
+   * it. Budgeting only the captured text put the emitted message past the budget
+   * by the envelope's own size, which is `reserve ⊇ bill` broken by a
+   * derivation rather than by an amount.
+   *
+   * The other half of the bound — that the reserve prices at least this budget
+   * plus a worst-case template render — is pinned where the reserve is computed
+   * (`classifier-line-item.test.ts`), so neither side can move alone.
+   */
+  it('never emits more than MAX_CLASSIFIER_CONTEXT_CHARS in total, labels included', () => {
+    const cases = [
+      { latestUserMessage: long(10_000), latestAssistantMessage: long(10_000) },
+      { latestUserMessage: long(5000), latestAssistantMessage: long(5000) },
+      { latestUserMessage: long(MAX_CLASSIFIER_CONTEXT_CHARS), latestAssistantMessage: '' },
+      { latestUserMessage: long(50_000), latestAssistantMessage: long(7, 'z') },
+      { latestUserMessage: long(1), latestAssistantMessage: long(50_000) },
+    ];
+    for (const input of cases) {
+      expect(truncateForClassifier(input).length).toBeLessThanOrEqual(MAX_CLASSIFIER_CONTEXT_CHARS);
+    }
+  });
+
+  it('spends the whole budget when there is content for every section', () => {
     const veryLong = long(10_000);
     const out = truncateForClassifier({
       latestUserMessage: veryLong,
       latestAssistantMessage: veryLong,
     });
-
-    // Strip both section markers AND the blank-line separators — they're
-    // formatting overhead, not classifier content. The cap is on captured chars.
-    const stripped = out.replaceAll(/\[(USER|AI) (START|END)\]: /g, '').replaceAll('\n\n', '');
-    expect(stripped.length).toBeLessThanOrEqual(MAX_CLASSIFIER_CONTEXT_CHARS);
+    // Exactly at the budget: the labels and separators are inside it, so the
+    // content shrinks by their size rather than the message growing past it.
+    expect(out.length).toBe(MAX_CLASSIFIER_CONTEXT_CHARS);
+    expect(out).toContain('[AI END]: ');
   });
 
   it('captures from the start when capturing a USER START or AI START direction', () => {
@@ -101,24 +125,23 @@ describe('truncateForClassifier', () => {
       latestUserMessage: userMessage,
       latestAssistantMessage: '',
     });
-    const stripped = out.replaceAll(/\[(USER|AI) (START|END)\]: /g, '').replaceAll('\n\n', '');
     // When AI is empty, the unused AI per-direction caps redistribute to the
-    // user directions, so we can approach the global budget — not stuck at
-    // 2 × per-direction.
-    expect(stripped.length).toBe(MAX_CLASSIFIER_CONTEXT_CHARS);
+    // user directions, so the message reaches the global budget — not stuck at
+    // 2 × per-direction. Measured on the emitted message, because that is the
+    // quantity the budget bounds.
+    expect(out.length).toBe(MAX_CLASSIFIER_CONTEXT_CHARS);
   });
 
-  it('first-message redistribution: 4000-char user prompt fills full global budget', () => {
+  it('first-message redistribution: a budget-sized user prompt fills the whole budget', () => {
     // When the AI message is empty (first turn), the per-direction cap
-    // shouldn't halve the usable budget. A 4000-char prompt should yield
-    // ~4000 chars across USER START + USER END.
+    // shouldn't halve the usable budget: USER START + USER END between them
+    // spend the whole budget.
     const userMessage = long(MAX_CLASSIFIER_CONTEXT_CHARS);
     const out = truncateForClassifier({
       latestUserMessage: userMessage,
       latestAssistantMessage: '',
     });
-    const stripped = out.replaceAll(/\[(USER|AI) (START|END)\]: /g, '').replaceAll('\n\n', '');
-    expect(stripped.length).toBe(MAX_CLASSIFIER_CONTEXT_CHARS);
+    expect(out.length).toBe(MAX_CLASSIFIER_CONTEXT_CHARS);
   });
 
   it('preserves directional separators between sections', () => {

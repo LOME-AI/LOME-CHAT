@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Node, mediaTag, textTag } from '@hushbox/shared';
+import { Node, jsonTag, mediaTag, textTag } from '@hushbox/shared';
 import { createServerTransformCompute } from '../../media/index.js';
 import { MODEL_CALL_IMPL_VERSION, SMART_MODEL_IMPL_VERSION } from './live-execution-registry.js';
 import { createModelResolver } from './model-resolver.js';
@@ -115,6 +115,24 @@ describe('createNodeRegistry resolveValuePorts', () => {
     expect(registry.resolveValuePorts(node)).toEqual({ in: [textTag()], out: textTag() });
   });
 
+  it('gives a modelCall declaring an input schema that schema as its input port', () => {
+    const registry = makeRegistry();
+    const node = valueNode({
+      type: 'modelCall',
+      id: 'm',
+      version: MODEL_CALL_IMPL_VERSION,
+      out: 'out',
+      model: 'answer-model',
+      params: {},
+      inputSchema: 'turnDecision',
+      in: { node: 'decide', port: 'out' },
+    });
+    expect(registry.resolveValuePorts(node)).toEqual({
+      in: [jsonTag('turnDecision')],
+      out: textTag(),
+    });
+  });
+
   it('fails closed on a modelCall whose model is unknown', () => {
     const registry = makeRegistry();
     const node = valueNode({
@@ -176,6 +194,24 @@ describe('createNodeRegistry resolveValuePorts', () => {
       in: { node: 'input', port: 'prompt' },
     });
     expect(registry.resolveValuePorts(node)).toEqual({ in: [textTag()], out: textTag() });
+  });
+
+  it('gives a smartModel declaring an input schema that schema as its input port', () => {
+    const registry = makeRegistry();
+    const node = valueNode({
+      type: 'smartModel',
+      id: 's',
+      version: SMART_MODEL_IMPL_VERSION,
+      out: 'out',
+      classifierModelId: 'answer-model',
+      candidates: [{ id: 'answer-model' }, { id: 'hard-model' }],
+      inputSchema: 'turnDecision',
+      in: { node: 'decide', port: 'out' },
+    });
+    expect(registry.resolveValuePorts(node)).toEqual({
+      in: [jsonTag('turnDecision')],
+      out: textTag(),
+    });
   });
 
   it('accepts a multimodal-input (vision) candidate — it resolves as a text→text model', () => {

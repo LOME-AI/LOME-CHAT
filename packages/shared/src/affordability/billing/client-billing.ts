@@ -1,5 +1,5 @@
 /**
- * The client's imperative shell around the shared {@link resolveFundingDecision}
+ * The client's imperative shell around the shared {@link resolveFunding}
  * core. It is the client counterpart to the server's `resolvePayerWallet`: both
  * sides feed the SAME pure core, so the who-pays + premium-tier RULE is shared —
  * but the inputs are not, and the verdicts can differ. This shell passes the
@@ -14,11 +14,11 @@
  * The core answers only two questions — WHO pays and WHETHER a premium model is
  * allowed. It says nothing about affordability or the trial quota. Those live
  * here, in the client-only affordability layer, which maps the core's
- * {@link FundingDecision} plus the caller's served numbers onto the notification
- * vocabulary that `generateNotifications()` renders (`insufficient_balance`,
- * `insufficient_free_allowance`, `trial_limit_exceeded`, `trial_fixed`, …). The
- * server never uses this vocabulary — its settlement path draws from the core
- * directly.
+ * {@link FundingDecision} plus the caller's served numbers onto this module's
+ * own denial discriminator ({@link DenialReason}). That discriminator names WHY
+ * the client refused; `generateNotifications()` maps it onto the shared typed
+ * notice vocabulary, which is where the wording lives. The server never uses
+ * this discriminator — its settlement path draws from the core directly.
  *
  * All money here is nano-USD `bigint`, exact end-to-end — cents exist only at
  * display formatting, never in a decision.
@@ -26,11 +26,7 @@
 
 import { MAX_TRIAL_MESSAGE_COST_CENTS } from '../constants.js';
 import { NANO_USD_PER_CENT } from '../nano-usd.js';
-import {
-  resolveFundingDecision,
-  type FundingInputs,
-  type PayerSwitchReason,
-} from './funding-decision.js';
+import { resolveFunding, type FundingInputs, type PayerSwitchReason } from './funding-decision.js';
 import type { UserTier } from '../tiers.js';
 
 /** The trial/guest fixed per-message ceiling, in nano-USD (client-side arm — trial has no served-spendable endpoint). */
@@ -70,10 +66,15 @@ export interface ClientBillingInput {
    * exactly what admission's balance gate compares. The cushion is baked in
    * exactly once server-side — this layer must never re-add it (the
    * double-cushion hazard). `0n` for tiers with no endpoint (trial/guest).
+   *
+   * It is ONE number for every authenticated tier: a paid payer's is the
+   * cushioned wallet spendable, a free payer's is the day-keyed allowance
+   * remaining, and both arrive hold-aware from the same field. There is no
+   * second funding figure to compose against, which is what makes the
+   * affordability compare below tier-blind in its arithmetic and tier-keyed
+   * only in its vocabulary.
    */
   spendableNanoUsd: bigint;
-  /** The served daily free-allowance remaining. */
-  freeAllowanceNanoUsd: bigint;
   isPremiumModel: boolean;
   estimatedMinimumCostNanoUsd: bigint;
   /**
@@ -164,9 +165,7 @@ export function deriveClientFundingInputs(input: ClientFundingContext): FundingI
  */
 export function payerSizingTier(input: Omit<ClientFundingContext, 'isPremiumModel'>): UserTier {
   if (input.group === undefined) return input.tier;
-  const decision = resolveFundingDecision(
-    deriveClientFundingInputs({ ...input, isPremiumModel: false })
-  );
+  const decision = resolveFunding(deriveClientFundingInputs({ ...input, isPremiumModel: false }));
   return decision.payer === 'owner' ? 'paid' : input.tier;
 }
 
@@ -180,23 +179,23 @@ function resolveSelfFunding(
   input: ClientBillingInput,
   payerSwitch: PayerSwitchReason | undefined
 ): ResolveBillingResult {
-  const { tier, spendableNanoUsd, freeAllowanceNanoUsd, estimatedMinimumCostNanoUsd } = input;
+  const { tier, spendableNanoUsd, estimatedMinimumCostNanoUsd } = input;
   // Carried onto the approved arms only: a denial states its own reason, and
   // §Notices 5's disclosure exists for the send that succeeds.
   const disclosure = payerSwitch === undefined ? {} : { payerSwitch };
 
-  if (tier === 'paid') {
-    // The served spendable already includes the negative-balance cushion (and
-    // subtracts active holds) — compare directly, never re-add the cushion.
+  // Paid and free run the SAME compare against the SAME served number — the
+  // wallet each draws on differs, but which wallet it is was decided
+  // server-side and is already baked into the served figure. Only the
+  // vocabulary is tier-keyed: what the payer can do about a shortfall differs
+  // (top up versus wait for tomorrow), so the two arms name different sources
+  // and different reasons for one piece of arithmetic.
+  if (tier === 'paid' || tier === 'free') {
+    const source = tier === 'paid' ? 'personal_balance' : 'free_allowance';
+    const reason = tier === 'paid' ? 'insufficient_balance' : 'insufficient_free_allowance';
     return spendableNanoUsd >= estimatedMinimumCostNanoUsd
-      ? { fundingSource: 'personal_balance', ...disclosure }
-      : { fundingSource: 'denied', reason: 'insufficient_balance' };
-  }
-
-  if (tier === 'free') {
-    return freeAllowanceNanoUsd >= estimatedMinimumCostNanoUsd
-      ? { fundingSource: 'free_allowance', ...disclosure }
-      : { fundingSource: 'denied', reason: 'insufficient_free_allowance' };
+      ? { fundingSource: source, ...disclosure }
+      : { fundingSource: 'denied', reason };
   }
 
   if (tier === 'guest') {
@@ -211,7 +210,7 @@ function resolveSelfFunding(
 /**
  * Resolve billing for a message on the client: WHO pays or WHY it's denied.
  *
- * Who-pays + premium comes from the shared {@link resolveFundingDecision} core;
+ * Who-pays + premium comes from the shared {@link resolveFunding} core;
  * this function only translates the core's decision into the notification
  * vocabulary and layers the affordability / trial checks on top.
  */
@@ -230,7 +229,7 @@ export function resolveClientBilling(input: ClientBillingInput): ResolveBillingR
     return { fundingSource: 'denied', reason: 'insufficient_balance' };
   }
 
-  const decision = resolveFundingDecision(deriveClientFundingInputs(input));
+  const decision = resolveFunding(deriveClientFundingInputs(input));
 
   if (decision.payer === 'owner') {
     return { fundingSource: 'owner_balance' };

@@ -21,6 +21,12 @@ const {
 }));
 
 // Keep the real router (createFileRoute must run for the route file); override only useNavigate.
+vi.mock('@/hooks/billing/use-spendable', () => ({
+  useSpendable: () => ({ data: undefined, isPending: false }),
+}));
+vi.mock('@/hooks/billing/use-turn-options', () => ({
+  useTurnOptions: () => ({ isPending: false, options: { affordable: { all: [] } } }),
+}));
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@tanstack/react-router')>();
   return {
@@ -132,7 +138,6 @@ vi.mock('@/hooks/models/models', async (importOriginal) => {
 vi.mock('@/hooks/billing/use-prompt-budget', () => ({
   // The picker's affordability floor shares this module; greying is out of
   // scope for the route's behavior.
-  useModelFloor: () => ({ isPending: false, isBelowFloor: () => false }),
   usePromptBudget: (input: { value: string }) => ({
     fundingSource: 'personal_balance',
     notifications: [],

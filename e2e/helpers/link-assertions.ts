@@ -46,26 +46,30 @@ export async function expectSendInputDisabled(
 /** Assert the read-only notice is visible and no trial/guest errors are shown. */
 export async function expectReadOnlyNotice(page: Page): Promise<void> {
   // Budget query paints independently of conversation query.
-  await expect(page.getByTestId(TEST_ID_BUILDERS.budgetMessage('read_only_notice'))).toBeVisible({
+  await expect(
+    page.getByTestId(TEST_ID_BUILDERS.budgetMessage('conversation_read_only'))
+  ).toBeVisible({
     timeout: TIMEOUTS.ASSERT,
   });
-  await expect(page.getByTestId(TEST_ID_BUILDERS.budgetMessage('trial_notice'))).not.toBeVisible();
   await expect(
-    page.getByTestId(TEST_ID_BUILDERS.budgetMessage('guest_budget_exhausted'))
+    page.getByTestId(TEST_ID_BUILDERS.budgetMessage('trial_preview_pays'))
+  ).not.toBeVisible();
+  await expect(
+    page.getByTestId(TEST_ID_BUILDERS.budgetMessage('guest_no_group_budget'))
   ).not.toBeVisible();
 }
 
 /** Assert the delegated budget notice is visible and no trial/guest errors are shown. */
 export async function expectDelegatedBudgetNotice(page: Page): Promise<void> {
   // Budget notice depends on billing query that loads independently from messages.
-  await expect(
-    page.getByTestId(TEST_ID_BUILDERS.budgetMessage('delegated_budget_notice'))
-  ).toBeVisible({
+  await expect(page.getByTestId(TEST_ID_BUILDERS.budgetMessage('group_budget_pays'))).toBeVisible({
     timeout: TIMEOUTS.ASSERT,
   });
-  await expect(page.getByTestId(TEST_ID_BUILDERS.budgetMessage('trial_notice'))).not.toBeVisible();
   await expect(
-    page.getByTestId(TEST_ID_BUILDERS.budgetMessage('guest_budget_exhausted'))
+    page.getByTestId(TEST_ID_BUILDERS.budgetMessage('trial_preview_pays'))
+  ).not.toBeVisible();
+  await expect(
+    page.getByTestId(TEST_ID_BUILDERS.budgetMessage('guest_no_group_budget'))
   ).not.toBeVisible();
 }
 

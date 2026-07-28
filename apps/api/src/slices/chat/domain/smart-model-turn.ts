@@ -37,12 +37,7 @@ import type { Database } from '@hushbox/db';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Result, ResultAsync } from '../../../lib/result/index.js';
-import type {
-  ChatHistoryMessage,
-  ModelDescriptor,
-  PolicyHooks,
-  WorkflowDefinition,
-} from '@hushbox/shared';
+import type { ModelDescriptor, PolicyHooks, WorkflowDefinition } from '@hushbox/shared';
 
 /**
  * The Smart Model turn: ONE composite `smartModel` node on the same executor,
@@ -63,8 +58,7 @@ export interface SmartModelTurnParams {
   readonly hooks?: PolicyHooks;
   /**
    * The affordable output-token ceiling for the ANSWER generation, carried as
-   * the node's params (the classifier call never reads them — it sets only its
-   * own fixed output cap). Omitted = the answering model's own default.
+   * the node's params. Omitted = the answering model's own default.
    */
   readonly answerCapTokens?: number;
   /** The estimated prompt input-token count, stamped for the candidate answer
@@ -152,6 +146,7 @@ export function buildSmartModelTurn(
     ...(params.promptInputTokens === undefined
       ? {}
       : { promptInputTokens: params.promptInputTokens }),
+    accepts: textTag(),
     in: inputs.ports[CHAT_TURN_INPUT],
   });
   return buildWorkflow({
@@ -287,10 +282,11 @@ export function buildSmartModelTurnDefinition(
      */
     readonly budget?: TurnBudget;
     /**
-     * True when the request selected `auto` effort: the ONE classifier call
-     * additionally classifies the effort dimension. Gated on at least one
-     * reasoning-capable candidate — with none, no effort dimension exists
-     * (no call beyond routing, no extra charge, no reserve change).
+     * True when the request selected `auto` effort: the slot declares the EFFORT
+     * axis open alongside the model axis, so the turn's one classifier answers
+     * both and one reserve covers both. Gated on at least one reasoning-capable
+     * candidate — with none, no effort axis exists, so nothing beyond the model
+     * axis is asked and the reserve is unchanged.
      */
     readonly classifyEffort?: boolean;
     /** True when the send selected `none` — see {@link SmartModelTurnParams.reasoningOff}. */
@@ -359,20 +355,19 @@ export type AutoEffortTurnBuild =
   | { readonly kind: 'fallback' };
 
 /**
- * The pinned-model + auto-effort turn: the user chose the model, so the
- * ONE classifier generation classifies only the effort dimension over a
- * single-candidate smartModel node — `classify: { model: false, effort:
- * true }` — and the model dimension short-circuits at runtime. The node is
- * NOT badged Smart Model (the pick is the user's own).
+ * The pinned-model + auto-effort turn: the user chose the model, so only the
+ * EFFORT axis is open. It compiles a single-candidate `smartModel` slot declaring
+ * `classify: { model: false, effort: true }`, which leaves the model axis closed —
+ * the slot binds the user's own pick and is NOT badged Smart Model.
  *
  * The answer cap reserves the STRONGEST affordable option's budget on top of
  * the answer headroom (B + H, sized after deducting the classifier's
- * worst-case reserve), so whichever option the classifier picks at runtime
- * carves its budget out of an already-held cap — reserve ≥ charge by
- * construction. The classifier is the cheapest priceable engine-text model
- * (the Smart Model derivation, reused); when the catalog holds no priceable
- * engine the send is REFUSED with the typed classifier code (BILLING §Effort
- * 5) — never a silent static pick, and explicit levels stay usable.
+ * worst-case reserve), so whichever level the turn resolves to carves its budget
+ * out of an already-held cap — reserve ≥ charge by construction. The classifier
+ * engine is the cheapest priceable engine-text model (the Smart Model derivation,
+ * reused); when the catalog holds no priceable engine the send is REFUSED with the
+ * typed classifier code (BILLING §Effort 5) — never a silent static pick, and
+ * explicit levels stay usable.
  */
 export function compileAutoEffortTurn(
   catalog: readonly ModelDescriptor[],
@@ -386,7 +381,7 @@ export function compileAutoEffortTurn(
   if (turnEffortOptions([reasoningPlanModelFrom(target)]).length < 2) {
     return ok({ kind: 'fallback' });
   }
-  const classifier = pickEffortClassifier(catalog, target);
+  const classifier = pickEffortClassifier(catalog);
   if (classifier === null) {
     return err(
       unavailableError(
@@ -491,14 +486,15 @@ export interface TrialSmartModelTurnDeps {
 export function buildTrialSmartModelTurnDefinition(
   deps: TrialSmartModelTurnDeps,
   args: {
-    readonly prompt: string;
-    readonly history: readonly ChatHistoryMessage[];
     readonly now: Date;
     /**
-     * The 1¢-derived answer output-token ceiling budget; omitted builds without
-     * a cap. The trial reserve is priced in base units and not deducted here.
+     * The 1¢-derived budget. REQUIRED on this arm, unlike the paid one: a trial
+     * send is defined by its per-message ceiling (§Trial Usage), and the ceiling
+     * is also the basis the candidate gate prices against. A trial build with no
+     * budget would have no cap to compile AND no character count to gate on, so
+     * the shape does not permit one.
      */
-    readonly budget?: TurnBudget;
+    readonly budget: TurnBudget;
     /** True when the trial request selected `auto` effort (same gate as paid). */
     readonly classifyEffort?: boolean;
     /** True when the send selected `none` — see {@link SmartModelTurnParams.reasoningOff}. */
@@ -506,11 +502,15 @@ export function buildTrialSmartModelTurnDefinition(
   }
 ): ResultAsync<SmartModelTurnBuild, DomainError> {
   return listDescriptors({ db: deps.db, telemetry: deps.telemetry }).andThen((catalog) => {
+    // The candidate gate prices the SAME character count the definition is
+    // compiled against, forwarded from the budget rather than recounted here, so
+    // the two cannot measure different prompts. Recounting locally is what let a
+    // send with custom instructions past the 1¢ gate: this file can see the
+    // prompt and the history, but only the route sees the instructions.
     const picked = buildTrialSmartModelCandidates({
       descriptors: catalog,
       nowMs: args.now.getTime(),
-      prompt: args.prompt,
-      history: args.history,
+      promptCharacterCount: args.budget.promptCharacterCount,
     });
     const classify =
       args.classifyEffort === true && picked !== null
@@ -518,7 +518,7 @@ export function buildTrialSmartModelTurnDefinition(
         : undefined;
     return compileSmartModelBuild(catalog, picked, {
       hooks: TRIAL_TURN_HOOKS,
-      ...(args.budget === undefined ? {} : { budget: args.budget }),
+      budget: args.budget,
       ...(classify === undefined ? {} : { classify }),
       ...(args.reasoningOff === true ? { reasoningOff: true } : {}),
     });

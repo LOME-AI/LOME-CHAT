@@ -1,6 +1,4 @@
-import { pushEventPayloadSchema } from '@hushbox/shared';
-import { ResultAsync, errAsync, okAsync } from '../../../lib/result/index.js';
-import { validationError } from '../../../lib/errors/index.js';
+import { ResultAsync, okAsync } from '../../../lib/result/index.js';
 import { sendWebPush } from './webpush/index.js';
 import type { VapidKeys, WebPushSendResult } from './webpush/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
@@ -53,13 +51,15 @@ export function createWebPushSender(config: WebPushSenderConfig): PushSender {
       if (web.length === 0) {
         return okAsync(NOTHING);
       }
-      const parsed = pushEventPayloadSchema.safeParse(message.data);
-      if (!parsed.success) {
-        return errAsync(
-          validationError('web push requires a generic {category, conversationId} payload')
-        );
-      }
-      const payload = new TextEncoder().encode(JSON.stringify(parsed.data));
+      // Projected field by field rather than serialized wholesale: a
+      // structurally typed object can carry properties the type never declared,
+      // and this is the seam where such a property would be encrypted and sent.
+      const payload = new TextEncoder().encode(
+        JSON.stringify({
+          category: message.payload.category,
+          conversationId: message.payload.conversationId,
+        })
+      );
       const options = {
         ttl,
         ...(message.collapseKey === undefined ? {} : { topic: message.collapseKey }),

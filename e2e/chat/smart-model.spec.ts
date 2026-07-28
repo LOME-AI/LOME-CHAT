@@ -269,7 +269,7 @@ test.describe('Smart Model', () => {
       timeout: TIMEOUTS.ASSERT,
     });
     await expect(
-      lowBalancePage.getByText(/Your free daily usage can't cover this message/i)
+      lowBalancePage.getByText(/free daily allowance can't cover this message/i)
     ).toBeVisible();
     await expect(chatPage.sendButton).toBeDisabled();
 

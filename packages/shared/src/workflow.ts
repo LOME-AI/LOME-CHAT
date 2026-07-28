@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Edge, NodeId, PortId, PortRef } from './type-tag.js';
+import { ResolvedReasoningEffort } from './affordability/reasoning-effort.js';
 
 /**
  * WorkflowDefinition: a serializable, Zod-validated JSON DAG
@@ -35,9 +36,24 @@ const nodeBase = {
   onError: z.enum(['fail', 'skip']).default('fail'),
 };
 
+/**
+ * The registered `json<…>` schema a value node's single input port carries,
+ * naming it in place of the model's own derived text input. A model's ports come
+ * from its declared modalities, which are always text on the input side, and a
+ * single port cannot express text-or-envelope (TypeTag v1 has no union) — so a
+ * node consuming a runtime decision rather than a raw prompt declares the schema
+ * it consumes and the port derivation follows. Absent is the plain text input.
+ * One port either way: the single-input-port rule value nodes compile under is
+ * unaffected.
+ */
+const acceptsSchema = {
+  inputSchema: z.string().min(1).optional(),
+};
+
 export const Node = z.discriminatedUnion('type', [
   z.object({
     ...nodeBase,
+    ...acceptsSchema,
     type: z.literal('modelCall'),
     model: z.string().min(1),
     params: z.record(z.string(), z.unknown()),
@@ -55,6 +71,16 @@ export const Node = z.discriminatedUnion('type', [
     // provider — it is not a call parameter. Absent ⇒ the estimator falls back
     // to the full context window (fail-closed over-reserve).
     promptInputTokens: z.number().int().nonnegative().optional(),
+    // The reasoning level the build already resolved for this call, stamped
+    // beside — never instead of — the `reasoning` wire in `params`. Like
+    // `promptInputTokens` it is server-derived definition data that lives on the
+    // node and is NEVER forwarded to the provider. It is carried rather than
+    // read back off the wire because the wire is lossy: two rungs whose budgets
+    // clamp to one ceiling mint an identical `max_tokens`, so recovering the
+    // level from it would name the wrong rung on the answer. Absent on a call
+    // whose level is decided at runtime (the classified path resolves its own)
+    // or on one that does no reasoning at all.
+    reasoningEffort: ResolvedReasoningEffort.optional(),
   }),
   z.object({
     ...nodeBase,
@@ -95,6 +121,7 @@ export const Node = z.discriminatedUnion('type', [
   z.object({ ...nodeBase, type: z.literal('subWorkflow'), ref: z.string().min(1) }),
   z.object({
     ...nodeBase,
+    ...acceptsSchema,
     type: z.literal('smartModel'),
     // The cheapest candidate doubles as classifier and fallback; both fields
     // are server-derived definition data (never client intent), so they do
@@ -152,6 +179,66 @@ export function smartModelClassifierDimensions(node: Extract<Node, { type: 'smar
 } {
   const declared = node.classify ?? { model: true, effort: false };
   return { model: declared.model && node.candidates.length > 1, effort: declared.effort };
+}
+
+/**
+ * The registered reducer that turns a classifier answer into the turn's
+ * decision envelope. It is named here, rather than at its registration, because
+ * the graph shape it creates is what identifies a classifier call — see
+ * {@link isTurnClassifierNode}. Registration imports this name, so the
+ * derivation and the registered code cannot come to disagree about it.
+ */
+export const TURN_DECISION_REDUCER = 'decideTurn';
+
+/**
+ * The positional input the decision reducer reads the classifier's answer on.
+ * Position 0 carries the turn's prompt; position 1 is the optional answer.
+ */
+const CLASSIFIER_ANSWER_POSITION = 1;
+
+/**
+ * Whether this `modelCall` is the turn's classifier — DERIVED from the graph,
+ * never declared on the node. A call is the classifier exactly when the
+ * decision reducer reads its output as the answer it parses, which is the same
+ * fact "this call decides the turn" already consists of; a node therefore
+ * cannot disagree with the graph about what it is, the way a declared flag
+ * could.
+ *
+ * Two readers share this one derivation — admission (which prices the call as
+ * routing internals) and execution (which withholds the client's context from
+ * it) — for the same reason {@link smartModelClassifierDimensions} above has
+ * two: a reserve and a call that disagreed about whether a classifier ran would
+ * break `reserve ⊇ bill` silently.
+ */
+export function isTurnClassifierNode(node: Node, nodes: readonly Node[]): boolean {
+  if (node.type !== 'modelCall') return false;
+  return nodes.some(
+    (other) =>
+      other.type === 'fanIn' &&
+      other.reducer === TURN_DECISION_REDUCER &&
+      other.ins[CLASSIFIER_ANSWER_POSITION]?.node === node.id
+  );
+}
+
+/**
+ * Every node id some other node reads — the definition-level half of the
+ * consumption walk the interpreter runs over compiled inputs. A node absent
+ * from this set is a sink, and only sink outputs are persisted, which is why
+ * admission may price a consumed node without any output storage.
+ *
+ * Container feeds need no exclusion here: a body reads its container's
+ * reserved virtual port, so the id it names is the container's, never a value
+ * node's. Every id a value node contributes therefore means its `out` channel
+ * is genuinely read.
+ */
+export function consumedProducerIds(nodes: readonly Node[]): ReadonlySet<string> {
+  const consumed = new Set<string>();
+  for (const node of nodes) {
+    if ('in' in node) consumed.add(node.in.node);
+    if (node.type === 'fanIn') for (const ref of node.ins) consumed.add(ref.node);
+    if (node.type === 'fanOut') consumed.add(node.over.node);
+  }
+  return consumed;
 }
 
 /**

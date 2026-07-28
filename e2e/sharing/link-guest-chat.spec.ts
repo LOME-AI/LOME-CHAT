@@ -50,8 +50,8 @@ test.describe('Link Guest Chat', () => {
       await guestChatPage.assertMessageVisible('Hello from Alice');
     });
 
-    await test.step('guest does not see "Top up to unlock" on premium models', async () => {
-      await expect(unauthenticatedPage.getByText('Top up')).not.toBeVisible();
+    await test.step('guest does not see the premium payment prompt', async () => {
+      await expect(unauthenticatedPage.getByText('Add credit')).not.toBeVisible();
       await expect(unauthenticatedPage.getByText('to unlock')).not.toBeVisible();
     });
 

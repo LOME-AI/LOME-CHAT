@@ -1,9 +1,15 @@
 import {
+  CLASSIFIER_OUTPUT_TOKEN_CAP,
   ERROR_CODES,
+  REASONING_EFFORT_LABELS,
   IMAGE_MIME_TYPES,
   MAX_SEARCH_TOOL_CALLS,
   ReasoningWire,
+  TURN_DECISION_REDUCER,
+  isTurnClassifierNode,
+  jsonTag,
   mediaTag,
+  optionalTag,
   reasoningBudgetForWire,
   reasoningPlanModelFrom,
   spendableFundsNanoUsd,
@@ -11,17 +17,22 @@ import {
 } from '@hushbox/shared';
 import { MINIMUM_OUTPUT_TOKENS } from '@hushbox/shared/affordability/constants';
 import { turnEffortOptions } from '@hushbox/shared/affordability/estimate/effort-options';
+import { classifierReserveChars } from '@hushbox/shared/affordability/estimate/classifier-line-item';
+import { buildClassifierSystemPrompt } from '@hushbox/shared';
 import {
   estimateTokensForTier,
   outputCharsPerTokenForTier,
 } from '@hushbox/shared/affordability/estimate/pre-adapters';
 import {
   DEFAULT_WORKFLOW_CAPABILITIES,
+  TURN_DECISION_SCHEMA_NAME,
   buildWorkflow,
   createConstraintRegistry,
   createModelResolver,
   createNodeRegistry,
+  fanIn,
   modelCall,
+  truncateForClassifier,
   workflowInputs,
 } from '../../workflows/index.js';
 import { createServerTransformCompute } from '../../media/index.js';
@@ -29,8 +40,11 @@ import {
   WEB_SEARCH_TOOL_NAME,
   createEstimateRun,
   createModelPricingResolver,
+  listDescriptors,
+  pickEffortClassifier,
+  snapshotResolver,
 } from '../../models/index.js';
-import { validationError } from '../../../lib/errors/index.js';
+import { unavailableError, validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import {
   CHAT_TURN_HOOKS,
@@ -41,7 +55,11 @@ import {
 import { requiredReasoningEntryFor, resolveTurnReasoning } from './turn-reasoning.js';
 import type { TurnReasoningByModel, TurnReasoningEntry } from './turn-reasoning.js';
 import type { PayerFunding } from './turn-context.js';
-import type { ModelResolver, NodeRegistryContext } from '../../workflows/index.js';
+import type {
+  ModelCallOptions,
+  ModelResolver,
+  NodeRegistryContext,
+} from '../../workflows/index.js';
 import type { TransformCompute } from '../../media/index.js';
 import type { ModelPricingResolver } from '../../models/index.js';
 import type { Database } from '@hushbox/db';
@@ -49,8 +67,12 @@ import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { Result, ResultAsync } from '../../../lib/result/index.js';
 import type {
+  ChatHistoryMessage,
+  FlowInputs,
   ModelDescriptor,
   Node,
+  TextTag,
+  TypeTag,
   PolicyHooks,
   ReasoningEffortSelection,
   UserTier,
@@ -181,7 +203,8 @@ export function turnStorageContext(budget: TurnBudget): SmartModelStorageContext
 /**
  * Stamps a PERSISTING chat turn's definition with the admission-only
  * `{ inputChars, tier }` the run estimator needs to hold the storage settlement
- * will bill (input-prompt storage once, tier-sized output storage per node). The
+ * will bill (input-prompt storage once, then tier-sized output storage for each
+ * node whose value settlement can persist). The
  * stamp rides the DEFINITION because the estimator runs per-run at the
  * conversation DO, where the payer's tier — a route-time funding decision — is
  * otherwise unavailable (it reaches neither the run transport nor the executor).
@@ -287,17 +310,20 @@ function nodeReasoningBudgetTokens(node: Node, resolveModel: ModelPricingResolve
 }
 
 /**
- * Clones a turn definition with a new answer output-token cap on every
- * answer-producing node — the sizing probe's single mutation point, shared by
- * the single-model, multi-model, and Smart Model turns. Only the
- * `maxOutputTokens` param changes; every other node field and the definition's
- * storage stamp are preserved, so the probe prices exactly the run that will be
- * admitted. A definition is homogeneous in its answer nodes, so a media turn
- * (whose modelCall nodes carry generation params, never an output-token cap) is
- * never fit — the fit runs only for the text single/multi and Smart turns.
+ * Clones a turn definition with a new answer output-token cap on every ANSWER
+ * node — the sizing probe's single mutation point, shared by the single-model,
+ * multi-model, and Smart Model turns. Only the `maxOutputTokens` param changes;
+ * every other node field and the definition's storage stamp are preserved, so
+ * the probe prices exactly the run that will be admitted. A media turn (whose
+ * modelCall nodes carry generation params, never an output-token cap) is never
+ * fit — the fit runs only for the text single/multi and Smart turns.
  *
- * The shared money-derived answer headroom lands on every sibling, but each
- * `modelCall` node then CLAMPS it by its own physical room (§Multi-Model 3: a
+ * Which nodes those are is a question about the graph, not about the node type:
+ * a turn's classifier is a `modelCall` too, and carries its own cap. See
+ * {@link isAnswerNode}.
+ *
+ * The shared money-derived answer headroom lands on every answer node, but each
+ * `modelCall` then CLAMPS it by its own physical room (§Multi-Model 3: a
  * tight-context sibling must not constrain a large-context one). A `smartModel`
  * node has no single model to clamp against — its one cap rides whichever
  * candidate the classifier picks — so its bound arrives already tightened to the
@@ -311,7 +337,7 @@ function withAnswerCap(
   return {
     ...definition,
     nodes: definition.nodes.map((node) =>
-      node.type === 'modelCall' || node.type === 'smartModel'
+      isAnswerNode(node, definition.nodes)
         ? {
             ...node,
             params: {
@@ -322,6 +348,24 @@ function withAnswerCap(
         : node
     ),
   };
+}
+
+/**
+ * Whether the shared ANSWER cap applies to this node.
+ *
+ * The turn's classifier is a `modelCall` and is not an answer node: it carries
+ * its own output cap, the one its reserve is priced against, and the shared
+ * answer headroom is a far larger number derived from a different question.
+ * Overwriting it would let a routing call emit an answer's worth of tokens and
+ * would inflate the hold by the difference — so the sweep asks what a node IS
+ * rather than only what type it is.
+ */
+function isAnswerNode(
+  node: Node,
+  nodes: readonly Node[]
+): node is Extract<Node, { type: 'modelCall' | 'smartModel' }> {
+  if (node.type === 'smartModel') return true;
+  return node.type === 'modelCall' && !isTurnClassifierNode(node, nodes);
 }
 
 /**
@@ -361,6 +405,16 @@ function nodeAnswerCap(
  * therefore whatever the ONE estimator admission uses accepts, which makes
  * "sized-to-fit" provably imply "ceiling ≤ funds" with no second cost formula to
  * keep aligned.
+ * CLAMP ORDER, and it differs from the money module's on purpose. §Sharing one
+ * budget across siblings solves `T` against the UNCLAMPED summed cost and clamps
+ * each sibling afterwards, which is what `getTurnOptions` presents. This fit
+ * prices the ALREADY-CLAMPED definition, so a sibling saturating its own room
+ * releases its unused budget to the others and the wide sibling receives a
+ * longer answer than the presented ceiling. It is bounded by the same spendable
+ * figure either way, so the divergence can only lengthen an answer — never admit
+ * a send the client refused. Both amounts are pinned, on one fixture, in
+ * `turn-ceiling.clamp-order.test.ts`; do not close the gap without reading it.
+ *
  * The ceiling is monotonic in the cap, so a binary search returns the largest
  * fitting cap. The search FLOOR is a minimum viable answer
  * (`MINIMUM_OUTPUT_TOKENS`, or the whole physical bound when that is smaller):
@@ -505,6 +559,19 @@ function maxOutputTokensParams(
  * model default otherwise); G2's explicit-cap rule governs calls with a live
  * reasoning budget.
  */
+/**
+ * The resolved level as a node-field fragment, stamped beside — never inside —
+ * the params the wire rides in. It travels because the wire is lossy: two rungs
+ * whose budgets clamp to one ceiling mint the same `max_tokens`, so the level a
+ * generation ran at could not be recovered downstream from what it sent. Absent
+ * on a reasoning-free node, which ran at no level at all.
+ */
+function resolvedEffortField(reasoning: TurnReasoningEntry | undefined): {
+  readonly reasoningEffort?: TurnReasoningEntry['effort'];
+} {
+  return reasoning === undefined ? {} : { reasoningEffort: reasoning.effort };
+}
+
 function answerNodeParams(
   answerTokens: number | undefined,
   reasoning: TurnReasoningEntry | undefined
@@ -561,6 +628,7 @@ export function buildSingleModelTurn(
     in: inputs.ports[CHAT_TURN_INPUT],
     produces: textTag(),
     params: answerNodeParams(params.maxOutputTokens, params.reasoning),
+    ...resolvedEffortField(params.reasoning),
     ...(params.promptInputTokens === undefined
       ? {}
       : { promptInputTokens: params.promptInputTokens }),
@@ -598,6 +666,13 @@ export interface MultiModelTurnParams {
   readonly promptInputTokens?: number;
   /** Per-model resolved reasoning; a model absent from the map runs reasoning-free. */
   readonly reasoning?: TurnReasoningByModel;
+  /**
+   * Present when the EFFORT axis is open (`auto` with two or more distinct
+   * resolved choices): the turn grows a classifier call and the decision
+   * reducer, and every sibling takes its level from the answer. Absent keeps
+   * the pinned-effort shape exactly as it was.
+   */
+  readonly classifier?: TurnClassifierParams;
 }
 
 /** The sibling node id for the model at `index` — its own charge key and assistant message. */
@@ -606,16 +681,55 @@ function multiModelNodeId(index: number): string {
 }
 
 /**
+ * The turn's classifier call and the reducer that turns its answer into the
+ * decision every sibling reads.
+ *
+ * The classifier is an ORDINARY `modelCall` (`docs/BILLING.md` §How the decision
+ * reaches the answer). Nothing on the node says "classifier": the decision
+ * reducer reading its answer is what makes it one, and both the engine (which
+ * withholds the client's context from it) and admission (which prices it as
+ * routing internals) derive that from the graph rather than from a flag.
+ *
+ * It is `optional` + `onError: 'skip'` so a routing hiccup degrades to the
+ * declared fallback instead of failing the turn — the reducer's second input is
+ * an optional text for exactly that reason, and the run still answers.
+ */
+export interface TurnClassifierParams {
+  /** The cheapest priceable engine-text model — the classifier engine. */
+  readonly modelId: string;
+  /**
+   * The classifier call's own input-token basis: the truncation budget plus the
+   * rendered template, the SAME basis its reserve is priced on, so admission
+   * holds the call at what it can actually cost rather than at the engine's
+   * full context window.
+   */
+  readonly promptInputTokens: number;
+}
+
+/** The workflow input carrying the rendered classifier prompt. */
+export const CHAT_CLASSIFIER_INPUT = 'classifierPrompt';
+
+/** The classifier call's node id — its own charge key, with no content of its own. */
+export const CHAT_CLASSIFIER_NODE_ID = 'classify';
+
+/** The decision reducer's node id. */
+export const CHAT_DECISION_NODE_ID = 'decide';
+
+/**
  * The multi-model text turn: one `modelCall` sibling node per selected model,
- * all consuming the same prompt and each producing its own text. A chat turn's
- * flagship fan-out is N *different* models, which the engine's `fanOut` (a
- * single static-model body) cannot express — so it is N static sibling nodes
- * instead. Each is `optional` + `onError: 'skip'`, so one model failing skips
- * its branch (leaving no output, no charge, no message) without terminal-failing
- * the run; the successful subset persists and bills. The siblings are the
- * definition's sinks — no reducer joins them, because settlement persists each
- * originating node's output as its own assistant message (the combined text is
- * never persisted). Declaration order is the selected order, which the
+ * each producing its own text. A chat turn's flagship fan-out is N *different*
+ * models, which the engine's `fanOut` (a single static-model body) cannot
+ * express — so it is N static sibling nodes instead. Each is `optional` +
+ * `onError: 'skip'`, so one model failing skips its branch (leaving no output,
+ * no charge, no message) without terminal-failing the run; the successful
+ * subset persists and bills.
+ *
+ * What the siblings read depends on whether the effort axis is open: the turn's
+ * prompt directly when it is pinned, the decision envelope when it is `auto`
+ * (see {@link classifyingMultiModelGraph}). Either way the siblings are the only
+ * nodes settlement persists — no reducer joins their outputs, because each
+ * originating node's output becomes its own assistant message and the combined
+ * text is never persisted. Declaration order is the selected order, which the
  * interpreter preserves, so the last sibling is the fork tip at settlement.
  * `buildWorkflow` runs the same graph-compile the DO re-runs at ingest, so any
  * unknown / unexposed / non-ZDR model is refused at build with a typed error.
@@ -623,36 +737,127 @@ function multiModelNodeId(index: number): string {
 export function buildMultiModelTurn(
   params: MultiModelTurnParams
 ): Result<WorkflowDefinition, DomainError> {
-  const inputs = workflowInputs({ [CHAT_TURN_INPUT]: textTag() });
-  const siblings = params.models.map((model, index) =>
-    modelCall({
-      id: multiModelNodeId(index),
-      model,
-      accepts: textTag(),
-      in: inputs.ports[CHAT_TURN_INPUT],
-      produces: textTag(),
-      optional: true,
-      onError: 'skip',
-      params: answerNodeParams(params.maxOutputTokens, params.reasoning?.get(model)),
-      ...(params.promptInputTokens === undefined
-        ? {}
-        : { promptInputTokens: params.promptInputTokens }),
-      ...(params.webSearchEnabled === true ? WEB_SEARCH_TOOLING : {}),
-    })
-  );
+  const built =
+    params.classifier === undefined
+      ? plainMultiModelGraph(params)
+      : classifyingMultiModelGraph(params, params.classifier);
   return buildWorkflow({
     deadlineClass: 'text',
     // Multi-model is a paid-only fan-out (trial is single-model), so the paid
     // chat policy hooks always apply.
     hooks: CHAT_TURN_HOOKS,
-    inputs,
-    nodes: siblings,
+    inputs: built.inputs,
+    nodes: built.nodes,
     registries: { nodes: params.nodes, constraints: params.constraints },
   })
     .map((compiled) => compiled.definition)
     .mapErr((errors) =>
       validationError('chat multi-model turn definition could not be compiled', errors)
     );
+}
+
+/**
+ * One sibling's shared options, whatever its input port turns out to be.
+ *
+ * Typed as the builder's own options MINUS the ports, rather than as a bag of
+ * unknowns: `Node` variants are `z.object`, so an unregistered or mistyped key
+ * is silently STRIPPED at parse. A wrong `onError` would compile, parse, and
+ * default to `'fail'` — turning a skipping sibling into a turn-killer with
+ * nothing to see. The type is what refuses that, since no test can assert the
+ * absence of a key nobody wrote.
+ */
+type SiblingOptions = Omit<ModelCallOptions<TypeTag, TextTag>, 'id' | 'accepts' | 'in'>;
+
+function siblingOptions(params: MultiModelTurnParams, model: string): SiblingOptions {
+  return {
+    model,
+    produces: textTag(),
+    optional: true,
+    onError: 'skip',
+    params: answerNodeParams(params.maxOutputTokens, params.reasoning?.get(model)),
+    ...resolvedEffortField(params.reasoning?.get(model)),
+    ...(params.promptInputTokens === undefined
+      ? {}
+      : { promptInputTokens: params.promptInputTokens }),
+    ...(params.webSearchEnabled === true ? WEB_SEARCH_TOOLING : {}),
+  };
+}
+
+/** The pinned-effort shape: every sibling reads the prompt directly. */
+function plainMultiModelGraph(params: MultiModelTurnParams): {
+  readonly inputs: ReturnType<typeof workflowInputs<{ prompt: ReturnType<typeof textTag> }>>;
+  readonly nodes: readonly ReturnType<typeof modelCall>[];
+} {
+  const inputs = workflowInputs({ [CHAT_TURN_INPUT]: textTag() });
+  const nodes = params.models.map((model, index) =>
+    modelCall({
+      id: multiModelNodeId(index),
+      accepts: textTag(),
+      in: inputs.ports[CHAT_TURN_INPUT],
+      ...siblingOptions(params, model),
+    })
+  );
+  return { inputs, nodes };
+}
+
+/**
+ * The `auto`-effort shape: the classifier answers once for the whole turn, the
+ * reducer folds its answer into the decision envelope, and every sibling reads
+ * that envelope through its ordinary single input port. One call decides for N
+ * siblings — a per-sibling classifier would cost N× the reserve and change who
+ * is allowed to send (§Mechanisms rejected).
+ *
+ * The classifier reads its OWN input rather than the turn's prompt: what it is
+ * sent is the truncated excerpt plus the rendered option lines, which is what
+ * its reserve prices — the turn's full prompt is neither.
+ */
+function classifyingMultiModelGraph(
+  params: MultiModelTurnParams,
+  classifier: TurnClassifierParams
+): {
+  readonly inputs: ReturnType<
+    typeof workflowInputs<{
+      prompt: ReturnType<typeof textTag>;
+      classifierPrompt: ReturnType<typeof textTag>;
+    }>
+  >;
+  readonly nodes: readonly ReturnType<typeof modelCall>[];
+} {
+  const inputs = workflowInputs({
+    [CHAT_TURN_INPUT]: textTag(),
+    [CHAT_CLASSIFIER_INPUT]: textTag(),
+  });
+  const classify = modelCall({
+    id: CHAT_CLASSIFIER_NODE_ID,
+    model: classifier.modelId,
+    accepts: textTag(),
+    in: inputs.ports[CHAT_CLASSIFIER_INPUT],
+    produces: textTag(),
+    // A routing hiccup must not kill a paid turn: the branch skips, the reducer
+    // sees an absent answer, and the declared fallback applies.
+    optional: true,
+    onError: 'skip',
+    // The output cap the reserve is priced against, applied to the request that
+    // spends it rather than only to the figure that reserves it.
+    params: { maxOutputTokens: CLASSIFIER_OUTPUT_TOKEN_CAP },
+    promptInputTokens: classifier.promptInputTokens,
+  });
+  const decide = fanIn({
+    id: CHAT_DECISION_NODE_ID,
+    reducer: TURN_DECISION_REDUCER,
+    accepts: [textTag(), optionalTag(textTag())] as const,
+    ins: [inputs.ports[CHAT_TURN_INPUT], classify.out],
+    produces: jsonTag(TURN_DECISION_SCHEMA_NAME),
+  });
+  const siblings = params.models.map((model, index) =>
+    modelCall({
+      id: multiModelNodeId(index),
+      accepts: jsonTag(TURN_DECISION_SCHEMA_NAME),
+      in: decide.out,
+      ...siblingOptions(params, model),
+    })
+  );
+  return { inputs, nodes: [classify, decide, ...siblings] };
 }
 
 /** The non-text chat modalities reachable from a text prompt. */
@@ -969,6 +1174,28 @@ function derivedCeiling(
 }
 
 export interface MultiModelTurnDefinitionOptions {
+  /**
+   * The exposed catalog snapshot the classifier engine is picked from — the
+   * SAME snapshot the pricing resolver reads, so the engine and the sizing can
+   * never come from two different reads.
+   *
+   * ABSENT IS AN EMPTY CATALOG, NOT AN OPT-OUT. A classifiable `auto` turn —
+   * two or more presented rungs — then finds no priceable engine and is
+   * REFUSED with the typed classifier code, exactly as it would be against a
+   * real catalog holding no priceable text model (§Reasoning Effort 5(d)). A
+   * turn with a pinned effort, or with fewer than two rungs, never asks and is
+   * unaffected.
+   *
+   * That is deliberate and is the fail-closed direction: if omission quietly
+   * meant "do not classify", a caller that forgot to pass the snapshot would
+   * ship silently unclassified `auto` turns — the exact regression this path
+   * exists to remove, and invisible. A caller that genuinely wants an
+   * unclassified turn says so by not selecting `auto`, which is a statement
+   * about the turn rather than about an argument it left out.
+   *
+   * Both arms are pinned; the sentence above is checkable, not a promise.
+   */
+  readonly catalog?: readonly ModelDescriptor[];
   readonly webSearchEnabled?: boolean;
   /** payer's turn budget for the shared output-token ceiling; omitted = no cap. */
   readonly budget?: TurnBudget;
@@ -987,10 +1214,134 @@ export function buildMultiModelTurnDefinition(
   deps: { readonly db: Database; readonly telemetry: Telemetry },
   models: readonly string[],
   options: MultiModelTurnDefinitionOptions = {}
-): ResultAsync<WorkflowDefinition, DomainError> {
-  return createModelPricingResolver({ db: deps.db, telemetry: deps.telemetry }).andThen(
-    (pricingResolver) => compileMultiModelTurn(pricingResolver, models, options)
+): ResultAsync<MultiModelTurnBuild, DomainError> {
+  // The LIST, not just a resolver: the classifier engine is the cheapest
+  // priceable model in the exposed catalog, which is a question about the whole
+  // snapshot. Both the engine pick and the per-model sizing then read that one
+  // snapshot, so compile and runtime cannot diverge.
+  return listDescriptors({ db: deps.db, telemetry: deps.telemetry }).andThen((catalog) =>
+    compileMultiModelTurn(snapshotResolver(catalog), models, { ...options, catalog })
   );
+}
+
+/**
+ * A compiled multi-model turn: the definition, plus the classifier's own prompt
+ * when the turn classifies.
+ *
+ * The prompt travels beside the definition rather than inside it because it is
+ * two halves with different natures. The half built here — the marker, the
+ * option lines, the answer instruction — is content-free and derived from the
+ * catalog this compile already read. The other half is the conversation
+ * excerpt, which only the send path holds, and content never enters a
+ * definition. The send path joins them.
+ */
+export interface MultiModelTurnBuild {
+  readonly definition: WorkflowDefinition;
+  /** Absent when the turn pins its effort — there is nothing to classify. */
+  readonly classifierPrompt?: string;
+}
+
+/**
+ * The effort options this turn PRESENTS, as the classifier must see them: the
+ * union across the selected models, in the user's own labels.
+ *
+ * §Reasoning Effort 6 presents the classifier exactly the options the user saw,
+ * so the declared domain is the wrong list — a turn whose models offer four
+ * rungs must not be offered six. The union comes from the one shared authority
+ * the menu and the server validation already use, so a rung can never be
+ * offered here that the resolver would not accept back.
+ */
+function presentedEffortOptions(
+  models: readonly string[],
+  resolve: ModelPricingResolver
+): readonly { readonly optionId: string; readonly label: string }[] {
+  const descriptors = models
+    .map((model) => resolve(model))
+    .filter((descriptor): descriptor is ModelDescriptor => descriptor !== undefined);
+  return turnEffortOptions(descriptors.map((descriptor) => reasoningPlanModelFrom(descriptor))).map(
+    (option) => ({
+      optionId: option.choice,
+      label: REASONING_EFFORT_LABELS[option.choice],
+    })
+  );
+}
+
+/**
+ * The turn's classifier, or `undefined` when the effort axis is not open.
+ *
+ * Two or more distinct resolved choices is what makes a classification exist;
+ * with one or none the answer is settled and no call is bought (§Reasoning
+ * Effort 5). A turn that IS classifiable but has no priceable engine is refused
+ * outright rather than silently downgraded — auto is the server's choice, and a
+ * static fallback is exactly what §Effort 5 forbids.
+ */
+function turnClassifierFor(
+  models: readonly string[],
+  catalog: readonly ModelDescriptor[],
+  resolve: ModelPricingResolver,
+  selection: ReasoningEffortSelection | undefined
+): Result<{ readonly params: TurnClassifierParams; readonly prompt: string } | null, DomainError> {
+  if (selection !== 'auto') return ok(null);
+  const presented = presentedEffortOptions(models, resolve);
+  if (presented.length < 2) return ok(null);
+  const engine = pickEffortClassifier(catalog);
+  if (engine === null) {
+    return err(
+      unavailableError(
+        'no priceable classifier engine in the catalog',
+        undefined,
+        ERROR_CODES.CLASSIFIER_UNAVAILABLE
+      )
+    );
+  }
+  return ok({
+    params: {
+      modelId: engine.classifierModelId,
+      // The classifier's model axis is CLOSED on a multi-model turn — the user
+      // pinned the models — so its prompt names none, and its reserve is priced
+      // against the same empty list.
+      promptInputTokens: estimateTokensForTier('trial', classifierReserveChars([])),
+    },
+    prompt: buildClassifierSystemPrompt({ classifyEffort: true, effortOptions: presented }),
+  });
+}
+
+/**
+ * The run's workflow inputs for a compiled turn.
+ *
+ * A turn that classifies declares a SECOND text input, and this is where its two
+ * halves meet: the content-free prompt the compile rendered (the marker, the
+ * turn's own effort options, the answer instruction) joined to the conversation
+ * excerpt, truncated to the budget the classifier reserve prices. The excerpt is
+ * content, so it never enters the definition; the option lines are identifiers
+ * and labels, so they are not content and the compile can render them.
+ */
+export function turnInputs(
+  build: MultiModelTurnBuild,
+  userMessage: string,
+  history: readonly ChatHistoryMessage[]
+): FlowInputs {
+  const prompt = { [CHAT_TURN_INPUT]: { kind: 'text' as const, text: userMessage } };
+  if (build.classifierPrompt === undefined) return prompt;
+  return {
+    ...prompt,
+    [CHAT_CLASSIFIER_INPUT]: {
+      kind: 'text' as const,
+      text: `${build.classifierPrompt}\n\n${truncateForClassifier({
+        latestUserMessage: userMessage,
+        latestAssistantMessage: latestAssistantMessage(history),
+      })}`,
+    },
+  };
+}
+
+/** The last assistant turn in the resent history, or '' on a first turn. */
+function latestAssistantMessage(history: readonly ChatHistoryMessage[]): string {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const message = history[index];
+    if (message?.role === 'assistant') return message.content;
+  }
+  return '';
 }
 
 /** The synchronous compile of a multi-model turn against a loaded pricing snapshot
@@ -999,7 +1350,7 @@ export function compileMultiModelTurn(
   pricingResolver: ModelPricingResolver,
   models: readonly string[],
   options: MultiModelTurnDefinitionOptions
-): Result<WorkflowDefinition, DomainError> {
+): Result<MultiModelTurnBuild, DomainError> {
   const webSearchEnabled = options.webSearchEnabled === true;
   const registries = createTurnCompileRegistries(pricingResolver);
   const promptInputTokens =
@@ -1009,6 +1360,14 @@ export function compileMultiModelTurn(
   const sized = turnAnswerSizing(models, pricingResolver, options.budget, reasoning.value);
   if (sized.isErr()) return err(sized.error);
   const answerCap = sized.value;
+  const classifier = turnClassifierFor(
+    models,
+    options.catalog ?? [],
+    pricingResolver,
+    options.reasoningEffort
+  );
+  if (classifier.isErr()) return err(classifier.error);
+  const classified = classifier.value;
   return (
     assertModelsWebSearchCapable(models, pricingResolver, webSearchEnabled)
       .andThen(() =>
@@ -1020,6 +1379,7 @@ export function compileMultiModelTurn(
           ...(answerCap === undefined ? {} : { maxOutputTokens: answerCap }),
           ...(promptInputTokens === undefined ? {} : { promptInputTokens }),
           ...(reasoning.value.size === 0 ? {} : { reasoning: reasoning.value }),
+          ...(classified === null ? {} : { classifier: classified.params }),
         })
       )
       // A multi-model turn is paid-only and always uses the persisting chat hooks.
@@ -1028,6 +1388,10 @@ export function compileMultiModelTurn(
       // canonical estimator sizes the authoritative shared sibling cap, so the
       // admission ceiling fits the payer's funds by construction.
       .map((stamped) => reconcileAnswerCeiling(stamped, pricingResolver, options.budget, answerCap))
+      .map((definition) => ({
+        definition,
+        ...(classified === null ? {} : { classifierPrompt: classified.prompt }),
+      }))
   );
 }
 

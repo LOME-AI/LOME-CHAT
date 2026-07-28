@@ -112,9 +112,9 @@ function pushesFor(conversationId: string): {
   tokens: string[];
 }[] {
   return listCapturedPushes()
-    .filter((captured) => captured.message.data?.['conversationId'] === conversationId)
+    .filter((captured) => captured.message.payload.conversationId === conversationId)
     .map((captured) => ({
-      category: captured.message.data?.['category'],
+      category: captured.message.payload.category,
       tokens: captured.message.recipients.map((recipient) =>
         recipient.platform === 'web' ? recipient.endpoint : recipient.token
       ),

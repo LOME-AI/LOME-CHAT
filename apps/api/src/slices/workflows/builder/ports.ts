@@ -61,3 +61,14 @@ export function baseNodeFields(options: NodeOptionsBase): Record<string, unknown
     ...(options.onError === undefined ? {} : { onError: options.onError }),
   };
 }
+
+/**
+ * The persisted input-schema field for a node whose declared input is a named
+ * json tag — derived from the `accepts` claim the caller already made rather
+ * than declared a second time, so the compile-time tag and the persisted field
+ * cannot name different schemas. A text (or media) input persists nothing: the
+ * model's own derived port already says it.
+ */
+export function persistedInputSchema(accepts: TypeTag): Record<string, unknown> {
+  return accepts.kind === 'json' ? { inputSchema: accepts.schemaName } : {};
+}

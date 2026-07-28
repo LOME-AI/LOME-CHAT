@@ -1,16 +1,12 @@
 // Single source of truth for the network hosts the on-device Kokoro TTS model
 // download reaches, and the same-origin path its onnxruntime-web runtime is
-// self-hosted at. Consumed by both the TTS worker (which pins transformers.js
-// `env.remoteHost` / `env.backends.onnx.wasm.wasmPaths` from these) and the SPA
-// header generator (which adds the model hosts to `connect-src`). Keeping the
-// engine-fetched host and the CSP allowlist derived from one constant is what
-// makes drift between them structurally impossible.
+// self-hosted at. Shared so the hosts the engine fetches and the hosts the CSP
+// allows cannot drift apart.
 
 /**
  * The Hugging Face hub host the engine fetches model config, tokenizer, and
- * (via a 302 redirect to the Xet CDN) weight/voice files from. CSP host form:
- * no trailing slash. The worker appends the slash transformers.js expects for
- * `env.remoteHost`.
+ * (via a 302 redirect to the Xet CDN) weight/voice files from. No trailing
+ * slash: this is the CSP host form.
  */
 export const TTS_MODEL_HOST = 'https://huggingface.co';
 
@@ -28,10 +24,7 @@ export const TTS_MODEL_CONNECT_SRC = [TTS_MODEL_HOST, 'https://*.hf.co'] as cons
 
 /**
  * Same-origin absolute path the onnxruntime-web `.wasm`/`.mjs` runtime assets
- * are self-hosted at. The build plugin emits the ORT assets here (matching the
- * installed transformers version) and the worker points
- * `env.backends.onnx.wasm.wasmPaths` here, so the runtime loads same-origin
- * with no third-party CDN in the CSP. Both must agree; hence the shared
- * constant.
+ * are self-hosted at. Shared so the path they are emitted to and the path the
+ * runtime is pointed at cannot drift apart.
  */
 export const TTS_ORT_WASM_PATH = '/ort/';

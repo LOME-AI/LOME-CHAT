@@ -1,9 +1,10 @@
 import { LOCAL_NEON_DEV_CONFIG, createDb } from '@hushbox/db';
-import { createEnvUtilities, reasoningPlanModelFrom } from '@hushbox/shared';
 import {
+  createEnvUtilities,
   planReasoning,
   planReasoningOff,
-} from '@hushbox/shared/affordability/estimate/reasoning-plan';
+  reasoningPlanModelFrom,
+} from '@hushbox/shared';
 import { resolveModelProvider } from './resolve-model-provider.js';
 import type { Database } from '@hushbox/db';
 import type {
@@ -237,8 +238,8 @@ export function reasoningBudgetDescriptor(): ModelDescriptor {
 const REASONING_ANSWER_HEADROOM_TOKENS = 512;
 
 /**
- * The reasoning config comes from the shared plan (G1: no code path sets
- * `reasoning` except via `planReasoning` output), so the wire shape under
+ * The reasoning config comes from the shared plan — no code path sets
+ * `reasoning` except via `planReasoning` output — so the wire shape under
  * test is exactly the one production sends. Deterministic inputs keep the
  * request hash (and its cassette) stable.
  */
@@ -278,7 +279,7 @@ export function reasoningBudgetRequest(): InferenceRequest {
 /**
  * The hard-off exchange: an explicit `{ enabled: false }` wire (never
  * parameter omission) on a reasoning-capable, non-mandatory model, built via
- * `planReasoningOff` (G1). Same stable prompt/model as the active reasoning
+ * `planReasoningOff`. Same stable prompt/model as the active reasoning
  * requests so the cassette hash stays deterministic.
  */
 export function reasoningOffRequest(): InferenceRequest {

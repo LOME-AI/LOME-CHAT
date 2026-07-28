@@ -42,10 +42,10 @@ describe('buildClassifierSystemPrompt', () => {
     expect(renderedSegment.length).toBeLessThanOrEqual(CLASSIFIER_MAX_DESCRIPTION_CHARS + 16);
   });
 
-  it('instructs the model to reply with only the model id', () => {
-    expect(buildClassifierSystemPrompt({ eligibleModels: MODELS }).toLowerCase()).toMatch(
-      /(reply|respond|output).*model id/
-    );
+  it('instructs the model dimension`s labelled answer line, naming a model id', () => {
+    const prompt = buildClassifierSystemPrompt({ eligibleModels: MODELS });
+    expect(prompt).toContain('Answer on its own line as `model: <choice>`');
+    expect(prompt.toLowerCase()).toContain('model id from the list');
   });
 
   it('handles an empty eligible list without crashing', () => {
@@ -61,24 +61,38 @@ describe('buildClassifierSystemPrompt — dimension composition', () => {
     expect(firstLine).not.toContain(CLASSIFIER_EFFORT_DIMENSION_MARKER);
   });
 
-  it('renders an effort-only prompt: marker + effort instruction, no model list', () => {
+  it('renders an effort-only prompt: marker + effort section, no model list', () => {
     const prompt = buildClassifierSystemPrompt({ classifyEffort: true });
     const firstLine = prompt.split('\n')[0] ?? '';
     expect(firstLine).toContain(CLASSIFIER_SYSTEM_PROMPT_MARKER);
     expect(firstLine).toContain(CLASSIFIER_EFFORT_DIMENSION_MARKER);
     expect(firstLine).not.toContain(CLASSIFIER_MODEL_DIMENSION_MARKER);
-    expect(prompt.toLowerCase()).toContain('low, medium, or high');
     expect(prompt).not.toContain('Available models:');
   });
 
-  it('renders both dimensions in one prompt with a two-line output instruction', () => {
+  it('presents the effort options the registry declares, in the user`s own labels', () => {
+    const prompt = buildClassifierSystemPrompt({ classifyEffort: true });
+    expect(prompt).toContain('Choose exactly one of: Min | Lite | Low | Mid | High | Max');
+  });
+
+  it('names the effort dimension`s own answer line, so a new dimension cannot break it', () => {
+    const prompt = buildClassifierSystemPrompt({ classifyEffort: true });
+    expect(prompt).toContain('Answer on its own line as `effort: <choice>`');
+  });
+
+  it('labels the model answer line too, so both dimensions read by label not position', () => {
+    const prompt = buildClassifierSystemPrompt({ eligibleModels: MODELS, classifyEffort: true });
+    expect(prompt).toContain('model: <choice>');
+    expect(prompt).toContain('effort: <choice>');
+  });
+
+  it('renders both dimensions in one prompt', () => {
     const prompt = buildClassifierSystemPrompt({ eligibleModels: MODELS, classifyEffort: true });
     const firstLine = prompt.split('\n')[0] ?? '';
     expect(firstLine).toContain(CLASSIFIER_MODEL_DIMENSION_MARKER);
     expect(firstLine).toContain(CLASSIFIER_EFFORT_DIMENSION_MARKER);
     expect(prompt).toContain('Available models:');
-    expect(prompt.toLowerCase()).toContain('low, medium, or high');
-    expect(prompt.toLowerCase()).toMatch(/two lines/);
+    expect(prompt).toContain('Choose exactly one of: Min | Lite | Low | Mid | High | Max');
   });
 
   it('keeps the base marker as the prompt prefix in every composition (mock detection contract)', () => {
@@ -96,14 +110,16 @@ describe('buildClassifierSystemPrompt — dimension composition', () => {
 });
 
 describe('computeClassifierPromptOverhead', () => {
+  const IDS = MODELS.map((model) => ({ id: model.id }));
+
   it('returns a positive integer for a non-empty model list', () => {
-    const overhead = computeClassifierPromptOverhead(MODELS);
+    const overhead = computeClassifierPromptOverhead(IDS);
     expect(overhead).toBeGreaterThan(0);
     expect(Number.isInteger(overhead)).toBe(true);
   });
 
   it('is an upper bound on every single-dimension prompt render', () => {
-    const overhead = computeClassifierPromptOverhead(MODELS);
+    const overhead = computeClassifierPromptOverhead(IDS);
     const modelOnly = buildClassifierSystemPrompt({ eligibleModels: MODELS });
     const effortOnly = buildClassifierSystemPrompt({ classifyEffort: true });
     for (const prompt of [modelOnly, effortOnly]) {
@@ -112,33 +128,41 @@ describe('computeClassifierPromptOverhead', () => {
   });
 
   it('grows with the number of eligible models', () => {
-    const small = computeClassifierPromptOverhead(MODELS.slice(0, 1));
-    const large = computeClassifierPromptOverhead([
-      ...MODELS,
-      { id: 'extra/m', description: 'Another model.' },
-      { id: 'extra/n', description: 'Yet another.' },
-    ]);
+    const small = computeClassifierPromptOverhead(IDS.slice(0, 1));
+    const large = computeClassifierPromptOverhead([...IDS, { id: 'extra/m' }, { id: 'extra/n' }]);
     expect(large).toBeGreaterThan(small);
   });
 
-  it('truncates per-model description to the cap when computing overhead', () => {
-    const longDescModels = [
-      {
-        id: 'long/desc',
-        description: 'X'.repeat(CLASSIFIER_MAX_DESCRIPTION_CHARS * 5),
-      },
+  /**
+   * The reserve's whole job is to be an upper bound BY CONSTRUCTION, not by
+   * measurement: the money layer never sees a catalog description, so it prices
+   * the description leg at the declared maximum a render can emit. Any real
+   * description — empty, short, or far over the cap — therefore renders no
+   * longer than what was priced.
+   */
+  it('bounds a render carrying ANY real description, at the declared maximum', () => {
+    const descriptions = [
+      '',
+      'Cheap and fast.',
+      'X'.repeat(CLASSIFIER_MAX_DESCRIPTION_CHARS - 1),
+      'X'.repeat(CLASSIFIER_MAX_DESCRIPTION_CHARS),
+      'X'.repeat(CLASSIFIER_MAX_DESCRIPTION_CHARS * 50),
     ];
-    const shortDescModels = [
-      {
-        id: 'long/desc',
-        description: 'X'.repeat(CLASSIFIER_MAX_DESCRIPTION_CHARS * 5 + 2000),
-      },
-    ];
-    // Both descriptions are well over the per-model cap; the overhead
-    // calculation must clamp them, so the two results agree to within a
-    // single character of slack.
-    const a = computeClassifierPromptOverhead(longDescModels);
-    const b = computeClassifierPromptOverhead(shortDescModels);
-    expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
+    for (const description of descriptions) {
+      const eligibleModels = IDS.map((model) => ({ ...model, description }));
+      const rendered = buildClassifierSystemPrompt({ eligibleModels, classifyEffort: true });
+      expect(computeClassifierPromptOverhead(IDS)).toBeGreaterThanOrEqual(rendered.length);
+    }
+  });
+
+  it('is independent of the descriptions, because it does not take them', () => {
+    const overhead = computeClassifierPromptOverhead([{ id: 'long/desc' }]);
+    const atCap = buildClassifierSystemPrompt({
+      eligibleModels: [
+        { id: 'long/desc', description: 'X'.repeat(CLASSIFIER_MAX_DESCRIPTION_CHARS) },
+      ],
+      classifyEffort: true,
+    });
+    expect(overhead).toBe(atCap.length);
   });
 });

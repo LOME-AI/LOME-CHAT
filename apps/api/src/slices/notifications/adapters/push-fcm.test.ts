@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, type Mock } from 'vitest';
+import { NOTIFICATION_CATEGORIES, NOTIFICATION_COPY } from '@hushbox/shared';
 import { createFcmPushSender, _resetTokenCache, collectFcmErrorCodes } from './push-fcm.js';
-import type { Database } from '@hushbox/db';
+import type { PushEventPayload } from '@hushbox/shared';
 import type { PushMessage } from '../ports/index.js';
 
 let serviceAccountJson: string;
 const PROJECT_ID = 'hushbox-test';
+const CONVERSATION_ID = '018f4e2a-1c3b-7d4e-9f0a-1b2c3d4e5f60';
 const CLIENT_EMAIL = 'test@hushbox-test.iam.gserviceaccount.com';
 
 beforeAll(async () => {
@@ -37,8 +39,7 @@ beforeAll(async () => {
 
 const message: PushMessage = {
   recipients: [{ platform: 'ios', userId: 'user-1', token: 'device-token-abc' }],
-  title: 'New Message',
-  body: 'Hello from HushBox',
+  payload: { category: 'message', conversationId: CONVERSATION_ID },
 };
 
 let fetchImpl: Mock<typeof fetch>;
@@ -134,32 +135,80 @@ describe('createFcmPushSender', () => {
       message: { token: string; notification: { title: string; body: string } };
     };
     expect(body.message.token).toBe('device-token-abc');
-    expect(body.message.notification).toEqual({ title: 'New Message', body: 'Hello from HushBox' });
+    expect(body.message.notification).toEqual(NOTIFICATION_COPY.message);
   });
 
-  it('includes the data payload when provided', async () => {
+  it('asks FCM to validate without delivering when configured validate-only', async () => {
     mockOAuthSuccess();
     mockFcmSendSuccess();
 
-    const result = await sender().send({ ...message, data: { conversationId: 'conv-1' } });
+    const result = await createFcmPushSender({
+      projectId: PROJECT_ID,
+      serviceAccountJson,
+      fetchImpl,
+      validateOnly: true,
+    }).send(message);
+    expect(result.isOk()).toBe(true);
+
+    const [, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
+    const body = JSON.parse(sendInit.body as string) as Record<string, unknown>;
+    expect(body['validate_only']).toBe(true);
+  });
+
+  it('omits the validate-only key entirely from an ordinary send', async () => {
+    mockOAuthSuccess();
+    mockFcmSendSuccess();
+
+    const result = await sender().send(message);
+    expect(result.isOk()).toBe(true);
+
+    const [, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
+    const body = JSON.parse(sendInit.body as string) as Record<string, unknown>;
+    expect('validate_only' in body).toBe(false);
+  });
+
+  it('sends the generic payload as the FCM data block', async () => {
+    mockOAuthSuccess();
+    mockFcmSendSuccess();
+
+    const result = await sender().send(message);
     expect(result.isOk()).toBe(true);
 
     const [, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
     const body = JSON.parse(sendInit.body as string) as {
       message: { data?: Record<string, string> };
     };
-    expect(body.message.data).toEqual({ conversationId: 'conv-1' });
+    expect(body.message.data).toEqual({
+      category: 'message',
+      conversationId: CONVERSATION_ID,
+    });
+  });
+
+  it('sends nothing a payload object smuggles alongside the two generic fields', async () => {
+    mockOAuthSuccess();
+    mockFcmSendSuccess();
+
+    // A structurally typed value satisfies `PushEventPayload` while carrying
+    // extra properties: assignment through a variable skips TypeScript's
+    // excess-property check, so the compiler cannot be the last line here.
+    const smuggling = {
+      category: 'message',
+      conversationId: CONVERSATION_ID,
+      preview: 'the actual message text',
+    } satisfies PushEventPayload & { preview: string };
+
+    const result = await sender().send({ ...message, payload: smuggling });
+    expect(result.isOk()).toBe(true);
+
+    const [, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
+    expect(sendInit.body as string).not.toContain('the actual message text');
   });
 
   it('collapses on the derived alias, never the raw conversation id', async () => {
     mockOAuthSuccess();
     mockFcmSendSuccess();
 
-    const result = await sender().send({
-      ...message,
-      data: { conversationId: 'conv-1' },
-      collapseKey: 'alias32chars',
-    });
+    const result = await sender().send({ ...message, collapseKey: 'alias32chars' });
     expect(result.isOk()).toBe(true);
 
     const [, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
@@ -177,11 +226,7 @@ describe('createFcmPushSender', () => {
     mockOAuthSuccess();
     mockFcmSendSuccess();
 
-    const result = await sender().send({
-      ...message,
-      data: { conversationId: 'conv-1' },
-      collapseKey: 'alias32chars',
-    });
+    const result = await sender().send({ ...message, collapseKey: 'alias32chars' });
     expect(result.isOk()).toBe(true);
 
     const [, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
@@ -196,23 +241,8 @@ describe('createFcmPushSender', () => {
     // the alias exists to keep the id out of push-service-visible headers, and
     // this same message's data payload already puts the id in front of FCM.
     expect(body.message.android?.notification?.tag).toBe(body.message.data?.['conversationId']);
-    expect(body.message.android?.notification?.tag).toBe('conv-1');
+    expect(body.message.android?.notification?.tag).toBe(CONVERSATION_ID);
     expect(body.message.android?.notification?.tag).not.toBe('alias32chars');
-  });
-
-  it('omits the notification tag when the message carries no conversation id', async () => {
-    mockOAuthSuccess();
-    mockFcmSendSuccess();
-
-    const result = await sender().send({ ...message, collapseKey: 'alias32chars' });
-    expect(result.isOk()).toBe(true);
-
-    const [, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
-    const body = JSON.parse(sendInit.body as string) as {
-      message: { android?: { collapse_key?: string; notification?: unknown } };
-    };
-    expect(body.message.android?.collapse_key).toBe('alias32chars');
-    expect(body.message.android?.notification).toBeUndefined();
   });
 
   it('omits the collapse fields when no alias is set', async () => {
@@ -321,77 +351,32 @@ describe('createFcmPushSender', () => {
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
   });
 
+  it.each(NOTIFICATION_CATEGORIES)(
+    'renders the fixed %s copy from the shared table',
+    async (category) => {
+      mockOAuthSuccess();
+      mockFcmSendSuccess();
+
+      const result = await sender().send({
+        recipients: [{ platform: 'android', userId: 'user-1', token: 'device-token-abc' }],
+        payload: { category, conversationId: CONVERSATION_ID },
+      });
+      expect(result.isOk()).toBe(true);
+
+      const [, sendInit] = fetchImpl.mock.calls[1] as [string, RequestInit];
+      const body = JSON.parse(sendInit.body as string) as {
+        message: { notification: { title: string; body: string } };
+      };
+      expect(body.message.notification).toEqual(NOTIFICATION_COPY[category]);
+    }
+  );
+
   it('keeps device tokens out of error messages', async () => {
     fetchImpl.mockResolvedValueOnce(Response.json({ error: 'invalid_grant' }, { status: 400 }));
 
     const result = await sender().send(message);
 
     expect(result._unsafeUnwrapErr().message).not.toContain('device-token-abc');
-  });
-
-  it('records one push-fcm service-evidence row after a successful CI send', async () => {
-    mockOAuthSuccess();
-    mockFcmSendSuccess();
-    const values = vi.fn(() => Promise.resolve());
-    const insert = vi.fn(() => ({ values }));
-    const db = { insert } as unknown as Database;
-
-    const fcm = createFcmPushSender({
-      projectId: PROJECT_ID,
-      serviceAccountJson,
-      fetchImpl,
-      db,
-      isCI: true,
-    });
-    const result = await fcm.send(message);
-
-    expect(result.isOk()).toBe(true);
-    expect(insert).toHaveBeenCalledTimes(1);
-    expect(values).toHaveBeenCalledWith(expect.objectContaining({ service: 'push-fcm' }));
-  });
-
-  it('skips the evidence write outside CI', async () => {
-    mockOAuthSuccess();
-    mockFcmSendSuccess();
-    const insert = vi.fn();
-    const db = { insert } as unknown as Database;
-
-    const fcm = createFcmPushSender({
-      projectId: PROJECT_ID,
-      serviceAccountJson,
-      fetchImpl,
-      db,
-      isCI: false,
-    });
-    const result = await fcm.send(message);
-
-    expect(result.isOk()).toBe(true);
-    expect(insert).not.toHaveBeenCalled();
-  });
-
-  it('skips the evidence write when a CI send reaches no token successfully', async () => {
-    mockOAuthSuccess();
-    fetchImpl.mockResolvedValueOnce(Response.json({ error: 'UNREGISTERED' }, { status: 404 }));
-    const insert = vi.fn();
-    const db = { insert } as unknown as Database;
-
-    const fcm = createFcmPushSender({
-      projectId: PROJECT_ID,
-      serviceAccountJson,
-      fetchImpl,
-      db,
-      isCI: true,
-    });
-    const result = await fcm.send(message);
-
-    // db is wired and isCI is true, but zero successful deliveries → no evidence row.
-    expect(result._unsafeUnwrap()).toEqual({
-      successCount: 0,
-      failureCount: 1,
-      deliveredTokens: [],
-      deadTokens: [{ userId: 'user-1', token: 'device-token-abc' }],
-    });
-    expect(insert).not.toHaveBeenCalled();
   });
 });
 

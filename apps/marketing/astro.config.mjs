@@ -9,9 +9,10 @@ import { defaultClientConditions } from 'vite';
 
 import {
   ORT_EXTERN_WASM_CONDITION,
+  TTS_WORKER_SCAN_ENTRY,
   WORKER_BUILD_OPTIONS,
   ortAssetsPlugin,
-} from '../../scripts/lib/ort-assets-plugin.ts';
+} from '../../scripts/lib/build-seam.ts';
 
 const vitePort = process.env['HB_VITE_PORT'] ?? '5173';
 const astroPort = process.env['HB_ASTRO_PORT'];
@@ -65,6 +66,14 @@ export default defineConfig({
     // ES-format workers keep `new.target` intact, which the TTS worker's
     // transformers dependency needs to load at all (see the constant).
     worker: WORKER_BUILD_OPTIONS,
+    optimizeDeps: {
+      // Prebundles kokoro-js at startup instead of on the first Listen click,
+      // which would otherwise force a full-page reload (see the constant).
+      // Unlike plain Vite, this does not replace a default: Astro sets its own
+      // srcDir scan entry in the inline config it merges ours into, and Vite's
+      // config merge concatenates arrays, so both entries survive.
+      entries: [TTS_WORKER_SCAN_ENTRY],
+    },
     resolve: {
       // Picks onnxruntime-web's extern-wasm build variant so the blog TTS
       // worker does not drag a bundled ~21 MB wasm copy into the output

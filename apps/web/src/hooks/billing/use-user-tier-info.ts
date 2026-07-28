@@ -20,12 +20,16 @@ export function useUserTierInfo(isAuthenticated: boolean): UserTierInfo {
       return null;
     }
     // The negative-capable purchased wallet is the balance the tier and the
-    // negative-balance gate key on; the free-tier allowance is its own
-    // (never-negative) remaining figure. Both cross the wire as NanoUSD
-    // strings and stay exact bigint — cents exist only at display formatting.
+    // negative-balance gate key on. It crosses the wire as a NanoUSD string
+    // and stays exact bigint — cents exist only at display formatting.
     return {
       purchasedBalanceNanoUsd: BigInt(balanceData.purchased.balanceNanoUsd),
-      freeAllowanceNanoUsd: BigInt(balanceData.allowance.remainingNanoUsd),
+      // The daily allowance never moves the tier, and the balance endpoint is
+      // not an affordability input — a free payer's spendable is SERVED by
+      // `GET /billing/spendable`. Reading the allowance here would be a second
+      // funding figure with no consumer. The server's own tier derivation
+      // passes zero for the same reason.
+      freeAllowanceNanoUsd: 0n,
     };
   }, [isAuthenticated, balanceData]);
 

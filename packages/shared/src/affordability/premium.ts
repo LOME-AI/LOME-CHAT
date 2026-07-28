@@ -84,8 +84,6 @@ export interface PremiumClassificationInput {
    * threshold, which disables the PRICE leg alone: recency still decides.
    */
   readonly priceThresholdNanoUsd?: NanoUSD | undefined;
-  /** The model's release timestamp in milliseconds (catalog `releasedAt` × 1000). */
-  readonly releasedAtMs: number;
   /**
    * The reference clock. An argument, not `Date.now()`: this module reads no
    * clock, so a classification is reproducible from its inputs alone.
@@ -99,14 +97,14 @@ export interface PremiumClassificationInput {
  * Classification is computed from the catalog, never stored.
  */
 export function isPremiumModel(input: PremiumClassificationInput): boolean {
-  const { model, priceThresholdNanoUsd, releasedAtMs, nowMs } = input;
+  const { model, priceThresholdNanoUsd, nowMs } = input;
   if (
     priceThresholdNanoUsd !== undefined &&
     combinedRateNanoUsd(model) >= BigInt(priceThresholdNanoUsd)
   ) {
     return true;
   }
-  return releasedAtMs > nowMs - PREMIUM_RECENCY_MS;
+  return model.releasedAtMs > nowMs - PREMIUM_RECENCY_MS;
 }
 
 /**

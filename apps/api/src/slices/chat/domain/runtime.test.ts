@@ -202,8 +202,9 @@ describe('providerFor (per-run provider selection)', () => {
     const dev = { mockProviderEnabled: true, apiKey: '' } as const;
     const a = await classifierText(providerFor(dev, { classifierResolution: 'model-A' }));
     const b = await classifierText(providerFor(dev, { classifierResolution: 'model-B' }));
-    expect(a).toBe('model-A');
-    expect(b).toBe('model-B');
+    // The mock answers one labelled line per dimension, as the shared prompt instructs.
+    expect(a).toBe('model: model-A');
+    expect(b).toBe('model: model-B');
     expect(a).not.toBe(b);
   });
 

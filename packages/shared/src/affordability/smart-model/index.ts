@@ -7,5 +7,4 @@
 
 export * from './eligible-models.js';
 export * from './prompts.js';
-export { CLASSIFIER_EFFORT_LEVELS } from './effort-dimension.js';
 export type { ClassifierEffortLevel } from './effort-dimension.js';

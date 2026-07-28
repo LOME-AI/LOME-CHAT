@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 import { TTS_MODEL_DOWNLOAD_MB } from '@hushbox/shared';
 
@@ -39,6 +40,25 @@ function bandPart(name: 'status' | 'stack' | 'disclosure'): HTMLElement {
 
 function listenButton(): HTMLElement {
   return screen.getByRole('button', { name: 'Listen to this post' });
+}
+
+/**
+ * A control as it stands in the server-rendered markup, parsed into a real
+ * element. Asserting on the parsed node rather than on the markup string is
+ * what keeps the disabled pin honest: `disabled` also occurs in these controls'
+ * class lists as the `disabled:` variant prefix, so a string match for it holds
+ * whether or not the attribute is there.
+ */
+function serverControl(name: string): HTMLElement {
+  const host = document.createElement('div');
+  host.innerHTML = renderToStaticMarkup(<BlogReadAloud />);
+  const el = host.querySelector<HTMLElement>(`button[aria-label="${name}"]`);
+  if (el === null) throw new Error(`missing server-rendered control: ${name}`);
+  return el;
+}
+
+function highlightToggle(): HTMLElement {
+  return screen.getByRole('button', { name: 'Highlight while reading' });
 }
 
 function stopButton(): HTMLElement {
@@ -973,6 +993,47 @@ describe('BlogReadAloud — pause and resume', () => {
 
     // Once, by the teardown: the pause itself must not have stopped anything.
     expect(h.reader.stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('BlogReadAloud — pre-hydration', () => {
+  it('marks the transport control disabled in the server-rendered markup', () => {
+    expect(serverControl('Listen to this post')).toBeDisabled();
+  });
+
+  it('marks the highlight toggle disabled in the server-rendered markup', () => {
+    expect(serverControl('Highlight while reading')).toBeDisabled();
+  });
+
+  it('enables the transport control once the island has hydrated', () => {
+    render(<BlogReadAloud />);
+
+    expect(listenButton()).toBeEnabled();
+  });
+
+  it('enables the highlight toggle once the island has hydrated', () => {
+    render(<BlogReadAloud />);
+
+    expect(highlightToggle()).toBeEnabled();
+  });
+
+  it('carries the transport control disabled look as a paint-only variant of one class list', () => {
+    const serverClasses = serverControl('Listen to this post').className;
+    render(<BlogReadAloud />);
+
+    // One class list across both states, dimming through the `disabled:`
+    // variant, is what makes the dead window incapable of reflowing the band:
+    // a conditional class swap could change the control's box, this cannot.
+    expect(serverClasses).toContain('disabled:opacity-50');
+    expect(serverClasses).toBe(listenButton().className);
+  });
+
+  it('carries the highlight toggle disabled look as a paint-only variant of one class list', () => {
+    const serverClasses = serverControl('Highlight while reading').className;
+    render(<BlogReadAloud />);
+
+    expect(serverClasses).toContain('disabled:opacity-50');
+    expect(serverClasses).toBe(highlightToggle().className);
   });
 });
 

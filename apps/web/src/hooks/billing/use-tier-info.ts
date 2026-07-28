@@ -36,7 +36,11 @@ export function useTierInfo(): UserTierInfo | null {
 
     return getUserTier({
       purchasedBalanceNanoUsd: BigInt(balanceData.purchased.balanceNanoUsd),
-      freeAllowanceNanoUsd: BigInt(balanceData.allowance.remainingNanoUsd),
+      // The daily allowance never moves the tier, and the balance endpoint is
+      // not an affordability input — a free payer's spendable is SERVED by
+      // `GET /billing/spendable`. The server's tier derivation passes zero for
+      // the same reason.
+      freeAllowanceNanoUsd: 0n,
     });
   }, [isSessionPending, session, balanceData]);
 }

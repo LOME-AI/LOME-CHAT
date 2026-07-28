@@ -6,7 +6,9 @@ import {
   REASONING_EFFORT_LABELS,
   REASONING_EFFORT_SELECTIONS,
   REASONING_OFF,
+  RESOLVED_REASONING_EFFORTS,
   ReasoningEffortSelection,
+  ResolvedReasoningEffort,
 } from './reasoning-effort.js';
 
 describe('CANONICAL_REASONING_EFFORTS', () => {
@@ -60,6 +62,28 @@ describe('REASONING_EFFORT_SELECTIONS', () => {
   it('rejects values outside the set', () => {
     for (const value of ['xhigh', 'minimal', 'min', 'none', 'Auto', '']) {
       expect(ReasoningEffortSelection.safeParse(value).success).toBe(false);
+    }
+  });
+});
+
+describe('RESOLVED_REASONING_EFFORTS', () => {
+  it('is the canonical ladder followed by the off rung', () => {
+    expect(RESOLVED_REASONING_EFFORTS).toEqual(['lite', 'low', 'medium', 'high', 'max', 'off']);
+  });
+
+  it('excludes auto, which is a selection rather than a resolved level', () => {
+    expect(RESOLVED_REASONING_EFFORTS).not.toContain('auto');
+  });
+
+  it('parses every resolved level through the Zod enum', () => {
+    for (const level of RESOLVED_REASONING_EFFORTS) {
+      expect(ResolvedReasoningEffort.parse(level)).toBe(level);
+    }
+  });
+
+  it('rejects auto and native upstream words', () => {
+    for (const value of ['auto', 'xhigh', 'minimal', 'none', '']) {
+      expect(ResolvedReasoningEffort.safeParse(value).success).toBe(false);
     }
   });
 });

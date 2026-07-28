@@ -1,0 +1,28 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // This app's build runs the bundle guard AND the security-header generator
+    // from its own vite config, but `$TURBO_DEFAULT$` covers only files inside
+    // the package — so a change to either one's rules leaves the hash
+    // untouched, and a cache hit replays a dist verified under the superseded
+    // guard or served with a superseded CSP. Both tools' sources are named file
+    // by file: a `scripts/**` glob is edited constantly for unrelated reasons
+    // and every edit would rebuild admin. `tts-hosts.ts` and `routes.ts` need
+    // no entry — they belong to `@hushbox/shared`, whose build this already
+    // depends on. Only `inputs` is overridden; `outputs`, `dependsOn` and `env`
+    // are inherited from the root task.
+    "build": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*",
+        "../../scripts/verify-bundle.ts",
+        "../../scripts/generate-headers.ts",
+        "../../scripts/lib/build-seam.ts",
+        "../../scripts/lib/headers-vite-plugin.ts",
+        "../../scripts/lib/is-main.ts",
+        "../../scripts/lib/run-main.ts"
+      ]
+    }
+  }
+}

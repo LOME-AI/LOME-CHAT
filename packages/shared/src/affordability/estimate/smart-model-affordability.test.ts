@@ -23,14 +23,16 @@ const BIG: SmartModelPoolCandidate = {
 };
 
 describe('classifierReserveLineItems', () => {
-  it('prices the classifier reserve into a provider and a storage line item', () => {
-    const items = classifierReserveLineItems(CHEAP, [{ id: 'cheap' }], 4);
-    expect(items?.map((item) => item.kind)).toEqual(['provider', 'storage']);
+  it('prices the classifier reserve as a provider line item and nothing else', () => {
+    // No storage leg exists to price: the classifier's prompt and answer never
+    // rest. A caller that sums this list therefore cannot charge storage.
+    const items = classifierReserveLineItems(CHEAP, [{ id: 'cheap' }]);
+    expect(items?.map((item) => item.kind)).toEqual(['provider']);
   });
 
   it('returns undefined when the classifier lacks a per-token rate', () => {
     const rateless: { readonly pricing: Pricing } = { pricing: {} };
-    expect(classifierReserveLineItems(rateless, [{ id: 'x' }], 4)).toBeUndefined();
+    expect(classifierReserveLineItems(rateless, [{ id: 'x' }])).toBeUndefined();
   });
 });
 
@@ -39,7 +41,7 @@ describe('billable-only pricing (no fee math in the estimator)', () => {
     // Rates are billable at ingestion, so the pool's classifier worst case is
     // exactly the provider line item's fixedNano — no markup on top.
     const pool = priceSmartModelPool([CHEAP, BIG])!;
-    const providerItem = classifierReserveLineItems(CHEAP, [CHEAP, BIG], 4)?.find(
+    const providerItem = classifierReserveLineItems(CHEAP, [CHEAP, BIG])?.find(
       (item) => item.kind === 'provider'
     );
     expect(pool.classifierWorstCaseNanoUsd).toBe(providerItem?.fixedNano);

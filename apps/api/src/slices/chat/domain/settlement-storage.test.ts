@@ -4,7 +4,7 @@ import {
   STORAGE_COST_PER_CHARACTER_NANO,
 } from '../../billing/index.js';
 import { serializeReasoningText } from '@hushbox/shared';
-import { withStorageFees } from './settlement.js';
+import { collectPersistableCharges, withStorageFees } from './settlement.js';
 import type { SettlementCharge, SettlementRequest } from '@hushbox/shared';
 
 /**
@@ -104,5 +104,62 @@ describe('withStorageFees', () => {
     };
     const [charge] = withStorageFees(request, 2);
     expect(charge?.storageFeeNanoUsd).toBe(BigInt(2 + stored.length) * CHAR);
+  });
+});
+
+describe('withStorageFees — a turn-level charge that persists nothing', () => {
+  /**
+   * A turn-level generation (the classifier) runs before the siblings and
+   * carries no content of its own, so it is the run's FIRST charge. The shared
+   * prompt fee still has to ride a charge that MINTED a content item, so the
+   * whole fee lands on one item deterministically in both the debit and the
+   * display, rather than on whichever item the run-level anchor happens to
+   * resolve for a contentless charge.
+   */
+  it('lands the shared prompt fee on the first PERSISTED charge, not the first charge', () => {
+    const request: SettlementRequest = {
+      runKey: 'k',
+      outputs: { 'model-a': { kind: 'text', text: 'aa' } }, // 2 chars
+      charges: [textCharge('classify'), textCharge('model-a')],
+    };
+    const [classify, a] = withStorageFees(request, 10);
+    expect(classify?.storageFeeNanoUsd).toBe(0n);
+    expect(a?.storageFeeNanoUsd).toBe(BigInt(10 + 2) * CHAR);
+  });
+
+  it('still counts the shared prompt exactly once across the run', () => {
+    const request: SettlementRequest = {
+      runKey: 'k',
+      outputs: {
+        'model-a': { kind: 'text', text: 'aa' },
+        'model-b': { kind: 'text', text: 'bbbb' },
+      },
+      charges: [textCharge('classify'), textCharge('model-a'), textCharge('model-b')],
+    };
+    const total = withStorageFees(request, 10).reduce(
+      (sum, charge) => sum + (charge.storageFeeNanoUsd ?? 0n),
+      0n
+    );
+    expect(total).toBe(BigInt(10 + 2 + 4) * CHAR);
+  });
+});
+
+describe('collectPersistableCharges', () => {
+  it('is empty when a run charged only a generation that persists nothing', () => {
+    const request: SettlementRequest = {
+      runKey: 'k',
+      outputs: {},
+      charges: [textCharge('classify')],
+    };
+    expect(collectPersistableCharges(request)).toEqual([]);
+  });
+
+  it('holds the charges whose content the run surfaced', () => {
+    const request: SettlementRequest = {
+      runKey: 'k',
+      outputs: { 'model-a': { kind: 'text', text: 'aa' } },
+      charges: [textCharge('classify'), textCharge('model-a')],
+    };
+    expect(collectPersistableCharges(request).map((item) => item.charge.key)).toEqual(['model-a']);
   });
 });

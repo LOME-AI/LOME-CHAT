@@ -3,7 +3,13 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Link } from '@tanstack/react-router';
 import { ChevronUp, ChevronDown, Lock, Square, CheckSquare, Info } from 'lucide-react';
 import { Button, cn, Tooltip, TooltipContent, TooltipTrigger, useIsTouchDevice } from '@hushbox/ui';
-import { ROUTES, shortenModelName, TEST_IDS, TEST_ID_BUILDERS } from '@hushbox/shared';
+import {
+  NOTICE_COPY,
+  noticeText,
+  shortenModelName,
+  TEST_IDS,
+  TEST_ID_BUILDERS,
+} from '@hushbox/shared';
 import { type PickerMode } from '@/stores/model';
 
 import { ModelInfoPanel } from '@/components/chat/model-selector/model-info-panel';
@@ -11,56 +17,49 @@ import {
   modelSubtitle,
   expandedRowButtonLabel,
 } from '@/components/chat/model-selector/model-selector-helpers';
-import type { Model } from '@hushbox/shared';
+import type { Availability, Model, RefusalCode } from '@hushbox/shared';
 
-interface ModelItemOverlayProps {
-  isAuthenticated: boolean;
-}
-
-function ModelItemOverlay({ isAuthenticated }: Readonly<ModelItemOverlayProps>): React.JSX.Element {
-  if (isAuthenticated) {
-    return (
-      <span className="shrink-0 text-xs">
-        <Link
-          to={ROUTES.BILLING}
-          className="text-primary hover:underline"
-          onClick={(e) => {
-            e.stopPropagation();
-          }}
-        >
-          Top up
-        </Link>
-        <span className="text-muted-foreground"> to unlock</span>
-      </span>
-    );
-  }
+/**
+ * The action clause of a row's reason, rendered from the shared vocabulary —
+ * the same segments the composer's notice renders, so the picker cannot phrase
+ * a condition differently from the surface beside it. A segment carrying a
+ * route becomes a link, which is what keeps "Add credit" and "Sign up"
+ * actionable from the row itself without re-authoring either sentence.
+ */
+function RowReasonAction({ reason }: Readonly<{ reason: RefusalCode }>): React.JSX.Element {
   return (
     <span className="shrink-0 text-xs">
-      <Link
-        to={ROUTES.SIGNUP}
-        className="text-primary hover:underline"
-        onClick={(e) => {
-          e.stopPropagation();
-        }}
-      >
-        Sign up
-      </Link>
-      <span className="text-muted-foreground"> to access</span>
+      {NOTICE_COPY[reason].action.map((segment) =>
+        segment.link === undefined ? (
+          <span key={segment.text} className="text-muted-foreground">
+            {segment.text}
+          </span>
+        ) : (
+          <Link
+            key={segment.text}
+            to={segment.link}
+            className="text-primary hover:underline"
+            onClick={(e) => {
+              e.stopPropagation();
+            }}
+          >
+            {segment.text}
+          </Link>
+        )
+      )}
     </span>
   );
 }
 
 interface ModelItemDetailsProps {
   model: Model;
-  showOverlay: boolean;
-  isAuthenticated: boolean;
+  reason: RefusalCode | undefined;
   pinnedLabel?: string | undefined;
 }
 
 function ModelItemDetails({
   model,
-  showOverlay,
-  isAuthenticated,
+  reason,
   pinnedLabel,
 }: Readonly<ModelItemDetailsProps>): React.JSX.Element {
   // Per-model "Web Search" badges intentionally omitted — search is universal
@@ -68,8 +67,8 @@ function ModelItemDetails({
   return (
     <div className="text-muted-foreground relative flex items-center justify-between text-xs">
       <span className="truncate">{modelSubtitle(model)}</span>
-      {showOverlay && <ModelItemOverlay isAuthenticated={isAuthenticated} />}
-      {!showOverlay && pinnedLabel && (
+      {reason !== undefined && <RowReasonAction reason={reason} />}
+      {reason === undefined && pinnedLabel && (
         <span className="text-muted-foreground shrink-0 text-xs">{pinnedLabel}</span>
       )}
     </div>
@@ -78,56 +77,43 @@ function ModelItemDetails({
 
 interface ModelItemContentProps {
   model: Model;
-  showOverlay: boolean;
-  isAuthenticated: boolean;
+  reason: RefusalCode | undefined;
   pinnedLabel?: string | undefined;
 }
 
 function ModelItemContent({
   model,
-  showOverlay,
-  isAuthenticated,
+  reason,
   pinnedLabel,
 }: Readonly<ModelItemContentProps>): React.JSX.Element {
   return (
     <div className="w-0 min-w-0 flex-1 p-3">
       <div className="relative flex items-center justify-between gap-2">
         <span className="truncate font-medium">{shortenModelName(model.name)}</span>
-        {showOverlay && (
+        {reason !== undefined && (
           <Lock
             data-testid={TEST_IDS.lockIcon}
             className="text-muted-foreground h-4 w-4 shrink-0"
           />
         )}
       </div>
-      <ModelItemDetails
-        model={model}
-        showOverlay={showOverlay}
-        isAuthenticated={isAuthenticated}
-        pinnedLabel={pinnedLabel}
-      />
+      <ModelItemDetails model={model} reason={reason} pinnedLabel={pinnedLabel} />
     </div>
   );
 }
-
-/**
- * Disabled copy for a model whose minimum-viable turn the shared floor
- * verdict denies — matches the effort menu's balance reason so the two
- * "can't fund this" surfaces read alike.
- */
-export const MODEL_BELOW_FLOOR_REASON = "Doesn't fit your current balance";
 
 export interface ModelListItemProps {
   model: Model;
   isFocused: boolean;
   isSelected: boolean;
   isDisabled: boolean;
-  isPremium: boolean;
-  /** Below the shared affordability floor: greyed, tooltip, not selectable. */
-  isBelowFloor: boolean;
-  canAccessPremium: boolean;
-  isAuthenticated: boolean;
-  isLinkGuest: boolean;
+  /**
+   * The row's verdict as the producer marked it (`affordable.all`). A row is
+   * never removed for being unavailable — it greys and carries its typed
+   * reason, which is the only thing that decides the copy. Premium locks and
+   * funding shortfalls differ by REASON, not by mechanism.
+   */
+  availability: Availability;
   pickerMode: PickerMode;
   pinnedLabel?: string | undefined;
   isExpanded: boolean;
@@ -184,11 +170,11 @@ interface RowMainButtonProps {
   isSelected: boolean;
   isFocused: boolean;
   isDisabled: boolean;
-  showOverlay: boolean;
-  /** Floor-greyed: aria-disabled + cause tooltip; activation is guarded upstream. */
-  belowFloor: boolean;
-  belowFloorReasonId: string;
-  isAuthenticated: boolean;
+  /** Greyed: aria-disabled + cause tooltip; activation is refused here too. */
+  isUnavailable: boolean;
+  reason: RefusalCode | undefined;
+  reasonText: string;
+  reasonId: string;
   pinnedLabel?: string | undefined;
   /** Row position used by the checkbox cascade-in/out animation. */
   cascadeIndex: number;
@@ -202,10 +188,10 @@ function RowMainButton({
   isSelected,
   isFocused,
   isDisabled,
-  showOverlay,
-  belowFloor,
-  belowFloorReasonId,
-  isAuthenticated,
+  isUnavailable,
+  reason,
+  reasonText,
+  reasonId,
   pinnedLabel,
   cascadeIndex,
   onActivate,
@@ -220,12 +206,18 @@ function RowMainButton({
       // aria-disabled (not disabled): the row stays hoverable and
       // keyboard-focusable so the cause tooltip and aria-describedby reason
       // remain reachable — greyed-never-hidden, and discoverable why.
-      {...(belowFloor && { 'aria-disabled': true, 'aria-describedby': belowFloorReasonId })}
+      {...(isUnavailable && { 'aria-disabled': true, 'aria-describedby': reasonId })}
       className={cn(
         'flex flex-1 cursor-pointer items-center rounded-md text-left transition-colors',
-        !isSelected && !isFocused && !isDisabled && !belowFloor && 'hover:bg-muted',
-        belowFloor && 'cursor-not-allowed'
+        !isSelected && !isFocused && !isDisabled && !isUnavailable && 'hover:bg-muted',
+        isUnavailable && 'cursor-not-allowed'
       )}
+      // An unavailable row still REPORTS activation. Swallowing the click here
+      // would break the two things the container must still be able to do with
+      // it: route a premium lock to the paywall, and let an already-selected
+      // row be de-selected so a model that became unavailable cannot trap the
+      // selection. Refusing to SELECT is the container's decision, not the
+      // row's.
       onClick={onActivate}
       onMouseEnter={onHover}
       onFocus={onHover}
@@ -235,23 +227,18 @@ function RowMainButton({
           <ModelCheckboxIcon key="checkbox" isSelected={isSelected} cascadeIndex={cascadeIndex} />
         )}
       </AnimatePresence>
-      <ModelItemContent
-        model={model}
-        showOverlay={showOverlay}
-        isAuthenticated={isAuthenticated}
-        pinnedLabel={pinnedLabel}
-      />
+      <ModelItemContent model={model} reason={reason} pinnedLabel={pinnedLabel} />
     </button>
   );
-  if (!belowFloor) return button;
+  if (!isUnavailable) return button;
   return (
     <>
       <Tooltip>
         <TooltipTrigger asChild>{button}</TooltipTrigger>
-        <TooltipContent side="left">{MODEL_BELOW_FLOOR_REASON}</TooltipContent>
+        <TooltipContent side="left">{reasonText}</TooltipContent>
       </Tooltip>
-      <span id={belowFloorReasonId} className="sr-only">
-        {MODEL_BELOW_FLOOR_REASON}
+      <span id={reasonId} className="sr-only">
+        {reasonText}
       </span>
     </>
   );
@@ -387,7 +374,7 @@ function modelListItemRowClass(params: {
   isFocused: boolean;
   isDisabled: boolean;
   isPulsing: boolean;
-  showFloorGrey: boolean;
+  isUnavailable: boolean;
 }): string {
   return cn(
     'group/row relative flex flex-col rounded-md transition-colors',
@@ -397,7 +384,7 @@ function modelListItemRowClass(params: {
     // opacity-60, not lower: greyed rows must stay perceivable for
     // low-vision users while reading as non-interactive. No
     // pointer-events-none — the cause tooltip must stay reachable.
-    params.showFloorGrey && 'opacity-60',
+    params.isUnavailable && 'opacity-60',
     params.isPulsing && 'animate-picker-pulse'
   );
 }
@@ -407,11 +394,7 @@ export function ModelListItem({
   isFocused,
   isSelected,
   isDisabled,
-  isPremium,
-  isBelowFloor,
-  canAccessPremium,
-  isAuthenticated,
-  isLinkGuest,
+  availability,
   pickerMode,
   pinnedLabel,
   isExpanded,
@@ -423,12 +406,14 @@ export function ModelListItem({
   onShowInfo,
   onToggleExpand,
 }: Readonly<ModelListItemProps>): React.JSX.Element {
-  const showOverlay = isPremium && !canAccessPremium && !isLinkGuest;
-  // The premium lock is its own, separate gate: a premium-locked row shows
-  // the paywall overlay and never the floor grey.
-  const showFloorGrey = isBelowFloor && !showOverlay;
+  // ONE greyed state with ONE reason. The premium lock used to be a separate
+  // gate with its own overlay and its own sentence; it is now a reason like
+  // any other, which is what keeps a condition from acquiring a second
+  // phrasing by being explained on a second surface.
+  const isUnavailable = !availability.available;
+  const reasonText = availability.available ? '' : noticeText(availability.reason);
   const showInlineExpansion = isExpanded && isMobile;
-  const belowFloorReasonId = React.useId();
+  const reasonId = React.useId();
 
   return (
     <div
@@ -436,18 +421,18 @@ export function ModelListItem({
       data-selected={isSelected}
       data-expanded={isExpanded}
       data-pulsing={isPulsing ? 'true' : undefined}
-      data-below-floor={showFloorGrey ? 'true' : undefined}
+      data-unavailable={isUnavailable ? 'true' : undefined}
       className={modelListItemRowClass({
         isSelected,
         isFocused,
         isDisabled,
         isPulsing,
-        showFloorGrey,
+        isUnavailable,
       })}
       role="option"
       aria-selected={isSelected}
     >
-      {showOverlay && (
+      {isUnavailable && (
         <div
           data-testid={TEST_IDS.premiumOverlay}
           className="bg-background/60 pointer-events-none absolute inset-0 rounded-md"
@@ -461,10 +446,10 @@ export function ModelListItem({
           isSelected={isSelected}
           isFocused={isFocused}
           isDisabled={isDisabled}
-          showOverlay={showOverlay}
-          belowFloor={showFloorGrey}
-          belowFloorReasonId={belowFloorReasonId}
-          isAuthenticated={isAuthenticated}
+          isUnavailable={isUnavailable}
+          reason={availability.available ? undefined : availability.reason}
+          reasonText={reasonText}
+          reasonId={reasonId}
           pinnedLabel={pinnedLabel}
           cascadeIndex={cascadeIndex}
           onActivate={onActivate}

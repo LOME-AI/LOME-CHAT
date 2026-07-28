@@ -4,6 +4,7 @@ import type { ChatHistoryMessage, FilePartMapper, InferenceEvent } from './infer
 import type { MockDirectives } from './mock-directives.js';
 import type { Modality } from './affordability/modality.js';
 import type { NanoUSD } from './affordability/nano-usd.js';
+import type { ResolvedReasoningEffort } from './affordability/reasoning-effort.js';
 import type { WorkflowDefinition } from './workflow.js';
 
 /**
@@ -121,6 +122,13 @@ export interface SettlementCharge {
   readonly storageFeeNanoUsd?: bigint;
   /** Present on language generations — the token dimension for `llm_completions`. */
   readonly tokens?: CompletionTokens;
+  /**
+   * The level this generation reasoned at, recorded on its `llm_completions`
+   * row beside the reasoning tokens it spent (`docs/BILLING.md` §Reasoning
+   * Effort 9). Absent when the call carried no reasoning wire at all, which is
+   * a different fact from `off` — the level a user who chose Min runs at.
+   */
+  readonly reasoningEffort?: ResolvedReasoningEffort;
   /** Present on image/video generations — the dimension for `media_generations`. */
   readonly media?: MediaGenerationFacts;
   /**

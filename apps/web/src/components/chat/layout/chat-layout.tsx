@@ -39,7 +39,7 @@ import { useResolveDefaultModel } from '@/hooks/models/use-resolve-default-model
 import { useDocumentStore } from '@/stores/document';
 import type { FundingSource, MemberPrivilege, ChatModality } from '@hushbox/shared';
 import type { ChatSearchProps } from '@/components/chat/input/prompt-input';
-import type { ModelFloorGroupContext } from '@/hooks/billing/use-prompt-budget';
+import type { PickerConversationContext } from '@/components/chat/model-selector/model-selector-types';
 import type { GroupChatProps, PromptInputRef } from '@/components/chat/message/types';
 import type { Message } from '@/lib/api';
 import type { QueuedMessage } from '@/stores/message-queue';
@@ -172,15 +172,12 @@ function renderQueuedPills(
   return <QueuedMessages queued={queuedMessages} onCancel={onCancelQueued} className="mb-2" />;
 }
 
-/** The conversation's funding context for the model picker's affordability floor. */
+/** The conversation the picker prices against — it names the payer. */
 function buildFloorGroup(
   groupChat: GroupChatProps | undefined
-): ModelFloorGroupContext | undefined {
+): PickerConversationContext | undefined {
   if (groupChat === undefined) return undefined;
-  return {
-    conversationId: groupChat.conversationId,
-    currentUserPrivilege: groupChat.currentUserPrivilege,
-  };
+  return { conversationId: groupChat.conversationId };
 }
 
 export function ChatLayout({
@@ -290,7 +287,6 @@ export function ChatLayout({
   });
   const {
     premiumIds,
-    canAccessPremium,
     sharedMessageContent,
     sharedMessageEpochNumber,
     sharedMessageWrappedContentKey,
@@ -353,7 +349,6 @@ export function ChatLayout({
           onModelSelect={handleModelSelect}
           title={title}
           premiumIds={premiumIds}
-          canAccessPremium={canAccessPremium}
           isAuthenticated={isAuthenticated}
           isLinkGuest={isLinkGuest ?? false}
           onPremiumClick={handlePremiumClick}

@@ -76,14 +76,16 @@ export interface MediaBillable {
 
 /**
  * The Smart-Model classifier pre-reserve. Input-driven like the rest of the
- * core: the caller stamps the truncated-context token count and char count
- * (via `classifierReserveChars` + the tier token pre-adapter); the output leg is
- * the fixed `CLASSIFIER_OUTPUT_TOKEN_CAP` the core applies.
+ * core: the caller stamps the truncated-context token count (via
+ * `classifierReserveChars` + the tier token pre-adapter); the output leg is the
+ * fixed `CLASSIFIER_OUTPUT_TOKEN_CAP` the core applies.
+ *
+ * No char count: the classifier's prompt never rests, so there is no storage leg
+ * to size (`docs/BILLING.md` §Storage Fees).
  */
 export interface ClassifierStage {
   readonly pricing: ModelRatesNano;
   readonly inputTokens: bigint;
-  readonly inputChars: number;
 }
 
 /**

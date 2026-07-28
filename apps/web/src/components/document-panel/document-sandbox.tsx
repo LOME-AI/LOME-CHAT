@@ -268,7 +268,9 @@ function ConsoleStrip({ lines }: Readonly<{ lines: ConsoleLine[] }>): React.JSX.
       role="log"
       aria-live="polite"
       aria-label="Program output"
-      className="max-h-48 overflow-auto rounded-md p-3 font-mono text-xs"
+      // Grows with the output and then scrolls: 5 lines at text-xs (1rem each)
+      // plus p-3 top and bottom.
+      className="max-h-[6.5rem] overflow-auto rounded-md p-3 font-mono text-xs"
     >
       {lines.map((line) => (
         <div
@@ -327,9 +329,17 @@ function PythonSandboxView({
   const { status, phase, consoleLines, outputs } = state;
   const isBusy = status === 'loading' || status === 'running';
   return (
-    <div className="flex h-full flex-col gap-3 p-4">
+    // Deliberately not `h-full`, unlike the render view: this frame is `h-0` and
+    // everything visible here is ordinary content. Pinning the column to the
+    // panel's height would make every child a shrinkable flex item, collapsing
+    // the console and the source to a line apiece. Auto height lets the panel's
+    // own scroll container take over.
+    <div className="flex flex-col gap-3 p-4">
       {frame}
-      <HighlightedSource content={code} language="python" />
+      {/* Controls and results sit above the source: what a reader acts on and
+          what the run produced are the reason the panel is open, and the source
+          is reference behind them. A long program would otherwise push its own
+          output below the fold. */}
       <div className="flex gap-2">
         <Button size="sm" onClick={onRun} disabled={status === 'booting' || isBusy}>
           Run
@@ -342,6 +352,7 @@ function PythonSandboxView({
       <ErrorCard text={errorText} />
       <ConsoleStrip lines={consoleLines} />
       <OutputList outputs={outputs} />
+      <HighlightedSource content={code} language="python" />
       <StatusMirror status={status} phase={phase} errorText={errorText} />
     </div>
   );

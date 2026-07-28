@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { makeBalance } from '@/test-utils/balance-fixture';
 import { renderHook } from '@testing-library/react';
 import {
   createModelStoreStub,
@@ -13,8 +12,8 @@ vi.mock('@/lib/auth', () => ({
   useSession: vi.fn(),
 }));
 
-vi.mock('@/hooks/billing/billing.js', () => ({
-  useBalance: vi.fn(),
+vi.mock('@/hooks/billing/use-spendable.js', () => ({
+  useSpendable: vi.fn(),
 }));
 
 vi.mock('@/hooks/models/models.js', () => ({
@@ -30,13 +29,18 @@ vi.mock('@/stores/model', async (importOriginal) => {
 });
 
 import { useSession } from '@/lib/auth';
-import { useBalance } from '@/hooks/billing/billing.js';
+import { useSpendable } from '@/hooks/billing/use-spendable.js';
 import { useModels } from '@/hooks/models/models.js';
 import type { SelectedModelEntry } from '@/stores/model';
 import type { Model, ChatModality } from '@hushbox/shared';
 
 const mockedUseSession = vi.mocked(useSession);
-const mockedUseBalance = vi.mocked(useBalance);
+const mockedUseSpendable = vi.mocked(useSpendable);
+
+/** A served funding snapshot at the given payer tier. */
+function servedTier(tier: 'paid' | 'free' | 'trial' | 'guest'): { data: unknown } {
+  return { data: { spendableNanoUsd: '0', heldNanoUsd: '0', tier, payer: 'self' } };
+}
 const mockedUseModels = vi.mocked(useModels);
 const mockedUseModelStore = vi.mocked(useModelStore);
 
@@ -122,9 +126,7 @@ describe('useResolveDefaultModel', () => {
       data: { user: { id: 'u1' } },
       isPending: false,
     } as ReturnType<typeof useSession>);
-    mockedUseBalance.mockReturnValue({
-      data: makeBalance('10000000000', '0'),
-    } as ReturnType<typeof useBalance>);
+    mockedUseSpendable.mockReturnValue(servedTier('paid') as never);
     mockedUseModels.mockReturnValue({
       data: { models: modelList, premiumIds: new Set(['imagen-premium']) },
     } as ReturnType<typeof useModels>);
@@ -168,9 +170,7 @@ describe('useResolveDefaultModel', () => {
   });
 
   it('filters out premium models when user has no balance', () => {
-    mockedUseBalance.mockReturnValue({
-      data: makeBalance('0', '0'),
-    } as ReturnType<typeof useBalance>);
+    mockedUseSpendable.mockReturnValue(servedTier('free') as never);
     stubStore(buildState());
     // Only non-premium model should be available
     renderHook(() => {
@@ -182,9 +182,7 @@ describe('useResolveDefaultModel', () => {
   });
 
   it('does nothing when only premium models exist and user cannot access premium', () => {
-    mockedUseBalance.mockReturnValue({
-      data: makeBalance('0', '0'),
-    } as ReturnType<typeof useBalance>);
+    mockedUseSpendable.mockReturnValue(servedTier('free') as never);
     mockedUseModels.mockReturnValue({
       data: {
         models: modelList.filter((m) => m.id === 'imagen-premium' || m.modality === 'text'),
@@ -215,7 +213,7 @@ describe('useResolveDefaultModel', () => {
   });
 
   it('does nothing when authenticated user is waiting for balance', () => {
-    mockedUseBalance.mockReturnValue({ data: undefined } as ReturnType<typeof useBalance>);
+    mockedUseSpendable.mockReturnValue({ data: undefined } as never);
     renderHook(() => {
       useResolveDefaultModel('image');
     });

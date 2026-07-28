@@ -1,3 +1,4 @@
+import { match } from 'ts-pattern';
 import { DEADLINE_CLASS_MS, ERROR_CODES } from '@hushbox/shared';
 import {
   createEstimateRun,
@@ -43,6 +44,8 @@ import {
   PER_WALLET_CONCURRENT_RUN_CAP,
   TRIAL_ADMISSION_HOOK,
 } from './constants.js';
+import type { ErrorCode } from '@hushbox/shared';
+import type { AdmissionRefusalReason } from '../../billing/index.js';
 import type { ModelProvider } from '../../models/index.js';
 import type { ConversationCaller } from '../../conversations/index.js';
 import type { Storage } from '../../media/index.js';
@@ -567,6 +570,31 @@ interface AdmissionRunContext {
   readonly ownerFunded: ResultAsync<boolean, DomainError>;
 }
 
+/**
+ * One admission refusal's wire code.
+ *
+ * The run cap is separated because its ACTION differs, which is the §Notices 2
+ * test: paying fixes an empty balance, and only waiting fixes runs already in
+ * flight. Telling a payer with ample funds that their balance is short — the
+ * behaviour before this split — offered an action that cannot help.
+ *
+ * The other two still share the unresolved code, deliberately.
+ * `budget-exceeded` is not one condition: the scope that bound may be a group
+ * owner's budget or the sender's own free daily allowance, whose actions point
+ * at different people, and the reason does not carry which. Splitting it needs
+ * the scope on the refusal, not a guess here — a guess would replace one wrong
+ * sentence with another.
+ *
+ * No refusal names an amount, threshold, or limit — §Notices 6 forbids
+ * disclosing the binding constraint, and a condition is not an amount.
+ */
+function admissionRefusalCode(reason: AdmissionRefusalReason): ErrorCode {
+  return match(reason)
+    .with('run-cap', () => ERROR_CODES.RUN_CAPACITY_REACHED)
+    .with('insufficient-balance', 'budget-exceeded', () => ERROR_CODES.INSUFFICIENT_ADMISSION)
+    .exhaustive();
+}
+
 /** Maps a refusal or infra failure onto the engine's admission error codes. */
 function createAdmissionHook(
   deps: ConversationRuntimeDeps,
@@ -597,20 +625,19 @@ function createAdmissionHook(
       .match(
         (decision) => {
           if (!decision.admitted) {
-            // The route/DO collapse every refusal to the opaque
-            // INSUFFICIENT_ADMISSION wire code (the reason must not reach the
-            // client), so the typed AdmissionRefusalReason survives ONLY here.
-            // Emit it — with content-free correlation ids — so a 402 is
-            // debuggable from logs. Money stays off the line: no field carries
-            // the nano-USD estimate, and `errorCode` is the machine-readable
-            // reason, never content.
+            // Each refusal carries its OWN wire code, so the client renders the
+            // condition that actually bound rather than one sentence covering
+            // all three (§Notices 2). The reason still rides the log with
+            // content-free correlation ids so a 402 stays debuggable: money
+            // stays off the line — no field carries the nano-USD estimate, and
+            // `errorCode` is the machine-readable reason, never content.
             const { runId, conversationId } = context;
             deps.telemetry.warn('chat admission refused', {
               errorCode: decision.reason,
               runId,
               conversationId,
             });
-            return { admitted: false as const, code: ERROR_CODES.INSUFFICIENT_ADMISSION };
+            return { admitted: false as const, code: admissionRefusalCode(decision.reason) };
           }
           return {
             admitted: true as const,

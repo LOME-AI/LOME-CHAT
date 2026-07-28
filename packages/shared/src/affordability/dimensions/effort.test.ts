@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { CANONICAL_REASONING_EFFORTS, REASONING_OFF } from '../reasoning-effort.js';
+import { modelId } from '../model-id.js';
 import { nanoUSD } from '../nano-usd.js';
 import {
   EFFORT_DIMENSION,
@@ -12,11 +13,12 @@ import type { PriceableModel } from '../priceable-model.js';
 
 function modelFor(reasoning?: PriceableModel['reasoning'], caps = 200_000): PriceableModel {
   return {
-    modelId: 'vendor/model',
+    modelId: modelId('vendor/model'),
     inputRateNanoUsd: nanoUSD(1000n),
     outputRateNanoUsd: nanoUSD(2000n),
     contextLength: caps,
     providerCap: caps,
+    releasedAtMs: 0,
     reasoning,
   };
 }
@@ -89,5 +91,42 @@ describe('cheapestEffortOption — e_min(m)', () => {
 
   it('is absent when the model offers nothing on the axis', () => {
     expect(cheapestEffortOption(modelFor())).toBeUndefined();
+  });
+
+  /**
+   * `e_min(m)` has to be TOTAL over every reasoning shape the catalog contains,
+   * because `eligible(m)` grades on `B(m, e_min(m))` — an absent corner grades
+   * the model at the minimum-answer floor and sells a turn whose whole ceiling
+   * goes to thinking (§Predicates, "never on an unreachable zero"). The shape
+   * that used to have no corner is the mandatory model with a single native
+   * effort word, which is live in the catalog.
+   */
+  it('is total over every reasoning shape, mandatory-single-rung included', () => {
+    const nativeWords = ['w5', 'w4', 'w3', 'w2', 'w1'];
+    const reasoningShapes: PriceableModel['reasoning'][] = [
+      {},
+      { mandatory: true },
+      { supportedEfforts: null },
+      { supportedEfforts: null, mandatory: true },
+      ...Array.from({ length: 5 }, (_, n) => n + 1).flatMap((n) => [
+        { supportedEfforts: nativeWords.slice(0, n) },
+        { supportedEfforts: nativeWords.slice(0, n), mandatory: true },
+      ]),
+    ];
+    for (const reasoning of reasoningShapes) {
+      const option = cheapestEffortOption(modelFor(reasoning));
+      expect(option).toBeDefined();
+      // Reachable: the corner it names has a priceable budget on this model.
+      expect(
+        EFFORT_DIMENSION.requirement(modelFor(reasoning), option ?? '')
+      ).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('names a real rung, not a free zero, on the live mandatory-single-rung shape', () => {
+    const model = modelFor({ supportedEfforts: ['high'], mandatory: true });
+    const option = cheapestEffortOption(model);
+    expect(option).toBe('high');
+    expect(EFFORT_DIMENSION.requirement(model, option ?? '')).toBeGreaterThan(0);
   });
 });

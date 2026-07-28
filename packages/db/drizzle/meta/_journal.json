@@ -428,6 +428,13 @@
       "when": 1785100108784,
       "tag": "0060_panoramic_steel_serpent",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1785276980821,
+      "tag": "0061_nifty_pepper_potts",
+      "breakpoints": true
     }
   ]
 }

@@ -14,11 +14,15 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { modelId } from './model-id.js';
 import { nanoUSD } from './nano-usd.js';
 import { getTurnOptions } from './turn-options.js';
 import type { NanoUSD } from './nano-usd.js';
 import type { PriceableModel } from './priceable-model.js';
 import type { FundingSnapshot, PromptBasis, Selection } from './turn-types.js';
+
+/** A fixed instant: premium classification takes its clock as an argument. */
+const NOW_MS = 1_800_000_000_000;
 
 /** 1,000 prompt characters exactly, so both tier ratios divide cleanly. */
 const BASIS: PromptBasis = {
@@ -31,11 +35,12 @@ const BASIS: PromptBasis = {
 
 function modelOf(name: string, outputRate: bigint): PriceableModel {
   return {
-    modelId: `vendor/${name}`,
+    modelId: modelId(`vendor/${name}`),
     inputRateNanoUsd: nanoUSD(100n),
     outputRateNanoUsd: nanoUSD(outputRate),
     contextLength: 100_000,
     providerCap: 8000,
+    releasedAtMs: 0,
     reasoning: undefined,
   };
 }
@@ -68,7 +73,7 @@ function holdFor(
   catalog: readonly PriceableModel[],
   funding: FundingSnapshot
 ): NanoUSD | undefined {
-  return getTurnOptions(funding, BASIS, SMART_SLOT, catalog).holdNanoUsd;
+  return getTurnOptions(funding, BASIS, SMART_SLOT, { models: catalog, nowMs: NOW_MS }).holdNanoUsd;
 }
 
 /** The same catalog with one model's output rate replaced. */
@@ -109,13 +114,13 @@ describe('a high-cost outlier is not in the hold`s MAX domain', () => {
   });
 
   it('keeps the excluded model on the picker, marked available', () => {
-    const options = getTurnOptions(rich, BASIS, SMART_SLOT, CATALOG);
+    const options = getTurnOptions(rich, BASIS, SMART_SLOT, { models: CATALOG, nowMs: NOW_MS });
     const row = options.admissible.all.find((entry) => entry.modelId === OUTLIER.modelId);
     expect(row?.availability).toEqual({ available: true });
   });
 
   it('keeps the excluded model out of `runnable`, so the hold`s domain and the witness agree', () => {
-    const options = getTurnOptions(rich, BASIS, SMART_SLOT, CATALOG);
+    const options = getTurnOptions(rich, BASIS, SMART_SLOT, { models: CATALOG, nowMs: NOW_MS });
     expect(options.admissible.sendable).toBe(true);
     const runnableIds = options.admissible.sendable
       ? options.admissible.runnable.map((entry) => entry.modelId)
@@ -129,7 +134,7 @@ describe('a high-cost outlier is not in the hold`s MAX domain', () => {
       ...SMART_SLOT,
       answerSources: { models: [OUTLIER.modelId], smartSlot: false },
     };
-    const options = getTurnOptions(rich, BASIS, explicit, CATALOG);
+    const options = getTurnOptions(rich, BASIS, explicit, { models: CATALOG, nowMs: NOW_MS });
     const runnableIds = options.admissible.sendable
       ? options.admissible.runnable.map((entry) => entry.modelId)
       : [];
@@ -141,7 +146,9 @@ describe('a high-cost outlier is not in the hold`s MAX domain', () => {
       ...SMART_SLOT,
       answerSources: { models: [OUTLIER.modelId], smartSlot: false },
     };
-    expect(getTurnOptions(rich, BASIS, explicit, CATALOG).admissible.sendable).toBe(true);
+    expect(
+      getTurnOptions(rich, BASIS, explicit, { models: CATALOG, nowMs: NOW_MS }).admissible.sendable
+    ).toBe(true);
   });
 
   it('excludes nothing from a tight distribution', () => {
@@ -158,14 +165,17 @@ describe('a trial row over the per-message cap carries its own reason', () => {
     inputRateNanoUsd: nanoUSD(1000n),
   };
   /** The same shape at a fifth of the output rate: 4.5m nano, inside the cap. */
-  const UNDER_CAP: PriceableModel = { ...OVER_CAP, modelId: 'vendor/under-cap' };
+  const UNDER_CAP: PriceableModel = { ...OVER_CAP, modelId: modelId('vendor/under-cap') };
 
   function rowReason(model: PriceableModel, catalog: readonly PriceableModel[]) {
     const selection: Selection = {
       ...SMART_SLOT,
       answerSources: { models: [model.modelId], smartSlot: false },
     };
-    const options = getTurnOptions(trialFunding, BASIS, selection, catalog);
+    const options = getTurnOptions(trialFunding, BASIS, selection, {
+      models: catalog,
+      nowMs: NOW_MS,
+    });
     return options.admissible.all.find((entry) => entry.modelId === model.modelId)?.availability;
   }
 
@@ -186,7 +196,10 @@ describe('a trial row over the per-message cap carries its own reason', () => {
       ...SMART_SLOT,
       answerSources: { models: [OVER_CAP.modelId], smartSlot: false },
     };
-    const options = getTurnOptions(fundingOf(100_000_000n), BASIS, selection, [OVER_CAP]);
+    const options = getTurnOptions(fundingOf(100_000_000n), BASIS, selection, {
+      models: [OVER_CAP],
+      nowMs: NOW_MS,
+    });
     expect(options.admissible.all[0]?.availability).toEqual({ available: true });
   });
 });

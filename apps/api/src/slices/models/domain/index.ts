@@ -18,11 +18,7 @@ export { listModels } from './list-models.js';
 export { createErrorResponse, domainWireCode } from '../../../lib/errors/index.js';
 export type { DomainError, DomainErrorCode } from '../../../lib/errors/index.js';
 export { createModelPricingResolver, snapshotResolver } from './pricing-resolver.js';
-export {
-  CLASSIFIER_CHARS_PER_TOKEN,
-  buildSmartModelCandidates,
-  pickEffortClassifier,
-} from './smart-model-candidates.js';
+export { buildSmartModelCandidates, pickEffortClassifier } from './smart-model-candidates.js';
 export type {
   SmartModelCandidateEntry,
   SmartModelCandidates,
@@ -51,7 +47,12 @@ export {
   webSearch,
 } from './tool-registry.js';
 export type { CallShapeFamily } from './dispatch.js';
-export type { CallUsage, DeclaredCeiling } from './estimate.js';
+// `DeclaredCeiling` and `NodeStorage` stay OFF this barrel: they are walled money
+// shapes (`docs/BILLING.md` §Where the Code Lives), and republishing them here put
+// them back in reach of every workspace through a slice boundary that neither
+// barrel's absence test can see. Modules inside the slice import them from
+// `./estimate.js` directly; `barrel.test.ts` pins the absence.
+export type { CallUsage } from './estimate.js';
 export type { EstimateRun, ModelPricingResolver } from './estimate-run.js';
 export type { ListDescriptorsDeps } from './list-descriptors.js';
 export type { TrialEligibility } from './trial-eligibility.js';

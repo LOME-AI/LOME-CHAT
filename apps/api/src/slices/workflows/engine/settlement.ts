@@ -84,8 +84,8 @@ export function keyRowCompletion(response: unknown): KeyRowCompletion {
  * that content item is minted inside this same settlement transaction, before
  * the charge. This generic commit knows nothing about content persistence — it
  * maps a charge's stable `key` to the content id the chat slice persisted for
- * it. `undefined` means no content was persisted for that key, so the charge is
- * skipped (saved ⟺ billed — no content, no charge).
+ * it. Which key a charge resolves against is `anchorChargeKey`'s rule; a run
+ * that persisted no content at all resolves none of them, so it bills nothing.
  */
 export interface ChargeContext {
   readonly walletId: string;
@@ -128,8 +128,13 @@ export interface ChargingCommitDeps {
  */
 export function createChargingCommit(deps: ChargingCommitDeps): SettlementCommit {
   return async (tx, request) => {
+    const runChargeKeys = request.charges.map((charge) => charge.key);
     for (const charge of request.charges) {
-      const contentItemId = anchorContentItemId(charge.key, deps.context.contentItemIdFor);
+      const contentItemId = anchorContentItemId(
+        charge.key,
+        deps.context.contentItemIdFor,
+        runChargeKeys
+      );
       if (contentItemId === undefined) continue;
       await chargeWithinTx(deps.stores, tx, chargeInputFor(charge, contentItemId, deps.context));
     }
@@ -137,24 +142,57 @@ export function createChargingCommit(deps: ChargingCommitDeps): SettlementCommit
 }
 
 /**
- * A charge's content anchor: the content persisted for its own key, or —
- * for a `#`-suffixed key with no content of its own (a smartModel classifier
- * generation, keyed `<node>#classifier`) — the content persisted for its base
- * node. Keeps the saved ⟺ billed FK: an auxiliary generation bills against
- * the content its node persisted, and skips (like any charge) when the node
- * persisted nothing. Charge keys nest (a fanOut branch is `<node>#<index>`,
- * its classifier `<node>#<index>#classifier`), so the anchor is the charge
- * key minus its LAST suffix segment — never the bare node id.
+ * A charge's content anchor, resolved nearest-first over three rules:
+ *
+ * 1. the content persisted for the charge's OWN key;
+ * 2. the content persisted for its base node — charge keys nest (a fanOut branch
+ *    is `<node>#<index>`, and the interpreter suffixes an auxiliary generation
+ *    once more), so this strips the LAST suffix segment only, never down to the
+ *    bare node id;
+ * 3. the RUN's own anchor: the first key in `runChargeKeys` that persisted
+ *    content.
+ *
+ * Rule 3 is what keeps a charge whose generation persists nothing of its own
+ * billed rather than absorbed — a turn-level classifier has no content and no
+ * parent that does, and naming a sibling would not help, since that sibling may
+ * be the one that failed. `runChargeKeys` is the run's charge keys in the order
+ * the interpreter collected them, which is the definition's topological order,
+ * so the anchor is the same content item on every replay of the same run.
+ *
+ * `undefined` means the RUN persisted nothing, and no charge of it may land:
+ * `usage_records` is inserted with a non-null content item, so billed ⟹ the run
+ * persisted content.
+ *
+ * Both the wallet debit and the displayed per-item cost anchor through this one
+ * function, so a charge cannot be debited against one content item and
+ * displayed on another.
  */
+export function anchorChargeKey(
+  key: string,
+  persistedContentFor: (key: string) => boolean,
+  runChargeKeys: readonly string[]
+): string | undefined {
+  if (persistedContentFor(key)) return key;
+  const separator = key.lastIndexOf('#');
+  if (separator !== -1) {
+    const base = key.slice(0, separator);
+    if (persistedContentFor(base)) return base;
+  }
+  return runChargeKeys.find((candidate) => persistedContentFor(candidate));
+}
+
+/** The content item a charge's anchor names, resolved through the one rule above. */
 function anchorContentItemId(
   key: string,
-  contentItemIdFor: ChargeContext['contentItemIdFor']
+  contentItemIdFor: ChargeContext['contentItemIdFor'],
+  runChargeKeys: readonly string[]
 ): string | undefined {
-  const own = contentItemIdFor(key);
-  if (own !== undefined) return own;
-  const separator = key.lastIndexOf('#');
-  if (separator === -1) return undefined;
-  return contentItemIdFor(key.slice(0, separator));
+  const anchor = anchorChargeKey(
+    key,
+    (candidate) => contentItemIdFor(candidate) !== undefined,
+    runChargeKeys
+  );
+  return anchor === undefined ? undefined : contentItemIdFor(anchor);
 }
 
 /**
@@ -184,6 +222,7 @@ function chargeInputFor(
     isEstimated: charge.isEstimated,
     ...(charge.tokens === undefined ? {} : { tokens: charge.tokens }),
     ...(charge.media === undefined ? {} : { media: charge.media }),
+    ...(charge.reasoningEffort === undefined ? {} : { reasoningEffort: charge.reasoningEffort }),
     idempotencyKey: `${context.runId}:${charge.key}`,
     now: context.now,
     // A group turn attributes cumulative spend to both the sender's member row

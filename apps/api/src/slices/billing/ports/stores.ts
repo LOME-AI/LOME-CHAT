@@ -1,5 +1,5 @@
 import type { Database } from '@hushbox/db';
-import type { Modality } from '@hushbox/shared';
+import type { Modality, ResolvedReasoningEffort } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { DbWriter, SettlementTx } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -75,6 +75,12 @@ export interface LlmCompletionInput {
   readonly outputTokens: number;
   readonly reasoningTokens: number;
   readonly cachedInputTokens: number;
+  /**
+   * The level this generation reasoned at, recorded beside the tokens it spent
+   * there. Absent when the call carried no reasoning wire at all — which is a
+   * different fact from `off`, the level a user who chose Min runs at.
+   */
+  readonly reasoningEffort?: ResolvedReasoningEffort;
 }
 
 /**

@@ -4,7 +4,7 @@ import { shortenModelName, TEST_IDS } from '@hushbox/shared';
 import { DEFAULT_MODEL_NAME } from '@/stores/model';
 import { ModelSelectorModal } from '@/components/chat/model-selector/model-selector-modal';
 import type { Model, ChatModality } from '@hushbox/shared';
-import type { ModelFloorGroupContext } from '@/hooks/billing/use-prompt-budget';
+import type { PickerConversationContext } from '@/components/chat/model-selector/model-selector-types';
 import type { ModelSelectorGatingProps } from '@/components/chat/model-selector/model-selector-types';
 
 function getModelDisplayText(
@@ -30,7 +30,7 @@ export interface ModelSelectorButtonProps extends ModelSelectorGatingProps {
   /** Called when the modal wants to open or close. Required for controlled mode. */
   onOpenChange?: ((open: boolean) => void) | undefined;
   /** Group funding context for the modal's affordability floor (threading only). */
-  floorGroup?: ModelFloorGroupContext | undefined;
+  floorGroup?: PickerConversationContext | undefined;
 }
 
 /**
@@ -58,7 +58,6 @@ export function ModelSelectorButton({
   onSelect,
   disabled = false,
   premiumIds,
-  canAccessPremium = true,
   isAuthenticated = true,
   isLinkGuest = false,
   onPremiumClick,
@@ -108,7 +107,6 @@ export function ModelSelectorButton({
         selectedIds={selectedIds}
         onSelect={onSelect}
         premiumIds={premiumIds}
-        canAccessPremium={canAccessPremium}
         isAuthenticated={isAuthenticated}
         isLinkGuest={isLinkGuest}
         onPremiumClick={onPremiumClick}

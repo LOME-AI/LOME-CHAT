@@ -1,9 +1,8 @@
-import { recordServiceEvidence, SERVICE_NAMES } from '@hushbox/db';
 import { signRs256Jwt } from '@hushbox/crypto';
+import { notificationCopyForCategory } from '@hushbox/shared';
 import { fromPromise } from '../../../lib/result/index.js';
 import { okAsync } from '../../../lib/result/index.js';
 import { unavailableError } from '../../../lib/errors/index.js';
-import type { Database } from '@hushbox/db';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type {
@@ -184,9 +183,14 @@ export interface FcmPushSenderConfig {
   readonly projectId: string;
   readonly serviceAccountJson: string;
   readonly fetchImpl?: typeof fetch;
-  /** Evidence writes go through `recordServiceEvidence` (CI-only inside). */
-  readonly db?: Database;
-  readonly isCI?: boolean;
+  /**
+   * Asks FCM to validate the request without delivering it (`validate_only`,
+   * a top-level sibling of `message` in the v1 send body). Exists so a CI test
+   * can exercise the real authenticated send path against Google without
+   * pushing to a device; production never sets it, and when unset the key is
+   * absent from the body rather than sent as `false`.
+   */
+  readonly validateOnly?: boolean;
 }
 
 /**
@@ -195,10 +199,10 @@ export interface FcmPushSenderConfig {
  * whole send. Error messages never carry device tokens — tokens are
  * credentials and stay out of every log and error channel.
  *
- * After a send that reached FCM (at least one token delivered) it records a
- * `push-fcm` service-evidence row (a no-op outside CI, and skipped entirely
- * when no db is wired), so CI's `verify:evidence` step can prove the real seam
- * was exercised — the same parity the Resend and R2 adapters carry.
+ * Service evidence is deliberately NOT recorded here: an evidence row may only
+ * follow a real network call to FCM, which this adapter cannot distinguish from
+ * a mocked `fetchImpl`. The row is written by the CI-gated live test that makes
+ * that real call.
  */
 export function createFcmPushSender(config: FcmPushSenderConfig): PushSender {
   const account = parseServiceAccountConfig(config.serviceAccountJson);
@@ -218,24 +222,36 @@ export function createFcmPushSender(config: FcmPushSenderConfig): PushSender {
     // message's data payload already carries the id, so FCM sees it either
     // way. The alias stays on the transport collapse fields, where the Web
     // Push `Topic` header — whose payload is encrypted — would otherwise leak.
-    const shadeTag = message.data?.['conversationId'];
+    const shadeTag = message.payload.conversationId;
+    // The words are looked up from the category, never taken from the caller —
+    // the same table and the same lookup the service worker performs for a web
+    // notification, so the two surfaces cannot describe an event differently.
+    const copy = notificationCopyForCategory(message.payload.category);
+    // Projected field by field rather than forwarded wholesale: a structurally
+    // typed object can carry properties the type never declared, and this is
+    // the seam where such a property would reach Google.
+    const data = {
+      category: message.payload.category,
+      conversationId: message.payload.conversationId,
+    };
     const results = await Promise.allSettled(
       native.map(async (recipient) => {
         const body = {
           message: {
             token: recipient.token,
-            notification: { title: message.title, body: message.body },
-            ...(message.data === undefined ? {} : { data: message.data }),
+            notification: { title: copy.title, body: copy.body },
+            data,
             ...(collapse === undefined
               ? {}
               : {
                   android: {
                     collapse_key: collapse,
-                    ...(shadeTag === undefined ? {} : { notification: { tag: shadeTag } }),
+                    notification: { tag: shadeTag },
                   },
                   apns: { headers: { 'apns-collapse-id': collapse } },
                 }),
           },
+          ...(config.validateOnly === true ? { validate_only: true } : {}),
         };
 
         const response = await fetchImpl(url, {
@@ -280,13 +296,6 @@ export function createFcmPushSender(config: FcmPushSenderConfig): PushSender {
           token: result.value.recipient.token,
         });
       }
-    }
-
-    if (config.db !== undefined && successCount > 0) {
-      await recordServiceEvidence(config.db, config.isCI ?? false, SERVICE_NAMES.PUSH_FCM, {
-        successCount,
-        failureCount,
-      });
     }
 
     return { successCount, failureCount, deliveredTokens, deadTokens };

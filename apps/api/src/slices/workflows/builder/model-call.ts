@@ -1,7 +1,7 @@
 import { Node } from '@hushbox/shared';
 import { SINGLE_INPUT_PORT_ID } from '../compile/conventions.js';
-import { baseNodeFields, DEFAULT_OUT_PORT_ID, portRef } from './ports.js';
-import type { TypeTag } from '@hushbox/shared';
+import { baseNodeFields, DEFAULT_OUT_PORT_ID, persistedInputSchema, portRef } from './ports.js';
+import type { ResolvedReasoningEffort, TypeTag } from '@hushbox/shared';
 import type { AssignableTag, NodeHandle, NodeOptionsBase, Port } from './ports.js';
 
 export interface ModelCallOptions<A extends TypeTag, O extends TypeTag> extends NodeOptionsBase {
@@ -18,6 +18,10 @@ export interface ModelCallOptions<A extends TypeTag, O extends TypeTag> extends 
   /** Admission-only prompt input-token count; bounds the estimate's input leg,
    * never forwarded to the provider. */
   readonly promptInputTokens?: number;
+  /** The reasoning rung this call's built wire runs at; never forwarded to the
+   * provider. Absent when the call reasons at a level decided at runtime, or
+   * not at all. */
+  readonly reasoningEffort?: ResolvedReasoningEffort;
 }
 
 export function modelCall<A extends TypeTag, O extends TypeTag>(
@@ -29,11 +33,13 @@ export function modelCall<A extends TypeTag, O extends TypeTag>(
     model: options.model,
     params: options.params ?? {},
     in: options.in.ref,
+    ...persistedInputSchema(options.accepts),
     ...(options.tools === undefined ? {} : { tools: [...options.tools] }),
     ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
     ...(options.promptInputTokens === undefined
       ? {}
       : { promptInputTokens: options.promptInputTokens }),
+    ...(options.reasoningEffort === undefined ? {} : { reasoningEffort: options.reasoningEffort }),
   });
   return {
     node,

@@ -2,7 +2,6 @@ import { createEnvUtilities } from '@hushbox/shared';
 import { createMockEmailSender } from './email-mock.js';
 import { createResendEmailSender } from './email-resend.js';
 import type { EnvContext } from '@hushbox/shared';
-import type { Database } from '@hushbox/db';
 import type { MockEmailSender } from './email-mock.js';
 import type { BatchEmailSender, EmailMessage } from '../ports/index.js';
 
@@ -56,12 +55,11 @@ export function findCapturedEmail(id: string): CapturedEmail | undefined {
 
 /**
  * envUtils-gated sender selection: local dev and CI get the in-process mock
- * (no real email leaves either mode — CI's evidence path is exercised by the
- * adapter's own integration test until Phase 4 re-points real-API jobs),
- * production gets the real Resend adapter. Missing config fails fast — there
- * is no degraded mode.
+ * (no real email leaves either mode, so no automated check ever observes a
+ * real Resend call), production gets the real Resend adapter. Missing config
+ * fails fast — there is no degraded mode.
  */
-export function createEmailSenderFromEnv(env: EmailSenderEnv, db: Database): BatchEmailSender {
+export function createEmailSenderFromEnv(env: EmailSenderEnv): BatchEmailSender {
   // Explicit fail-fast at the selection seam: createEnvUtilities throws on an
   // absent NODE_ENV, and this guard restates that with an email-specific message
   // so a production deploy that omitted it fails loudly instead of ever risking
@@ -80,5 +78,5 @@ export function createEmailSenderFromEnv(env: EmailSenderEnv, db: Database): Bat
     throw new Error('RESEND_API_KEY is required outside local dev and CI');
   }
 
-  return createResendEmailSender({ apiKey: env.RESEND_API_KEY, db, isCI });
+  return createResendEmailSender({ apiKey: env.RESEND_API_KEY });
 }

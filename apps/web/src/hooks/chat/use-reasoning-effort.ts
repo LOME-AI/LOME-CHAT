@@ -1,9 +1,9 @@
 import { SMART_MODEL_ID } from '@hushbox/shared';
-import { offeredEffortLabels } from '@hushbox/shared/affordability/estimate/effort-options';
+import { turnEffortOptions } from '@hushbox/shared/affordability/estimate/effort-options';
 import { useModels } from '@/hooks/models/models';
 import { useModelStore } from '@/stores/model';
 import { useReasoningEffortStore } from '@/stores/reasoning-effort';
-import type { EffortChoice, ModelReasoning, ReasoningEffortSelection } from '@hushbox/shared';
+import type { ModelReasoning, ReasoningEffortSelection } from '@hushbox/shared';
 
 /**
  * The structural slice of a wire catalog `Model` the reasoning derivations
@@ -21,10 +21,6 @@ export interface EffortModel {
   readonly maxOutputTokens?: number | undefined;
 }
 
-// The intersection gate is the shared authority (`offeredEffortLabels`, inside
-// the money layer) — re-exported so the menu and tests keep one import site.
-export { offeredEffortLabels } from '@hushbox/shared/affordability/estimate/effort-options';
-
 /**
  * Min (the explicit hard off) is offered only when no selected model has
  * mandatory reasoning — the server refuses disabling a mandatory model, so
@@ -32,20 +28,6 @@ export { offeredEffortLabels } from '@hushbox/shared/affordability/estimate/effo
  */
 export function offersEffortOff(models: readonly EffortModel[]): boolean {
   return models.every((model) => model.reasoning?.mandatory !== true);
-}
-
-/**
- * Whether the server's CURRENT effort validation accepts this choice for the
- * whole selection: it refuses any explicit level not offered by every
- * selected model, and refuses the off rung when any selected model has mandatory
- * reasoning. The menu renders the union choice set but greys the choices
- * this predicate rejects — selecting one would produce a send the server
- * 400s. Dies (with the greying) when server-side per-model downgrade
- * resolution lands; the union authority is `turnEffortOptions`.
- */
-export function serverAcceptsChoice(models: readonly EffortModel[], choice: EffortChoice): boolean {
-  if (choice === 'off') return offersEffortOff(models);
-  return offeredEffortLabels(models).includes(choice);
 }
 
 export interface EffectiveSelectionInput {
@@ -72,7 +54,12 @@ export function effectiveReasoningSelection(
   if (modality !== 'text') return undefined;
   if (models === undefined) return undefined;
   if (models.some((model) => model.id === SMART_MODEL_ID)) return undefined;
-  const offered = offeredEffortLabels(models);
+  // The UNION, not the intersection: per-model resolution falls downward, so a
+  // level only one sibling names is still honourable by the turn. The producer
+  // grades every rung in that union and the menu greys what it refuses — an
+  // intersection here would have hidden a level the server accepts, and enabled
+  // one the producer refuses (both directions were live before this).
+  const offered = turnEffortOptions(models).map((option) => option.choice);
   if (offered.length === 0) return undefined;
   if (preferred === 'auto') return 'auto';
   if (preferred === 'off') return offersEffortOff(models) ? 'off' : 'auto';

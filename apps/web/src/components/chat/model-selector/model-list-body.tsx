@@ -3,7 +3,7 @@ import { MAX_SELECTED_MODELS } from '@hushbox/shared';
 import { type PickerMode } from '@/stores/model';
 
 import { ModelListItem } from '@/components/chat/model-selector/model-list-item';
-import type { Model } from '@hushbox/shared';
+import type { Availability, Model } from '@hushbox/shared';
 
 export interface ModelListBodyProps {
   filteredModels: Model[];
@@ -12,12 +12,13 @@ export interface ModelListBodyProps {
   localSelectedIds: Set<string>;
   focusedModelId: string;
   expandedModelId: string | null;
-  isPremium: (modelId: string) => boolean;
-  /** Shared affordability-floor verdict — a true row greys, not selectable. */
-  isBelowFloor: (model: Model) => boolean;
-  canAccessPremium: boolean;
-  isAuthenticated: boolean;
-  isLinkGuest: boolean;
+  /**
+   * The produced verdict for a row (`affordable.all`). One lookup replaces the
+   * premium flag, the floor verdict and the tier booleans: a row is available
+   * or it is marked with the reason it is not, and this component decides
+   * neither.
+   */
+  availabilityOf: (modelId: string) => Availability;
   isMobile: boolean;
   pulsingModelId: string | null;
   getPinnedLabel: (modelId: string) => string | undefined;
@@ -35,11 +36,7 @@ export function ModelListBody(props: Readonly<ModelListBodyProps>): React.JSX.El
     localSelectedIds,
     focusedModelId,
     expandedModelId,
-    isPremium,
-    isBelowFloor,
-    canAccessPremium,
-    isAuthenticated,
-    isLinkGuest,
+    availabilityOf,
     isMobile,
     pulsingModelId,
     getPinnedLabel,
@@ -67,11 +64,7 @@ export function ModelListBody(props: Readonly<ModelListBodyProps>): React.JSX.El
             isFocused={model.id === focusedModelId}
             isSelected={isSelected}
             isDisabled={isAtLimit && !localSelectedIds.has(model.id)}
-            isPremium={isPremium(model.id)}
-            isBelowFloor={isBelowFloor(model)}
-            canAccessPremium={canAccessPremium}
-            isAuthenticated={isAuthenticated}
-            isLinkGuest={isLinkGuest}
+            availability={availabilityOf(model.id)}
             pickerMode={pickerMode}
             pinnedLabel={getPinnedLabel(model.id)}
             isExpanded={expandedModelId === model.id}

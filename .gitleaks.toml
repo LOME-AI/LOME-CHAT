@@ -84,3 +84,14 @@ regexTarget = "secret"
 regexes = [
   '''^BTBZMqHH6r4Tts7J_aSIgg$''',
 ]
+
+[[rules.allowlists]]
+description = "Web Push rfc8291-decryptor.test.ts RFC 8291 Appendix A auth-secret vector; AND-pins the exact secret to that file."
+condition = "AND"
+paths = [
+  '''^apps/api/src/slices/notifications/adapters/webpush/__tests__/rfc8291-decryptor\.test\.ts$''',
+]
+regexTarget = "secret"
+regexes = [
+  '''^BTBZMqHH6r4Tts7J_aSIgg$''',
+]

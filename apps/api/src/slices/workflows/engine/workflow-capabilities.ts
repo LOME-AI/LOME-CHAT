@@ -1,4 +1,5 @@
-import { listTag, optionalTag, textTag } from '@hushbox/shared';
+import { jsonTag, listTag, optionalTag, textTag, TURN_DECISION_REDUCER } from '@hushbox/shared';
+import { TURN_DECISION_SCHEMA_NAME, TurnDecision, decideTurn } from '../nodes/turn-decision.js';
 import type {
   ConstraintEntryOf,
   ConstraintKind,
@@ -99,6 +100,11 @@ export function reducerCode(
   return new Map(capabilities.reducers.map((reducer) => [reducer.name, reducer.run]));
 }
 
+/** The classifier's answer, or absent when the optional call produced no value. */
+function classifierAnswerOf(input: unknown): string | undefined {
+  return typeof input === 'string' ? input : undefined;
+}
+
 function presentTexts(inputs: readonly unknown[]): string[] {
   return (inputs[0] as readonly (string | undefined)[]).filter(
     (value): value is string => value !== undefined
@@ -112,7 +118,7 @@ function presentTexts(inputs: readonly unknown[]): string[] {
  * successful subset, which is exactly the optional-branch fan-in semantics.
  */
 export const DEFAULT_WORKFLOW_CAPABILITIES: WorkflowCapabilities = {
-  schemas: [],
+  schemas: [{ name: TURN_DECISION_SCHEMA_NAME, version: 1, schema: TurnDecision }],
   predicates: [
     {
       name: 'loopUntilNonEmpty',
@@ -132,6 +138,18 @@ export const DEFAULT_WORKFLOW_CAPABILITIES: WorkflowCapabilities = {
     },
   ],
   reducers: [
+    {
+      // The classifier's answer joins the turn's prompt here, and the pair
+      // leaves as the decision envelope every consumer reads. The answer is
+      // `optional` because the classifier call itself is: an absent value is
+      // the typed failure path, handled by the reducer's declared fallback
+      // rather than caught anywhere.
+      name: TURN_DECISION_REDUCER,
+      version: 1,
+      in: [textTag(), optionalTag(textTag())],
+      out: jsonTag(TURN_DECISION_SCHEMA_NAME),
+      run: (inputs) => decideTurn(String(inputs[0]), classifierAnswerOf(inputs[1])),
+    },
     {
       name: 'joinOptionalTexts',
       version: 1,

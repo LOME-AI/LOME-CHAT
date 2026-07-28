@@ -26,9 +26,15 @@ import {
 } from '../reasoning-effort.js';
 import { reasoningPlanModelOf } from '../priceable-model.js';
 import { REASONING_OFF_WIRE } from '../estimate/reasoning-plan.js';
-import type { OfferedLevel } from '../estimate/reasoning-plan.js';
+import type { OfferedLevel, ReasoningPlanModel } from '../estimate/reasoning-plan.js';
 import type { PriceableModel } from '../priceable-model.js';
-import type { DimensionSpec, DimensionSupport, OptionId, ProviderParams } from './types.js';
+import type {
+  DimensionOption,
+  DimensionSpec,
+  DimensionSupport,
+  OptionId,
+  ProviderParams,
+} from './types.js';
 
 /**
  * The effort dimension's option domain, ascending: the off rung sits below every
@@ -37,17 +43,36 @@ import type { DimensionSpec, DimensionSupport, OptionId, ProviderParams } from '
  */
 export const EFFORT_OPTION_IDS = [REASONING_OFF, ...CANONICAL_REASONING_EFFORTS] as const;
 
-function offeredLevelFor(model: PriceableModel, option: OptionId): OfferedLevel | undefined {
-  return offeredLevels(reasoningPlanModelOf(model)).find((level) => level.label === option);
+/**
+ * Every option the axis declares, by label. This is the DOMAIN, not one model's
+ * support: it is what a surface with no model in hand — the classifier prompt's
+ * option line — presents, and it is derived from the domain and the one id→label
+ * mapping rather than restated.
+ */
+export function effortDomainOptions(): readonly DimensionOption[] {
+  return EFFORT_OPTION_IDS.map((optionId) => ({
+    optionId,
+    label: REASONING_EFFORT_LABELS[optionId],
+  }));
 }
 
-function canDisable(model: PriceableModel): boolean {
-  return planReasoningOff(reasoningPlanModelOf(model), 1).feasible;
+function offeredLevelFor(model: ReasoningPlanModel, option: OptionId): OfferedLevel | undefined {
+  return offeredLevels(model).find((level) => level.label === option);
 }
 
-function effortSupport(model: PriceableModel): DimensionSupport {
-  const levels = offeredLevels(reasoningPlanModelOf(model));
-  const rungs = levels.map((level) => ({
+function canDisable(model: ReasoningPlanModel): boolean {
+  return planReasoningOff(model, 1).feasible;
+}
+
+/**
+ * What one model offers on the axis, over the reasoning-plan projection rather
+ * than the full `PriceableModel`. The narrower input is what lets the resolver
+ * adapters share this one support with the registry: they hold a plan model, and
+ * a support built from a second, wider source is a second source for the same
+ * facts.
+ */
+export function effortSupportOf(model: ReasoningPlanModel): DimensionSupport {
+  const rungs = offeredLevels(model).map((level) => ({
     optionId: level.label,
     label: REASONING_EFFORT_LABELS[level.label],
   }));
@@ -63,8 +88,12 @@ function effortSupport(model: PriceableModel): DimensionSupport {
   };
 }
 
-function unofferedError(model: PriceableModel, option: OptionId): Error {
-  return new RangeError(`model '${model.modelId}' does not offer effort option '${option}'`);
+function effortSupport(model: PriceableModel): DimensionSupport {
+  return effortSupportOf(reasoningPlanModelOf(model));
+}
+
+function unofferedError(option: OptionId): Error {
+  return new RangeError(`the model does not offer effort option '${option}'`);
 }
 
 /**
@@ -73,23 +102,28 @@ function unofferedError(model: PriceableModel, option: OptionId): Error {
  * nothing. Reasoning tokens ARE output tokens, which is why the requirement is
  * denominated in completion tokens rather than money.
  */
-function effortRequirement(model: PriceableModel, option: OptionId): number {
+export function effortRequirementOf(model: ReasoningPlanModel, option: OptionId): number {
   if (option === REASONING_OFF) {
-    if (!canDisable(model)) throw unofferedError(model, option);
+    if (!canDisable(model)) throw unofferedError(option);
     return 0;
   }
   const level = offeredLevelFor(model, option);
-  if (level === undefined) throw unofferedError(model, option);
-  return reasoningBudgetForWire(reasoningPlanModelOf(model), level.wire);
+  if (level === undefined) throw unofferedError(option);
+  return reasoningBudgetForWire(model, level.wire);
+}
+
+function effortRequirement(model: PriceableModel, option: OptionId): number {
+  return effortRequirementOf(reasoningPlanModelOf(model), option);
 }
 
 function effortWire(model: PriceableModel, option: OptionId): ProviderParams {
+  const planModel = reasoningPlanModelOf(model);
   if (option === REASONING_OFF) {
-    if (!canDisable(model)) throw unofferedError(model, option);
+    if (!canDisable(planModel)) throw unofferedError(option);
     return { reasoning: REASONING_OFF_WIRE };
   }
-  const level = offeredLevelFor(model, option);
-  if (level === undefined) throw unofferedError(model, option);
+  const level = offeredLevelFor(planModel, option);
+  if (level === undefined) throw unofferedError(option);
   return { reasoning: level.wire };
 }
 

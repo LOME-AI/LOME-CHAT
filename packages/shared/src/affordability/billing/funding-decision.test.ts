@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveFundingDecision, type FundingInputs } from './funding-decision.js';
+import { resolveFunding, type FundingInputs } from './funding-decision.js';
 
 /** A four-cent turn estimate, the amount the group headroom has to cover. */
 const ESTIMATE = 40_000_000n;
@@ -35,11 +35,9 @@ function groupInputs(headroom: bigint, overrides: Partial<FundingInputs>): Fundi
   });
 }
 
-describe('resolveFundingDecision', () => {
+describe('resolveFunding', () => {
   it('funds a solo owner with a positive purchased balance from their purchased wallet', () => {
-    expect(
-      resolveFundingDecision(inputs({ isSolo: true, callerOwnPurchasedBalanceNanoUsd: 5n }))
-    ).toEqual({
+    expect(resolveFunding(inputs({ isSolo: true, callerOwnPurchasedBalanceNanoUsd: 5n }))).toEqual({
       payer: 'self',
       walletKind: 'purchased',
       premiumAllowed: true,
@@ -47,9 +45,7 @@ describe('resolveFundingDecision', () => {
   });
 
   it('funds a solo owner with no purchased balance from their free wallet', () => {
-    expect(
-      resolveFundingDecision(inputs({ isSolo: true, callerOwnPurchasedBalanceNanoUsd: 0n }))
-    ).toEqual({
+    expect(resolveFunding(inputs({ isSolo: true, callerOwnPurchasedBalanceNanoUsd: 0n }))).toEqual({
       payer: 'self',
       walletKind: 'free',
       premiumAllowed: false,
@@ -58,7 +54,7 @@ describe('resolveFundingDecision', () => {
 
   it('locks a premium model for a self-funding caller with no purchased balance', () => {
     expect(
-      resolveFundingDecision(
+      resolveFunding(
         inputs({ isSolo: true, callerOwnPurchasedBalanceNanoUsd: 0n, isPremiumModel: true })
       )
     ).toEqual({ payer: 'refuse', refusalCode: 'MODEL_TIER_LOCKED' });
@@ -66,7 +62,7 @@ describe('resolveFundingDecision', () => {
 
   it('allows a premium model for a self-funding caller with a positive purchased balance', () => {
     expect(
-      resolveFundingDecision(
+      resolveFunding(
         inputs({ isSolo: true, callerOwnPurchasedBalanceNanoUsd: 5n, isPremiumModel: true })
       )
     ).toEqual({ payer: 'self', walletKind: 'purchased', premiumAllowed: true });
@@ -74,7 +70,7 @@ describe('resolveFundingDecision', () => {
 
   it('owner-funds a member turn when group headroom is positive', () => {
     expect(
-      resolveFundingDecision(
+      resolveFunding(
         inputs({
           isSolo: false,
           memberRemainingNanoUsd: 100n,
@@ -88,7 +84,7 @@ describe('resolveFundingDecision', () => {
 
   it('owner-funds a member turn on a premium model without a tier lock (owner-funded exemption)', () => {
     expect(
-      resolveFundingDecision(
+      resolveFunding(
         inputs({
           isSolo: false,
           memberRemainingNanoUsd: 100n,
@@ -103,7 +99,7 @@ describe('resolveFundingDecision', () => {
 
   it('owner-funds when the conversation dimension is the tightest positive headroom', () => {
     expect(
-      resolveFundingDecision(
+      resolveFunding(
         inputs({
           isSolo: false,
           memberRemainingNanoUsd: 1000n,
@@ -117,7 +113,7 @@ describe('resolveFundingDecision', () => {
 
   it('owner-funds when the owner balance is the tightest positive headroom', () => {
     expect(
-      resolveFundingDecision(
+      resolveFunding(
         inputs({
           isSolo: false,
           memberRemainingNanoUsd: 1000n,
@@ -131,7 +127,7 @@ describe('resolveFundingDecision', () => {
 
   it('clamps each headroom dimension to zero before the min so an overspent member blocks owner funding', () => {
     expect(
-      resolveFundingDecision(
+      resolveFunding(
         inputs({
           isSolo: false,
           memberRemainingNanoUsd: -50n,
@@ -150,7 +146,7 @@ describe('resolveFundingDecision', () => {
 
   it('treats an absent member-budget row (0 headroom) as fall-through to self funding', () => {
     expect(
-      resolveFundingDecision(
+      resolveFunding(
         inputs({
           isSolo: false,
           memberRemainingNanoUsd: 0n,
@@ -169,7 +165,7 @@ describe('resolveFundingDecision', () => {
 
   it('refuses a link guest when group headroom is exhausted (no wallet to fall through to)', () => {
     expect(
-      resolveFundingDecision(
+      resolveFunding(
         inputs({
           isSolo: false,
           isGuest: true,
@@ -184,7 +180,7 @@ describe('resolveFundingDecision', () => {
 
   it('owner-funds a link guest when group headroom is positive', () => {
     expect(
-      resolveFundingDecision(
+      resolveFunding(
         inputs({
           isSolo: false,
           isGuest: true,
@@ -198,16 +194,18 @@ describe('resolveFundingDecision', () => {
   });
 });
 
-describe('resolveFundingDecision — priority 1 compares the turn estimate', () => {
+describe('resolveFunding — priority 1 compares the turn estimate', () => {
   it('owner-funds when the headroom exactly equals the turn estimate', () => {
-    expect(
-      resolveFundingDecision(groupInputs(ESTIMATE, { turnEstimateNanoUsd: ESTIMATE }))
-    ).toEqual({ payer: 'owner', walletKind: 'purchased', premiumAllowed: true });
+    expect(resolveFunding(groupInputs(ESTIMATE, { turnEstimateNanoUsd: ESTIMATE }))).toEqual({
+      payer: 'owner',
+      walletKind: 'purchased',
+      premiumAllowed: true,
+    });
   });
 
   it('falls through to self funding when the headroom is one nano below the turn estimate', () => {
     expect(
-      resolveFundingDecision(
+      resolveFunding(
         groupInputs(ESTIMATE - 1n, {
           turnEstimateNanoUsd: ESTIMATE,
           callerOwnPurchasedBalanceNanoUsd: 7n,
@@ -223,15 +221,13 @@ describe('resolveFundingDecision — priority 1 compares the turn estimate', () 
 
   it('refuses a link guest whose headroom is positive but below the turn estimate', () => {
     expect(
-      resolveFundingDecision(
-        groupInputs(ESTIMATE - 1n, { isGuest: true, turnEstimateNanoUsd: ESTIMATE })
-      )
+      resolveFunding(groupInputs(ESTIMATE - 1n, { isGuest: true, turnEstimateNanoUsd: ESTIMATE }))
     ).toEqual({ payer: 'refuse', refusalCode: 'GROUP_BUDGET_EXHAUSTED' });
   });
 
   it('owner-funds on positive headroom when no turn is priced', () => {
     // The unpriced query — who WOULD pay — has no estimate clause to apply.
-    expect(resolveFundingDecision(groupInputs(1n, { turnEstimateNanoUsd: undefined }))).toEqual({
+    expect(resolveFunding(groupInputs(1n, { turnEstimateNanoUsd: undefined }))).toEqual({
       payer: 'owner',
       walletKind: 'purchased',
       premiumAllowed: true,
@@ -240,7 +236,7 @@ describe('resolveFundingDecision — priority 1 compares the turn estimate', () 
 
   it('never owner-funds exhausted headroom, even against a zero turn estimate', () => {
     expect(
-      resolveFundingDecision(
+      resolveFunding(
         groupInputs(0n, { turnEstimateNanoUsd: 0n, callerOwnPurchasedBalanceNanoUsd: 7n })
       )
     ).toEqual({
@@ -254,9 +250,7 @@ describe('resolveFundingDecision — priority 1 compares the turn estimate', () 
   it('marks no payer switch on a solo turn', () => {
     // `toStrictEqual` so the key is asserted present and undefined: a consumer
     // reading it sees "no disclosure", not a missing field.
-    expect(
-      resolveFundingDecision(inputs({ isSolo: true, turnEstimateNanoUsd: ESTIMATE }))
-    ).toStrictEqual({
+    expect(resolveFunding(inputs({ isSolo: true, turnEstimateNanoUsd: ESTIMATE }))).toStrictEqual({
       payer: 'self',
       walletKind: 'purchased',
       premiumAllowed: true,

@@ -243,9 +243,11 @@ function transportFor(status: UiStatus, actions: TransportActions): Transport {
  */
 function TransportButton({
   status,
+  disabled,
   actions,
 }: {
   readonly status: UiStatus;
+  readonly disabled: boolean;
   readonly actions: TransportActions;
 }): React.JSX.Element {
   const { label, name, Icon, onClick, active } = transportFor(status, actions);
@@ -253,9 +255,14 @@ function TransportButton({
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       aria-label={name}
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium',
+        // The dimming is a variant on one class list rather than a swapped set,
+        // so the control's box is identical whether or not it is disabled and
+        // the header band cannot reflow when it comes alive.
+        'disabled:pointer-events-none disabled:opacity-50',
         active ? 'bg-primary/10 text-primary' : 'bg-muted text-foreground'
       )}
     >
@@ -268,9 +275,11 @@ function TransportButton({
 /** Always-visible highlight-while-reading toggle with its hover/focus tooltip. */
 function HighlightToggle({
   on,
+  disabled,
   onToggle,
 }: {
   readonly on: boolean;
+  readonly disabled: boolean;
   readonly onToggle: () => void;
 }): React.JSX.Element {
   return (
@@ -281,8 +290,15 @@ function HighlightToggle({
           aria-pressed={on}
           aria-label="Highlight while reading"
           onClick={onToggle}
+          disabled={disabled}
           className={cn(
             'inline-flex size-9 items-center justify-center rounded-md',
+            // Matches the transport control beside it: one class list dimmed
+            // through the variant, so neither control's box changes when the
+            // island comes alive. A row where one control admits it is not
+            // ready while its neighbour silently swallows clicks reads as
+            // broken, so both carry the state or neither does.
+            'disabled:pointer-events-none disabled:opacity-50',
             on ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
           )}
         >
@@ -323,6 +339,17 @@ export function BlogReadAloud({
 
   const [status, setStatus] = React.useState<UiStatus>('idle');
   const [percent, setPercent] = React.useState(0);
+  // The island is rendered into the page's HTML but carries no behaviour until
+  // its script has loaded and hydrated it, which is not instant even at first
+  // paint. Until then every handler below is absent, so a click on a control
+  // that looks live does nothing at all and the reader appears broken. Starting
+  // false on the server and on the first client render (the two must agree, or
+  // hydration mismatches) and flipping in an effect — which only runs once the
+  // island is live — is what lets the control say so.
+  const [hydrated, setHydrated] = React.useState(false);
+  React.useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   const readerRef = React.useRef<DocumentReader | null>(null);
   const highlighterRef = React.useRef<ChunkHighlighter | null>(null);
@@ -533,6 +560,7 @@ export function BlogReadAloud({
           <div className="flex items-center justify-center gap-2">
             <TransportButton
               status={status}
+              disabled={!hydrated}
               actions={{
                 onStart: () => void handleStart(),
                 onStop: handleStop,
@@ -542,6 +570,7 @@ export function BlogReadAloud({
             />
             <HighlightToggle
               on={readingHighlight}
+              disabled={!hydrated}
               onToggle={() => {
                 update({ readingHighlight: !readingHighlight });
               }}

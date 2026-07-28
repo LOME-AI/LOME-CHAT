@@ -19,9 +19,11 @@ export type RunFailure =
   // `code` carries a specific provider-failure reason (content policy, context
   // length, network) to the client; absent, it stays the generic UNAVAILABLE.
   | { readonly kind: 'node-failed'; readonly nodeId: string; readonly code?: ErrorCode }
-  // Every branch of a multi-model turn failed, so settlement had zero charges to
-  // commit — a real "the providers were unavailable" outcome, not an engine
-  // defect: the run is rerouted to UNAVAILABLE and never captured to Sentry.
+  // Every branch of a multi-model turn failed, so settlement had no persistable
+  // content to commit — a real "the providers were unavailable" outcome, not an
+  // engine defect: the run is rerouted to UNAVAILABLE and never captured to
+  // Sentry. The signal is read off content rather than off charge count, because
+  // a run may charge for a generation that persists nothing of its own.
   | { readonly kind: 'all-branches-failed' }
   // Ciphertext storage (R2/MinIO) was unreachable while persisting generated
   // media — an infra outage at the storage seam, not an engine defect: the run

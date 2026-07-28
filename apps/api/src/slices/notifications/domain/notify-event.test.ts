@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { NOTIFICATION_COPY } from '@hushbox/shared';
 import { okAsync, errAsync } from '../../../lib/result/index.js';
 import { unavailableError } from '../../../lib/errors/index.js';
 import { notifyEvent } from './notify-event.js';
@@ -88,7 +87,7 @@ const iosToken = (userId: string, token: string): PushRecipient => ({
 });
 
 describe('notifyEvent', () => {
-  it('sends to an eligible member with per-category copy and generic data', async () => {
+  it('sends the generic payload to an eligible member', async () => {
     const { push, sent } = recordingPush({ successCount: 1, failureCount: 0 });
     const result = await notifyEvent(
       {
@@ -106,9 +105,7 @@ describe('notifyEvent', () => {
       }
     );
     expect(result._unsafeUnwrap()).toEqual({ successCount: 1, failureCount: 0 });
-    expect(sent[0]?.title).toBe(NOTIFICATION_COPY.runCompletion.title);
-    expect(sent[0]?.body).toBe(NOTIFICATION_COPY.runCompletion.body);
-    expect(sent[0]?.data).toEqual({
+    expect(sent[0]?.payload).toEqual({
       category: 'runCompletion',
       conversationId: '018f4e2a-1c3b-7d4e-9f0a-1b2c3d4e5f60',
     });

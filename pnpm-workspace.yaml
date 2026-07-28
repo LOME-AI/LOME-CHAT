@@ -23,16 +23,30 @@ overrides:
   vite: npm:rolldown-vite@7.3.1
   yaml: ^2.9.0
 
-# @huggingface/transformers imports `onnxruntime-common` as a bare specifier it never
-# declares, so the package is only reachable through pnpm's private hoist dir
-# (node_modules/.pnpm/node_modules). Vite's dep optimizer writes its output to
-# apps/<app>/node_modules/.vite/deps, which is outside that dir's resolution walk, so the
-# import is unresolvable from there and gets silently externalized into a cached prebundle.
-# Public-hoisting the package to the workspace root puts it back on that walk. Exactly this
-# one package: onnxruntime-web and onnxruntime-node carry native binaries and gain nothing.
-# pnpm 10's default for this key is empty, so declaring it displaces no other hoisting.
-publicHoistPattern:
-  - onnxruntime-common
+# @huggingface/transformers imports `onnxruntime-common` as a bare specifier its own
+# manifest never declares. Declaring the edge here is what turns the shipped ORT version
+# into a decision instead of a pnpm hoist-order outcome: pnpm merges this into the
+# resolver's manifest, so the dependency becomes a real graph edge and a real symlink in
+# transformers' private directory. (A pnpm patch of that manifest cannot do this — the
+# graph is built before patches are applied to files.)
+#
+# The selector pins one exact transformers version and the version is exact, never a
+# range. A range would keep applying this pin next to a future newer onnxruntime-web,
+# installing a genuine second onnxruntime-common copy — two different `Tensor` classes,
+# so `instanceof Tensor` fails across the boundary and inference breaks with no error
+# pointing here. The exact selector fails safe instead: on a transformers bump the
+# extension silently stops applying, resolution falls back to pnpm's private hoist dir as
+# it did before this entry existed, and the build guard catches the version that ships.
+#
+# That guard is `checkOrtCommonVersion`, which reads the version below and asserts every
+# ORT copy in a built bundle reports it. It is not a mirrored constant to be cleaned up:
+# the only other declaration of this version lives in upstream's manifest, which no
+# amount of sharing can reach, so the guard is the sole cross-check that the version
+# declared here is the version that actually ships.
+packageExtensions:
+  '@huggingface/transformers@3.8.1':
+    dependencies:
+      onnxruntime-common: 1.22.0-dev.20250409-89f8206ba4
 
 patchedDependencies:
   astro@5.18.2: patches/astro@5.18.2.patch

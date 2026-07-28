@@ -82,6 +82,8 @@ export {
   nanoUnitPriceUsd,
   outputTokensOf,
   PAID_CUSHION_NANO_USD,
+  planReasoning,
+  planReasoningOff,
   REASONING_OFF_WIRE,
   ReasoningWire,
   reasoningBudgetForWire,
@@ -103,6 +105,17 @@ export * from './affordability/reasoning-effort.js';
 // named structural seams of `docs/BILLING.md` §Where the Code Lives.
 export * from './affordability/premium.js';
 export * from './affordability/priceable-model.js';
+// The feature surface of `docs/BILLING.md` §The public surface, published at the
+// package root as well: one surface, two entry points, so a consumer cannot find
+// a producer at one and its absence at the other.
+export { getTurnOptions } from './affordability/turn-options.js';
+export { chooseFrom, renderOptions, wireFor } from './affordability/classifier-choice.js';
+export type { ChosenOptions } from './affordability/classifier-choice.js';
+export * from './affordability/model-id.js';
+export * from './affordability/turn-types.js';
+export { NOTICE_COPY, NOTICE_REASONS, notices, noticeText } from './affordability/notices.js';
+export type { Notice, NoticeCopy, NoticeReason } from './affordability/notices.js';
+
 export * from './affordability/dimensions/index.js';
 export * from './features.js';
 export * from './comparison.js';
@@ -250,14 +263,17 @@ export {
 export type { FilePartMapper, FilePartMediaEvents } from './inference.js';
 export {
   AdmissionHookName,
+  consumedProducerIds,
   DEADLINE_CLASS_MS,
   DEADLINE_CLASSES,
+  isTurnClassifierNode,
   Node,
   NODE_TYPES,
   PolicyHooks,
   SettlementHookName,
   smartModelClassifierDimensions,
   StorageStamp,
+  TURN_DECISION_REDUCER,
   WorkflowDefinition,
 } from './workflow.js';
 export type { DeadlineClass, NodeType } from './workflow.js';

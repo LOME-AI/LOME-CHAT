@@ -10,7 +10,11 @@
 // order — so audio from slot N+1 finishing before slot N still queues
 // correctly behind sentence N's playback.
 
+import { TTS_VOICE_IDS } from '@hushbox/shared';
+
 import { isWorkerOutbound } from './tts-worker-protocol';
+
+import type { TtsVoice } from '@hushbox/shared';
 import type { WorkerInbound, WorkerOutbound } from './tts-worker-protocol';
 
 /**
@@ -21,7 +25,13 @@ import type { WorkerInbound, WorkerOutbound } from './tts-worker-protocol';
  */
 export const WORKER_POOL_SIZE = 4;
 
-export type TtsVoice = 'af_heart' | 'am_michael' | 'bf_emma' | 'bm_george' | 'af_nicole';
+/**
+ * The voice ids are declared once, in the shared accessibility-preferences
+ * schema that also validates the persisted `ttsVoice` setting — a second
+ * declaration here could drift from what a stored preference is allowed to
+ * hold. Re-exported so engine consumers keep importing it from the engine.
+ */
+export type { TtsVoice } from '@hushbox/shared';
 
 export interface TtsVoiceMeta {
   readonly id: TtsVoice;
@@ -30,13 +40,18 @@ export interface TtsVoiceMeta {
   readonly gender: 'female' | 'male';
 }
 
-export const TTS_VOICES: readonly TtsVoiceMeta[] = [
-  { id: 'af_heart', displayName: 'Heart', accent: 'American', gender: 'female' },
-  { id: 'am_michael', displayName: 'Michael', accent: 'American', gender: 'male' },
-  { id: 'bf_emma', displayName: 'Emma', accent: 'British', gender: 'female' },
-  { id: 'bm_george', displayName: 'George', accent: 'British', gender: 'male' },
-  { id: 'af_nicole', displayName: 'Nicole', accent: 'American', gender: 'female' },
-];
+const VOICE_PRESENTATION: Record<TtsVoice, Omit<TtsVoiceMeta, 'id'>> = {
+  af_heart: { displayName: 'Heart', accent: 'American', gender: 'female' },
+  am_michael: { displayName: 'Michael', accent: 'American', gender: 'male' },
+  bf_emma: { displayName: 'Emma', accent: 'British', gender: 'female' },
+  bm_george: { displayName: 'George', accent: 'British', gender: 'male' },
+  af_nicole: { displayName: 'Nicole', accent: 'American', gender: 'female' },
+};
+
+export const TTS_VOICES: readonly TtsVoiceMeta[] = TTS_VOICE_IDS.map((id) => ({
+  id,
+  ...VOICE_PRESENTATION[id],
+}));
 
 export interface TtsService {
   /**

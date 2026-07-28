@@ -4450,3 +4450,2437 @@ ALLOWLIST INDEPENDENTLY RE-ENUMERATED and confirmed COMPLETE: production non-rel
   402-causing drift class impossible by construction — `physicalAnswerCeiling` provably carries no rate, pinned by
   a 1-nano payer and a $10,000 payer receiving the identical bound.
   IN FLIGHT: B5 alone, with both rulings and the under-reserve hazard warning delivered.
+- 2026-07-27: B5 implementer DONE\*WITH\*CONCERNS (impl-report-1.md). test:shared 127 files/3,017 coverage
+  99.9/99.46/100/100; test:web 395/6,431; test:api only the known template-html snapshots on run 3 of 3; typecheck
+  16/16 forced; eslint exit-0 post-final-edit; scoped coverage ≥95 every axis on every owned file.
+  \*\*\* IT HIT THE EXACT UNDER-RESERVE B4 REPORTED AND FIXED IT THE WAY THE WARNING DEMANDED. `runnable` now excludes
+  outlier candidates (they remain in `all`, marked available), because otherwise B3's property pin is false —
+  measured hold 89,263,685n against a presented arrangement pricing 117,957,435n, the same figures B4 saw. Fixed
+  STRUCTURALLY THROUGH THE ONE DERIVATION, not by editing the pin. That is precisely the route my mid-flight
+  message required and the one B3 spent four cycles making possible; the trap was that B5's own criteria predict
+  "the hold falls, the presented set grows", so rewriting the pin would have passed its own gate while shipping a
+  32% under-reserve. Warning before verifying was the right order after all. **\*
+  ONE HOLD MOVED, EXPLAINED TO ITS MECHANISM: 89,263,685n → 89,231,250n, the delta exactly the 32,435n classifier
+  reserve, which vanishes because the fixture's dear model is a 60× outlier and a one-candidate pool buys no
+  classifier. A complete explanation rather than a plausible one — and it reconciles B4's "second failure is
+  benign, the hold fell 32,435n" to the nano.
+  **\_ THE PRODUCT NUMBER THE FOUNDER IS OWED, and B5 measured it ACROSS PROMPT SIZES rather than at one point,
+  which is what turned it from a refactor note into a finding: trial eligibility over the live pool goes 81→81 at
+  short prompts, 77→81 at 2k chars, and 11→62 AT 20k CHARS. Storage was suppressing five-sixths of the eligible
+  pool on long prompts. Pairs with B4's answer-length effect; both reach the founder together as one product
+  change with two surfaces. \_\*\*
+  TWO ITEMS REPORTED RATHER THAN SHIPPED, both ruled B5's way:
+  (a) The trial-gate storage strip opens a money hole and B5 measured it instead of accepting my framing: the gate
+  must dominate the compiled turn floor and fails past input ≈32.5× output TODAY (pre-existing) and past ≈1.25×
+  after the strip — the inverted-rate shape B4's audit predicted directionally, now quantified. Closing it is one
+  line in chat/routes.ts passing promptCharacterCount, which I verified is already computed fourteen lines above
+  the gate call. Ownership extended to that single argument only; ship strip and line together, since the strip
+  alone widens a hole and the line alone leaves storage inflating trial cost.
+  (b) B5's CLASSIFIER-STORAGE ANSWER BEAT MY RULING AND I TOOK ITS VERSION. I ruled the strip atomic across three
+  sites. B5 found a FOURTH fold — trial-smart-model-candidates.ts, which sums reserve items GENERICALLY and so
+  cannot be fixed by a kind === 'provider' filter at all — and drew the better conclusion: deleting the EMITTER
+  makes all four folds no-ops simultaneously. One edit, inside its own glob, no cross-task ownership. My ruling
+  was over-scoped and would have pulled two other tasks' files in for no gain. Verified the emitter exists at the
+  single site claimed.
+  ROUTED TO B8, NOT B5: premium marking needs `releasedAtMs` on PriceableModel PLUS `nowMs` on the producer input,
+  because the money core reads no clock — and the second changes getTurnOptions' DOCUMENTED signature, which is
+  B8's surface. B5 stopping at a documented-signature change was correct. Recorded in B8 as BLOCKING E1, since
+  E1's "premium rows are marked, not removed" has nothing to mark with until it lands.
+  BASELINE MOVED AGAIN: HEAD is 53daba72, the founder's second absorbing commit; RUN STATE updated and auditors
+  will diff ada0341c..53daba72. No agent ran a git write. Environment note recorded: B5 ran catalog:refresh, so the
+  local catalog now holds 182 live rows where it was empty — relevant to any later agent reasoning about pool size.
+  → B5 fix cycle 1 dispatched. Audits deliberately HELD until the fix lands rather than run concurrently: two
+  auditors against a tree B5 is still writing is exactly the B4/B5 collision I created earlier today, and the cost
+  of sequencing here is one round-trip against a guaranteed false-alarm otherwise.
+- 2026-07-27: B5 fix cycle 1 DONE (impl-report-2.md), both rulings shipped. test:shared 127 files/3,017 coverage
+  99.9/99.46/100/100; test:web 395/6,432; scoped apps/api {models,chat,workflows} 98 files/2,003 on final source;
+  typecheck 16/16 forced; eslint exit-0 post-final-edit; trial-eligibility.ts and trial-smart-model-candidates.ts
+  at 100 on every axis.
+  **_ IT TURNED MY REQUIREMENT INTO SOMETHING STRONGER. I asked for evidence that the trial gate still refuses
+  everything the fit would admit above 1¢, INCLUDING an inverted rate shape — i.e. a measured band. B5 shipped an
+  IDENTITY instead: with the gate made provider-only and taking the send's whole character count,
+  `gate − floor = 1,000 × outputRate` EXACTLY, for every rate shape, pinned per shape with a companion pin
+  measuring what a narrowed basis would admit. Dominance is now algebraic rather than empirical, so there is no
+  threshold left to cross — which retires the ≈1.25× and ≈32.5× failure bands entirely rather than moving them. _**
+  CORRECTION TO THE NUMBER I ALREADY GAVE THE FOUNDER: trial eligibility at 20k chars is 11→61, not 11→62. The
+  extra model is lost because the system prompt is now HONESTLY priced — a smaller gain that is more correct, and
+  exactly the kind of drift that would have embarrassed the report if I had passed the pre-fix figure along
+  unchecked. Full curve for what shipped, over the 81-model trial pool: +0 at 0 and 200 chars, 77→81 at 2,000,
+  11→61 at 20,000.
+  **_ A SECOND TRIAL COST THAT WAS NEVER REAL, found by B5 while doing (b) and not asked for: deleting the emitter
+  also removes classifier storage from the TRIAL reserve, which is gated against the same 1¢ cap — 0.39¢ at one
+  candidate and 0.55¢ over the 81-model pool. A trial Smart Model send was reserving OVER HALF ITS ENTIRE CEILING
+  for storage on a call that stores nothing. Paid path gains 0.27–0.43¢ per turn of removed over-reservation.
+  Neither number was in any criterion; the emitter deletion was scoped as hygiene and turned out to be a product
+  change. _**
+  JUDGMENT CALLS ACCEPTED, both disclosed rather than absorbed: it deleted the shared fold `classifierStorageNanoUsd`
+  instead of leaving it a dead read, on the ground that it always returned 0n AND its `v8 ignore` comment asserted
+  the emitter still emits — a dead function whose comment asserts a falsehood is the wrong-comment class, so
+  deleting beat leaving. And it edited `trial-smart-model-candidates.ts` (not in its Files list) because the gate's
+  new signature broke its call while the value it needs is absent from its input; threading would have cascaded
+  into `smart-model-turn.ts`, whose `budget` is optional, so it computes the count locally through the same shared
+  counter. Both routed to the ownership auditor to confirm forced-and-minimal rather than accepted on my read.
+  A PIN STRENGTHENED WHILE BEING MOVED, which is the shape I want: `estimate-run.test.ts`'s persisting-turn storage
+  delta no longer includes classifier storage, and B5 added an assertion that the would-be figure is NON-ZERO — so
+  the test cannot pass by the term merely shrinking instead of vanishing. A moved pin that gains a control is the
+  opposite of a rewritten expectation.
+  RESIDUAL ROUTED TO C3 rather than left in a report: the trial Smart Model path prices the system prompt but not
+  custom instructions while the single-model gate prices both, so two trial paths measure different bases against
+  one cap. Unreachable today (escape needs trial + Smart Model + custom instructions + an inverted-rate model, and
+  0 of 176 live text models are inverted) — but I recorded WHY that is not reassuring: the unreachability rests on
+  a catalog property that one ingestion can change, not on a structural bound.
+  NEW §KNOWN BREAKAGE ENTRY: `pnpm test:api` crashes in its COVERAGE MERGE on most attempts with ZERO FAIL lines —
+  three of five consecutive runs during this task. A crash is not a test failure; read for FAIL lines and gate on a
+  scoped run. B5 also DISPROVED a hypothesis and I recorded it so nobody re-tests it: deleting apps/api/coverage
+  between runs is not the trigger, since a run that left it alone crashed anyway. A disproved theory written down
+  is worth as much as a confirmed one here, because this gate has already absorbed two real failures in this run.
+  → B5 auditing, 2 independent auditors (money-flagged), dispatched only AFTER the fix landed rather than beside
+  it — sequencing deliberately, since two auditors against a tree B5 was still writing is the exact collision I
+  created between B4 and B5 earlier. (A) MONEY: derive the gate/floor identity rather than read it, including an
+  inverted shape; reproduce both product measurements independently since they go to the founder; confirm the one
+  disclosed hold movement is completely explained and sweep for others; verify the outlier exclusion runs through
+  the one leaf predicate. (B) DELETION + OWNERSHIP: enumerate every fold and prove the one-edit claim I accepted
+  from B5 rather than crediting it; judge the local character count as One-Implementation-Shared or a second
+  measurement; verify ruling 5's single classifier by searching the ARITHMETIC, not the constant names.
+- 2026-07-27: B5 audit, OWNERSHIP/DELETION lens: FAIL — 2 Importants + 3 Minors. Money lens still running; fix held
+  to batch both.
+  IMPORTANT 1 — A SELF-GATE CLAIM WAS FALSE AND I CONFIRMED IT: `npx eslint src/affordability` from packages/shared
+  exits **1** on a prettier error at smart-model-affordability.ts:37 (a two-member import left on three lines after
+  a symbol was removed), while impl-report-2's gate table asserts exit 0 after the last edit. Prettier runs as an
+  ESLint rule, so this reddens the gate fronting the whole CI DAG. This is the exact failure Global Constraint 9
+  exists to prevent and B5's brief required — a re-lint after the LAST edit — so the process was right and the
+  claim was wrong.
+  **_ MY OWN VERIFICATION NEARLY RECORDED THE OPPOSITE. My first check piped eslint through `tail` and read `$?`,
+  which returns TAIL's status, not eslint's — it printed "exit=0" beside output that plainly showed one error. I
+  caught it because the two halves disagreed, re-ran capturing the real status, and got exit 1. Recording the trap
+  rather than the correction: a pipeline's exit code is the LAST command's, so any gate check of the form
+  `cmd | tail; echo $?` reports success no matter what cmd did. I have used that shape repeatedly this run. _**
+  **_ IMPORTANT 2 — I OVERSTATED THE IDENTITY TO THE FOUNDER, AND B5'S DISCLOSURE UNDERSTATED ITS OWN BAND. I
+  reported that `gate − floor = 1,000 × outputRate` holds "for every rate shape" and that dominance is now
+  algebraic. That is TRUE of the SINGLE-MODEL trial arm — the auditor confirms it, pinned by amount over five
+  shapes including two inverted. It is NOT true of the trial SMART MODEL arm, which prices the system prompt but
+  not custom instructions. I did not qualify the arm. And B5 said escape needs an inverted-rate model ("0 of 176
+  live text models are inverted"); the auditor derived the real condition as
+  `1000 × outputRate < ceil(instructionChars / 2) × inputRate`, which with the trial body schema's permitted 5,000
+  instruction characters becomes `outputRate ≲ 2.5 × inputRate` — FLAT and output-2×-input shapes, entirely
+  ordinary. Measured: flat 3,070,000n gate vs 4,586,000n floor (no dominance); out=2×in 2,535,000 vs 2,793,000 (no);
+  out=2.5×in 2,428,000 vs 2,434,400 (no); out=4×in dominates. Over-cap spend up to ~0.5–0.6¢ against a 1¢ cap on an
+  unauthenticated route, bounded by the 5-message limit and the $50/day global cap. _**
+  I VERIFIED ALL THREE PRECONDITIONS MYSELF rather than routing on the auditor's arithmetic: the trial body schema
+  really does permit 5,000 custom-instruction characters (routes.ts:243); trial-smart-model-candidates.ts:104-105
+  really prices only systemPrompt + history + prompt with no customInstructions term; and `budget` really is in
+  scope at smart-model-turn.ts:106, so the forwarding fix exists.
+  THE EFFECT IS MIXED, WHICH MATTERS FOR ATTRIBUTION: at high combined rates B5's change SHRINKS a pre-existing
+  escape (7.0M → 6.1M nano at in=out=4000n); at low rates with a long send it OPENS a new one of ~0.15¢ that the
+  storage term used to cover. So this is not purely pre-existing, and ruling 6's standing rule applies — the task
+  that superseded the path closes it. The criterion says the trial gate refuses everything the fit would admit
+  above 1¢; it does not say "on one arm", so the criterion is genuinely unmet rather than merely under-scoped.
+  THREE MINORS, all valid: `smartModelMinimumRequiredNanoUsd` now passes storage into the pool pricing — right
+  direction (it makes the client threshold share admitRun's basis, as §Smart Model 5's biconditional requires) but
+  UNDISCLOSED and UNPINNED, since every test call omits a storage context so the sweep cannot see the arm move;
+  a `{@link}` in tier-gate.ts points at an export the premium collapse deleted (Global Constraint 10's repo-wide
+  sweep on a removed export is what would have caught it); and a test asserts `toBe(X + Y − Y)`, which cancels to a
+  constant while reading as a relation.
+  STRONG CONFIRMATIONS worth keeping: the one-edit emitter deletion is verified real — SIX fold sites are now inert
+  simultaneously, including the generic summer that no `kind` filter could have fixed, and a repo-wide grep for
+  `kind === 'storage'` in non-test source returns nothing. Ruling 5's "exactly one premium/trial classifier" is
+  TRUE, verified by searching the ARITHMETIC not the names: exactly one recency comparison and one percentile
+  survive, with three other entry points funnelling in. No assertion was weakened anywhere in the diff — every
+  changed pin got strictly stronger (whole-list toEqual replacing toContain; five shapes replacing three).
+- 2026-07-27: B5 audit, MONEY lens: FAIL — 1 Important + 2 Minors. With the ownership lens, six validated findings
+  batched into one fix cycle (cycle 2 of the cap).
+  **\* THE TWO LENSES CONVERGED ON ONE DEFECT FROM INDEPENDENT DERIVATIONS, AND I VERIFIED THE FORMS ARE THE SAME
+  INEQUALITY. Ownership lens: `outputRate ≲ 2.5 × inputRate`. Money lens: `inputRate > 0.4 × outputRate`. I checked
+  these are algebraically identical across the range. Two agents, two methods, one band — the strongest
+  corroboration available short of a reproduction, and the money lens supplied that too: through B5's own shipped
+  code, a trial-eligible model at 2,000n/2,500n with a 2,000-char prompt and the schema-maximum 5,000
+  custom-instruction characters is ADMITTED and then prices at 11,921,900n = **1.192¢ against a 1¢ cap**. Live
+  incidence measured: **20 of the 81 trial-eligible models** satisfy the condition; worst live overshoot 21.6% of
+  the cap. B5's "0 of 176 inverted" bound was wrong by the factor between 1× and 0.4×. \***
+  THE MONEY LENS ALSO CORRECTED B5'S PRODUCT NUMBERS UPWARD, which matters because I had already passed them to the
+  founder: the classifier-storage reserve removed is **0.70¢ over the real 81-model trial pool, not 0.55¢**, and
+  **0.95¢ on the paid path over the 176-model exposed pool, not 0.27–0.43¢**. B5's figures are consistent with a
+  candidate list carrying short or absent descriptions. Safety and direction unaffected — the hold falls either
+  way — but the founder-facing figures were understated and are corrected in this session's report.
+  IT ALSO SOFTENED MY OWN FRAMING, correctly: I called `gate − floor = 1,000 × outputRate` an IDENTITY. Over 2,688
+  shapes it is exact in 1,344 cases and NEVER BELOW in any — so it is an inequality that always holds in the safe
+  direction, with the deviations being the two conservative clamps (provider cap under 1,000 answer tokens; a
+  prompt exceeding the context window). Not a defect, but "identity" overstated it and "never escapes, exact in
+  half the space" is the honest claim. Combined with the arm error above, I have now overstated this same result
+  twice — once by dropping the arm qualifier and once by calling an inequality an identity.
+  ELIGIBILITY NUMBERS INDEPENDENTLY REPRODUCED EXACTLY, including the correction: OLD gate 81/81/77/11 and NEW gate
+  81/81/81/61 at 0/200/2,000/20,000 characters over 176 exposed / 81 trial-eligible models. The "61 not 62" note is
+  confirmed as the honest consequence of pricing the system prompt.
+  HOLD SWEEP CLEAN AND STRUCTURALLY ARGUED: only the one disclosed movement exists and its explanation is complete
+  rather than merely consistent — the dear model leaves the classifier pool as an outlier, the pool drops to one
+  candidate, and the classifier is therefore bought by nobody; the executor agrees through the SAME authority, so
+  reserve and charge cannot disagree. Every other movement can only be downward, because excluding candidates
+  shrinks the MAX domain and both reserve sides dropped the identical term. Settlement never bills classifier
+  storage, so `reserve ⊇ bill` is preserved. No hold rose.
+  ORCHESTRATOR-VERIFIED ENVIRONMENTAL FACT, caught before it could cost an attribution cycle: repo typecheck now
+  reads 15/16 on `packages/config/arch/rules/no-evidence-from-mocked-seam.rule.ts` — an UNTRACKED file from a
+  concurrent workstream, outside every lane in this plan. The money lens saw 16/16 earlier in its own run, so it
+  landed mid-audit. Recorded in §Known Breakage with the instruction not to chase it. I checked this proactively
+  rather than waiting for the fixer to trip on it.
+  OWNERSHIP EXTENDED TWICE for the fix, both narrowly and both under ruling 6's standing rule (the task that
+  supersedes a path closes it): `chat/domain/smart-model-turn.ts` for the prompt-count forwarding only, and
+  `workflows/nodes/smart-model-execution.ts` for two comments B5's own contract change falsified — candidates no
+  longer arrive price-ascending and the engine need not be a candidate at all.
+- 2026-07-27: B5 fix cycle 2 KILLED by a session limit mid-cycle, RESUMED FROM TRANSCRIPT per the restart skill
+  rather than respawned. Its last output was "both corrected figures reproduce independently — now the gates", so
+  it had already re-derived the 0.70¢ / 0.95¢ classifier-storage figures on its own and was moving to the gate
+  runs. A fresh spawn would have discarded that plus its whole working model of the trial-arm forwarding. Re-entry
+  note kept to the skill's shape — one line that the task is unchanged, no restatement, no re-plan — plus two facts
+  that are genuinely new since it was killed: capture eslint's exit status directly rather than through a pipe (the
+  shape that let finding 2 ship as "exit 0"), and repo typecheck reads 15/16 on an untracked foreign file that is
+  not its problem.
+  RUN STATE AT THIS POINT: 9 of 26 clean (B1, B1b, A1, F1, B2, F2, B3, A2, B4). B5 in fix cycle 2 of the
+  three-cycle cap, carrying six batched findings of which one is a live 1¢-cap escape on the trial Smart Model arm
+  (20 of 81 live models, worst 21.6% overshoot, reproduced end-to-end at 1.192¢). B6 has its resolver collapse,
+  boundary pin, and contract questions pre-answered by a read-only analyst, and a known Files-list gap to resolve
+  before dispatch. B8 carries the premium-marking signature change as an E1 blocker. C3 carries the
+  two-trial-paths-price-different-bases item. Nothing else in flight.
+- 2026-07-27: B5 fix cycle 2 DONE (impl-report-3.md), all six findings addressed. Every exit status captured
+  directly on the command, nothing piped — the specific discipline finding 2 was about. eslint EXIT=0 in both
+  packages after the final edit; test:shared EXIT=0 with 127 files/3,018 and coverage 99.9/99.46/100/100; test:api
+  7 red of 6,430 and ALL SEVEN the known template-html snapshots, with no catalog-lock contention, no rate-limiter
+  flake and no coverage-merge crash on that run; scoped coverage 100% every axis on the three changed api files.
+  **_ FINDING 1 FIXED AT THE ROOT RATHER THAN PATCHED: the local recount is DELETED. TrialSmartModelCandidatesInput
+  takes the prompt character count and smart-model-turn.ts forwards the route's own figure, so BOTH trial arms now
+  consume the one count the route builds, custom instructions included. That is the structural form — there is no
+  second measurement left to disagree with, rather than two measurements taught to agree. It also diagnosed its own
+  arithmetic error precisely: "your inequality is right and mine was wrong by 2.5× — I compared the shortfall
+  against the output surplus alone rather than net of the reserve's share." _**
+  THE CORRECTED FIGURES NOW HAVE THREE INDEPENDENT DERIVATIONS: 0.704¢ trial (70.4% of the 1¢ cap) and 0.945¢ paid,
+  from the money lens, then from B5 against the live snapshot. B5 also found the CAUSE of its own understatement —
+  synthetic 48-character descriptions against a real median of 219, which is why its one-candidate figure matched
+  while its pool figures did not, and the pool figures are exactly the ones that reached the founder. A wrong
+  number whose mechanism is identified is worth more than a corrected number, because it says which other figures
+  from the same fixture are suspect.
+  SCOPE CALL ROUTED, NOT ABSORBED: `buildTrialSmartModelTurnDefinition`'s `budget` is now REQUIRED where it was
+  optional, inside a grant I wrote as "the forwarding only". B5's argument is that a count cannot be forwarded from
+  an optional value without either a fallback basis — which reintroduces the defect, since a fallback prices a
+  different prompt — or a silent refusal. I judge that sound and accepted it, but it is a contract change in a
+  narrow grant and it MOVED TWO ASSERTIONS that used the budget-less path to test classify and effort wiring. Both
+  verifiers are asked whether required is the only correct shape and whether those two moved assertions lost
+  coverage: a contract change that quietly retires two tests is the shape to look for.
+  MY OWN STALE ROUTING CLOSED, and recorded as closed rather than deleted: I had routed "the trial Smart Model path
+  prices the system prompt but not custom instructions" to C3. B5 has closed it at the root, so C3 owes nothing —
+  and the §C3 entry now says so explicitly, with the withdrawn reachability bound and the real band. A stale routed
+  item is exactly what costs a later task a cycle chasing a fixed defect, so leaving it silently correct-but-stale
+  would have been the worse option.
+  EPISTEMIC POSTURE WORTH KEEPING: B5's run read repo typecheck at 16/16 where I read 15/16 on the untracked
+  foreign file. It recorded that as NOT-OBSERVED rather than not-existing, and did not chase it. That is the right
+  handling of a disagreement with the orchestrator about environment state.
+  → Two narrow verifications dispatched, both resumed from transcript rather than respawned: the MONEY lens on
+  whether the trial Smart Model arm now dominates ACROSS ITS BAND rather than only at the one reproduction (it
+  holds the 2,688-shape and 5,928-combination sweeps and the end-to-end repro), and the OWNERSHIP lens on the lint
+  gate verified its own way, the required-parameter contract change, the two moved assertions, and whether a second
+  prompt measurement survives anywhere. This is fix cycle 2 of the three-cycle cap; one remains.
+- 2026-07-27: B5 fix verification, MONEY lens: **PASS**, 1 Minor. Ownership lens still running; fix held to batch.
+  **_ THE ESCAPE IS GONE ACROSS THE BAND, NOT JUST AT THE REPRODUCTION — which is the distinction I asked for and
+  the one that separates a fix from a patch. The exact 11,921,900n case is now REFUSED at the gate, while the same
+  send at 0 instruction characters still admits and still prices exactly 1.000¢, so nothing was lost where there was
+  no defect. Then: 23,040 buildable synthetic trial Smart Model definitions → ZERO over-cap, spanning rate ratios
+  0.1×–5× (including the three shapes that made the old band live), four rate scales, instruction lengths up to the
+  schema maximum, four context/cap shapes and all three effort modes; plus 63 buildable definitions over the REAL
+  81-model trial pool → zero escapes, worst priced exactly 1.0000¢, never above. The auditor's own framing is the
+  right one: the band is now EMPTY rather than narrowed, because there is one count. _**
+  NO HOLD MOVED AND THE PAID PATH IS VERIFIED UNTOUCHED POSITIVELY, not argued: 12 paid Smart Model configurations
+  over the live catalog all satisfy `estimator hold ≤ admitSmartModel reserve ≤ balance`, zero violations, 145–168
+  candidates surviving — no affordable-then-402 edge. Downward-only still holds by construction, and the one figure
+  that legitimately RISES is the minimum-required threshold under a storage context, which is a refusal threshold
+  moving fail-closed rather than a hold, and is what §Smart Model 5 requires.
+  THIRD AGREEMENT ON THE CORRECTED FIGURES, DIGIT-FOR-DIGIT: trial 15,291 reserve chars → 7,044,900n = 0.7045¢
+  (70.4% of the 1¢ cap); paid 27,416 → 9,453,600n = 0.9454¢; one candidate 4,880 → 3,921,600n = 0.3922¢. It also
+  confirmed the ATTRIBUTION of the original understatement by measuring the live snapshot itself: descriptions total
+  38,479 characters over 176 models, mean 218.6, median 219 — against the synthetic 48 B5 had used. The
+  founder-facing numbers can stand.
+  THE REQUIRED-PARAMETER SCOPE CALL I ACCEPTED IS CONFIRMED AS THE ONLY CORRECT SHAPE, and it enumerated four
+  alternatives rather than agreeing: an optional budget with a local fallback IS the defect; optional-and-skip
+  removes the trial tier's only money bound; optional-and-refuse adds an unreachable branch to state a guarantee the
+  type already gives; and optional-budget-plus-required-count is WORSE than required, because compileSmartModelBuild
+  needs the budget for the ceiling reconcile, so that shape would let a trial definition compile with a wire cap and
+  NO money term — violating B4's added criterion 1. The two moved assertions lost no coverage (their subjects still
+  run, the branch they reached no longer exists, and the file measures 100% on every axis); it also corrected its own
+  earlier narrower 92% reading as a scoping artifact rather than letting it stand.
+  **_ FIFTH INSTANCE OF THE TRUE-CONCLUSION-WRONG-MECHANISM CLASS, this time in B5's report prose: its justification
+  for the forwarding pin being non-vacuous says that under the old recount "both calls would count ~1,750 characters
+  and both would build". The pin IS non-vacuous — verified — but the mechanism is INVERTED: with a 1-candidate
+  reserve the old basis totals over the 1¢ cap, so under a reversion both cases REFUSE and the pin fails on its
+  FIRST expectation, not its second. Nothing in shipped code says it, so it is not a code defect; recorded because
+  the class is now the most frequent single failure mode in this run and it keeps appearing in the reasoning ABOUT
+  correct work rather than in the work. _**
+  ONE MINOR TO FIX: `smart-model-turn.ts:493-494`'s `prompt` and `history` are now DEAD on the trial builder's args —
+  their only reader was the local recount this cycle deleted. Orphans this change created, which AGENT-RULES makes
+  the task's own to remove, and nothing catches them (knip does not inspect object-type members and TypeScript does
+  not flag unused properties). Worse than dead weight: leaving them invites the next reader to believe the function
+  measures the send itself, which is exactly the belief the defect came from.
+  Out-of-scope confirmed: the knip failure is `packages/config` + `apps/sandbox`, both unmodified and outside B5's
+  diff; the test:api coverage-merge crash fired on 4 of 7 invocations with ZERO FAIL lines, and the three files its
+  abort left in flight pass in isolation.
+- 2026-07-27: B5 fix verification, OWNERSHIP lens: **PASS**, 3 Minors open, none blocking. Both lenses now PASS on
+  substance. It verified the lint gate FOUR ways with the status captured on a separate statement, including
+  WHOLE-PACKAGE runs of both packages — stronger than the file-scoped form B5 reported, and the form that rules out
+  a changed file being omitted from an enumerated list.
+  **_ FINDING 1 IS THE ONE THAT MATTERS: THE PIN I ORDERED LAST CYCLE DOES NOT DISCRIMINATE WHAT IT WAS ADDED FOR,
+  so my own finding 4 is still open. The new case asserts minimum(withStorage) > minimum(withoutStorage), but
+  `storage` enters the threshold in THREE places and that inequality is produced by the other two — input storage
+  plus the output-storage term on the minimum answer, together exactly the observed 2,100,000n gap. Proven
+  EXECUTABLY on B5's own fixture: priceSmartModelPool with and without the storage argument returns IDENTICAL values
+  in every field the function reads — same priced order, same floors, same engine, same classifier worst case — so
+  reverting the argument is a literal no-op there and the whole 201-point sweep still passes. A pin that cannot
+  fail, which is the exact vacuity class this run has now hit at least four times. The auditor also supplied the
+  discriminating direction rather than only the objection: the outlier fixture already in that file, asserting the
+  EXCLUDED SET or the pool ORDER differs across bases. _**
+  FINDING 2 — two dead parameters, converged on by BOTH lenses independently: `prompt` and `history` on the trial
+  builder's args are now unread, their only reader having been the deleted recount, yet both stay required and the
+  route still passes them. AGENT-RULES makes an orphan the task's own to remove, and nothing catches it — knip does
+  not inspect object-type members and TypeScript does not flag unused properties. Misleading in the exact direction
+  the fix exists to remove: a reader sees the builder receiving prompt text and assumes it measures it.
+  **_ FINDING 3 IS AIMED AT ME AND IT LANDS TWICE. (a) The diagnosis/remedy mismatch: B5 diagnosed an ORDERING AND
+  COVERAGE defect (last shared edit after last shared lint; then linted only api and reported exit 0 for both) but
+  shipped a STATUS-CAPTURE remedy. Capturing EXIT=$? flawlessly on an api-only lint reproduces the original defect
+  exactly — the remedy does not bind the cause. What binds it is deriving the lint set from `git status` after the
+  final edit ANYWHERE and running one lint per package present, which B5 did this cycle by choice rather than by
+  rule. (b) THE SEVERITY WAS MINE AND IT WAS WRONG: I labelled a red lint gate `[Minor]`. It fronts the whole CI DAG
+  and blocks every downstream gate; the auditor's point is that the downgrade is what makes a process fix easy to
+  under-invest in, and that is precisely what happened — a Minor got a hygiene remedy instead of a rule. _**
+  GLOBAL CONSTRAINT 9 REWRITTEN accordingly, and it now carries four things it lacked: the ENUMERATION step (derive
+  the lint set from git status after the final edit anywhere, one lint per package present, from that package's
+  directory); the two named failure modes with the coverage one spelled out because only the ordering one is
+  obvious; the status-capture form with the pipeline trap stated (`cmd > out 2>&1` then `echo EXIT=$?`, because a
+  pipeline reports its LAST stage's status) INCLUDING that the orchestrator fell into that shape while checking this
+  very finding; and the severity note that a red lint gate is Important, never Minor.
+  AUDITOR-VOLUNTEERED CHECK WORTH RECORDING BECAUSE IT CAME BACK CLEAN: it applied §Known Breakage's own fixture
+  trigger to a whole-table catalog wipe B5's integration test adds and had NOT reported — enumerating what ranks
+  over model_catalog, finding the premium percentile, and establishing that the one-row catalog the fixture leaves
+  is below the minimum pool size so the percentile leg never fires and no cross-suite ranking can shift. That is the
+  rule added after B4's luck-not-method disclosure being followed on first contact, by a different agent, on a
+  fixture nobody flagged.
+  → B5 fix cycle 3 dispatched — the LAST under the cap, and the brief says so. Two code items plus the report's
+  diagnosis sentence; the process half is already landed in Global Constraint 9 by me rather than delegated, since
+  it is mine to own. If cycle 3 does not clear, I escalate rather than loop.
+- 2026-07-27: B5 fix cycle 3 DONE (impl-report-4.md), all three Minors addressed. Lint set DERIVED from git status
+  after the final edit per the rewritten Global Constraint 9, every status captured on the command: eslint EXIT=0
+  both packages, typecheck EXIT=0 at 16/16, test:shared EXIT=0 at 127 files/3,021 with coverage 99.9/99.46/100/100,
+  test:api 7 of 6,430 and all seven the known template-html snapshots.
+  **_ FINDING 1 FIXED AND PROVEN BY THE SAME INSTRUMENT THAT EXPOSED IT: B5 dropped the storage argument inside the
+  threshold and watched the pin redden (4,398,900n vs 5,388,900n), then restored and watched it green. A pin
+  demonstrated by mutation rather than asserted — which is exactly what the previous attempt lacked, and the reason
+  that attempt looked done while being a literal no-op. It also disclosed that its FIRST cut failed and needed TWO
+  neutralisations to isolate the exclusion at threshold level: the classifier ENGINE (the candidate must carry a
+  large input rate so it is never cheapest by combined rate) and the classifier RESERVE (whose character count
+  renders the pool's identifiers, so an equal-length stand-in is required). Both are written into the test's comment
+  rather than left as fixture folklore. _**
+  FINDING 2 EXPOSED A CHAIN AND B5 FOLLOWED IT TO THE END, which is more than the finding asked for: the two dead
+  args, the `ChatHistoryMessage` type import they were the only use of, `history` on trialSmartModelDefinitionOrRefusal,
+  and `prompt` on that helper's body type — the last reader of prompt text on the trial Smart Model path. Its claim
+  is the structural one worth having: NO content of any kind now reaches that builder, so reintroducing the defect
+  requires a visible signature change. Routed to verification because that property, not the deletions, is the
+  payoff.
+  FINDING 3 ACCEPTED IN FULL AND ITS OWN DIAGNOSIS CORRECTED: the cause was COVERAGE, not ordering — "I linted the
+  package I was thinking about and reported its exit 0 for one I had also touched, which perfect status-capture
+  reproduces exactly." It also enumerated the current cycle under the new rule: eight packages carry changed
+  TypeScript files, two contain its work, the other six are the concurrent workstream and linting those would report
+  their state as its own. And it accepted the severity correction. An implementer restating a process defect more
+  accurately than the finding stated it is the outcome the rule change was for.
+  EPISTEMIC POSTURE HELD AGAIN: repo typecheck read 16/16 on its run, so it still has not seen the foreign
+  arch/rules failure I observed. Recorded as not-observed rather than absent, for the third time, without chasing it.
+  No environment change this cycle — it reused the saved snapshot rather than re-refreshing the catalog.
+  → ONE narrow verification dispatched, resumed from transcript: the ownership lens raised all three and holds the
+  instrument that proved the old pin vacuous, so it is the cheapest agent able to judge whether the new one is real.
+  Told plainly this is the last cycle under the cap and that a finding goes to the founder rather than into a fourth
+  loop, so clean and defect are equally useful and a hedged verdict is not. Four judgements: re-run the mutation
+  itself; test whether the two neutralisations are genuine requirements or fixture convenience (an unnecessary
+  neutralisation is where a pin's subject drifts); verify the orphan-chain claim exactly, since the structural
+  property is worth more than the deletions; and confirm the diagnosis now matches the remedy.
+- 2026-07-27: B5 final verification: **PASS, NO FINDINGS ⇒ B5 CLEAN** (10 of 26: B1, B1b, A1, F1, B2, F2, B3, A2,
+  B4, B5).
+  **_ THE AUDITOR'S METHOD IS THE THING TO KEEP: read-only, it could not mutate the repo, so it re-implemented the
+  threshold's reduction with the pool injected — and VALIDATED ITS RE-IMPLEMENTATION AGAINST THE SHIPPED FUNCTION
+  FIRST (5,388,900n both) before using it to judge. Then it swapped only the pool basis: 4,398,900n vs 5,388,900n,
+  gap 990,000n = exactly 1000 × (1000n − 10n), the candidate's floor advantage. That reproduces B5's reported
+  failure digit-for-digit. Validating your instrument against ground truth before accusing the code is the same
+  discipline an earlier auditor showed when it debugged its own harness rather than filing a false alarm. _**
+  BOTH NEUTRALISATIONS PROVEN LOAD-BEARING rather than accepted as fixture convenience — the question I asked
+  because an unnecessary neutralisation is where a pin's subject drifts. (a) Give the candidate an ordinary input
+  rate and it becomes cheapest by combined rate, the engine changes, the reserve collapses, and the pin fails by
+  2,027,520n for a reason unrelated to the exclusion. (b) A three-character-shorter identifier moves the reserve by
+  100n against an exact `toBe`. Both are documented in the test's own comment with the reason each is needed.
+  ORPHAN CHAIN VERIFIED COMPLETE AND ITS STRUCTURAL CLAIM EXACT: the trial builder's args are now a date, a budget,
+  and two effort flags; `TurnBudget` is a count plus money with no string anywhere; and the route helper's body type
+  is narrowed so the COMPILER forbids reading prompt text inside it even though the wider object still passes
+  structurally. Reintroducing a local measurement now requires adding a parameter to one of three types — visible in
+  any diff. The auditor also stated one precision rather than overclaiming: a db handle remains, but it serves only
+  descriptor reads and trial content is never persisted, so there is no send text behind it.
+  THE ENUMERATION REPRODUCED INDEPENDENTLY, count and split: exactly eight packages carry changed TypeScript files
+  (api 31, shared 10, scripts 6, web 5, e2e 3, db 2, config 2, admin 1), and all 19 files outside the two owning
+  packages are confirmed concurrent-workstream — so linting those six would misattribute red inward and produce
+  vacuous green about B5's own work. That is Global Constraint 9's new enumeration step working on first contact.
+  MY 15/16 TYPECHECK OBSERVATION EXPLAINED, not left dangling: the auditor sees 16/16 with the foreign untracked
+  file PRESENT and clean, which it notes is consistent with my reading having caught that file mid-edit. Three
+  agents disagreed about environment state and the disagreement resolved to a timing artifact — with B5's
+  not-observed-rather-than-absent posture vindicated.
+  INCIDENTAL BUT WORTH RECORDING: the module wall was verified by OBSERVATION rather than assertion — a deep-import
+  probe of a walled subpath failed with ERR_PACKAGE_PATH_NOT_EXPORTED, which is what §What is enforced claims. B1b
+  left that wall open behind 14 interim subpaths; this confirms the non-interim paths genuinely refuse.
+  → **B6 DISPATCHED**, with its Files-list gap RESOLVED BEFORE dispatch rather than by the implementer — the third
+  instance of that class, and the first caught in advance. Ownership extended to exactly the level triple's two mock
+  consumers and the classifier-context emitter; `smart-model-execution.ts` deliberately NOT granted, with the
+  reasoning stated in the plan: the adapter shape exists precisely to remove the need, so needing it is a
+  NEEDS_CONTEXT stop rather than a licence. Its brief points at the pre-answered block as outranking any earlier
+  note in the section, and tells it to check anything it relies on rather than trust it.
+  → ALSO DISPATCHED, read-only and concurrent: an analyst on LANE C's envelope mechanism — the streaming grant's
+  real cost, the run-level charge anchor options, whether estimator and executor consult one reserve predicate, and
+  the highest-value question: WHICH C-LANE CRITERIA ARE NOW STALE given everything the clean B-spine changed
+  underneath them. Three tasks in this run were built against a premise a predecessor had already changed; asking
+  before dispatch is cheaper than discovering it mid-task, and the same play saved B5 three round-trips.
+- 2026-07-27: LANE C ANALYST IN, and it justified the parallel dispatch several times over — it found a NORMATIVE
+  DOC DEFECT, three unnamed money consequences, four plan defects and a missing graph edge, all before any lane-C
+  task was dispatched. Every claim cited to file:line; I verified the four load-bearing ones myself.
+  **_ THE SPEC WAS WRONG ABOUT ITS OWN PRECEDENT. BILLING.md said the classifier charge is anchored to the first
+  persisted content "exactly as the run-level prompt storage fee is". I checked both: the storage fee is NOT
+  anchored — settlement.ts:1135 folds it onto the charge at `index === 0`, on the stated reasoning that the first
+  charge is always a succeeded generation. So the spec cited a mechanism that does not exist, in the sentence a
+  lane-C implementer would have built from. _**
+  THREE CONSEQUENCES OF A TURN-LEVEL NODE, none in any criterion, and the second is severe:
+  (1) the prompt storage fee VANISHES — charges land in declaration order, a turn-level classifier runs in an
+  earlier level, so it becomes index 0, the whole prompt fee attaches to a charge with no anchor, and settlement
+  drops it; (2) THE ALL-SIBLINGS-FAILED DETECTOR STOPS FIRING — settlement.ts:240 reads `charges.length === 0` as
+  the all-failed signal, so with a classifier charge present an all-fail turn has one charge, the error never
+  raises, the persistable set is empty, every charge is skipped, and SETTLEMENT COMMITS SUCCESSFULLY HAVING
+  PERSISTED NOTHING AND BILLED NOTHING WHILE TELLING THE CLIENT THE TURN SUCCEEDED; (3) the anchor rule has TWO
+  hand-maintained implementations (engine debit path, chat-slice display path) that assert non-drift "by
+  construction", and the chat-slice file was MISSING FROM C2's FILES LIST — so C2 as scoped could not have landed
+  correctly. All three now stated normatively in BILLING.md and assigned in the plan.
+  C1's CRITERION WAS WRONG ON ITS STREAMING HALF, and the correction makes C1 SMALLER: BILLING.md states streaming
+  is withheld from any node whose output is consumed rather than displayed — a GRAPH property — and the interpreter
+  already computes that set (`consumedProducers()` at :1008, already used at :994), with the grant living on the
+  resolved execution object rather than the node type. So the fix is conjoining consumption at one site: no schema
+  field, no execution-registry change, no model-call-execution change, and zero blast radius across every shipped
+  definition. The earlier pass that called for "a second additive schema field threaded through the live execution
+  registry" was half right, and the wrong half was the expensive one. The INPUT-tag half is genuinely unavoidable
+  (TypeTag v1 has no union so text-or-envelope is inexpressible) — and C1's file list omitted the port authorities,
+  node-registry.ts and model-ports.ts, plus the Smart Model slot's ports which are declared twice.
+  FOUR THINGS ALREADY SATISFIED BY THE CLEAN B-SPINE, recorded so lane C does not rebuild them: both trial arms
+  consume the route's count; the classifier reserve is provider-only at both layers; `runnable` already excludes
+  outliers so any "MAX over candidates" criterion must mean the classifier-selectable pool or it over-holds; and
+  the effort union, per-model resolution, downgrade rule and mandatory carve-out are all landed in one shared
+  authority. The analyst's framing is the one that matters: lane C's real risk is RE-IMPLEMENTING these in
+  chat/domain rather than building them — which is the fourth-implementation hazard this run has now unified twice.
+  STALE RULING TEXT CORRECTED: lane C's reserve predicate was ruled `candidatePool.length >= 2`; the landed code
+  uses the OUTLIER-EXCLUDED pool, which is what §Smart Model 3 requires. The plan now says follow the code, and
+  names the ruling sentence as the stale one rather than leaving two readings standing.
+  MISSING GRAPH EDGE ADDED — B8 → C3. C3's "the classifier is presented the admissible set" cannot be satisfied
+  while getTurnOptions has zero production consumers, and without the edge C3 would have re-derived the option set
+  locally. That is exactly the defect class B3 spent four cycles closing, reappearing as a scheduling omission
+  rather than a coding one.
+  NOT C3's DESPITE ITS CRITERION: "an explicit level is never rewritten to auto" is a CLIENT defect in a web hook
+  outside every lane-C file list — lane E's. The same hook sends no effort at all for a Smart Model turn, so the
+  smart-plus-auto criteria are unreachable end-to-end until lane E moves, which means H1's proof depends on an
+  unowned change. Recorded now rather than discovered at H1.
+- 2026-07-27: B6 implementer DONE\*WITH_CONCERNS (impl-report-1.md) → auditing, 2 auditors (collapse / reserve+scope).
+  typecheck 16/16 uncached; test:shared exit 0 with the coverage gate inside it; test:api red ONLY on the 7 known
+  template-html snapshots, identical across four runs; eslint exit 0 from BOTH package dirs after the final edit
+  (red first on one prettier error, fixed, re-linted — Global Constraint 9 working as rewritten).
+  \*\** THE ADAPTER SHAPE HELD, which validates withholding the file rather than granting it. Neither denied file
+  needed editing: smart-model-execution.ts and turn-reasoning.ts are untouched and still call the published names.
+  I had written that grant as "if you conclude you cannot collapse without editing that file, that is a
+  NEEDS*CONTEXT stop, not a licence" — and the pre-answered design meant the stop never fired. \*\*\*
+  DEFECT B6 CREATED AND CAUGHT ITSELF, beyond its criteria and self-reported: moving effort onto label vocabulary
+  made the fuzzy matcher bind the level `Max` inside an unrelated catalog identifier (`turbo-max-overdrive`) — a
+  real 65k-token reasoning budget off an answer that named no level at all. Fixed by having the parser choose its
+  rule from the DECLARED DOMAIN: strict for literal domains, fuzzy for catalog domains. Routed to audit as the item
+  deserving the hardest look precisely BECAUSE it was self-reported, with the sharpest question being whether any
+  other declared domain is now mis-classified — a parser that picks strictness from a domain is only as good as
+  that classification.
+  TWO CLAIMS I VERIFIED MYSELF, both B6's and both correct:
+  (1) MY FILES-LIST PATH WAS WRONG. I wrote `apps/api/src/mocks/mock-provider.ts` into B6's granted list; that file
+  does not exist and the real one is `apps/api/src/slices/models/adapters/mock-provider.ts`. I took the path from an
+  analyst's report without checking it — the same relay-rather-than-derive error as the reach-in figures, the
+  fee-seam mechanism and the §Known Breakage lock hazard. Corrected in the plan. It cost nothing only because B6
+  found the real file.
+  (2) THE FOREIGN TYPECHECK BREAK HAS CLEARED: repo typecheck is 16/16 uncached with the untracked rule file still
+  PRESENT, so the concurrent workstream fixed it. §Known Breakage entry marked CLEARED rather than deleted, because
+  three agents observed that file differently inside one hour and older reports cite 15/16 — the spread was a timing
+  artifact and a reader of those reports needs to know that.
+  TWO ITEMS ROUTED TO C3, which owns turn-definition.ts next: the FOURTH `B + H` site (`nodeAnswerCap`) is in no
+  Files list B6 had, and B6 established by reading that the true statement there is `cap ≤ B + H` rather than
+  equality, because it is the stamping direction — routed WITH that distinction so C3 does not pin the wrong
+  relation; and the classifier's option list, which B6 ships as the effort dimension's FULL DECLARED DOMAIN rather
+  than the turn's presented subset, because narrowing needs the executor and the message builder. B6's argument that
+  this cannot produce an infeasible plan is accepted provisionally and sent to audit as the safety case to ATTACK,
+  since the standing rule is that the classifier sees `admissible` and never a wider set.
+  THREE API TEST FILES extended into, expectation-only, because the mock now answers labelled lines — routed to
+  audit with the specific warning that a mock rewrite is the classic place teeth are lost with no expect line
+  changing. B6 also confirmed B5's classifier-storage strip landed IN CODE rather than reading a sibling report, so
+  its own conditional item is a no-op.
+  FOUNDER-VISIBLE CI COST, recorded now rather than at close: the classifier prompt text changed, so one integration
+  cassette will miss and record ONE real charged OpenRouter call on the next CI run. Self-healing, no recording
+  version bump needed. Routed to audit to confirm that is the whole cost.
+- 2026-07-27: B6 audit, RESERVE + SCOPE lens: FAIL — 1 Important + 2 Minors. Collapse lens still running; fix held
+  to batch.
+  **_ IMPORTANT — A VACUOUS TEST GUARDING THE TASK'S ENTIRE OBJECTIVE. effort-dimension.test.ts:291-309's helper
+  matches the returned plan's wire BY REFERENCE, but the producer mints a fresh parsed wire object on every call,
+  so the lookup NEVER matches and always falls through to position 0. The comparison is therefore false for every
+  element, the violation list is always empty, and the test "never binds a rung above the classified option unless
+  mandatory" PASSES FOR ANY IMPLEMENTATION — INCLUDING ONE WHOSE WALK WENT UPWARD. B6's whole objective was
+  deleting an upward resolver, this is the only GENERAL guard on that direction across the sweep space, and the
+  impl report cites it as pinning exactly that. Verified empirically by the auditor with a concrete model and
+  effort. Nth instance of the vacuity class in this run, and the most consequential placement yet — the pin that
+  cannot fail sits on the property the task exists to establish. _**
+  MINOR 1 ROUTES TO THE API, NOT TO B6, and the direction is what makes it interesting: on a pinned-model +
+  auto-effort turn, turn-core now prices an EMPTY prompted model list while the api still prices one model. Both
+  remain upper bounds so `reserve ⊇ bill` is intact — but THE SIGN OF THE CLIENT↔SERVER GAP INVERTED. At baseline
+  turn-core priced the whole catalog (≥ the api figure); it now prices strictly LESS, by one rendered model line
+  ≈ 118–126 chars ≈ 2–6 μUSD. A payer whose spendable lands in that window passes the shared send gate and is
+  refused at admission — the affordable-then-402 class this run keeps closing. The correct figure is the empty list
+  on BOTH sides and the file that must change is the api's, so this is routing rather than rework in place.
+  MINOR 2 CONFIRMS MY PROVISIONAL ACCEPTANCE WAS TOO GENEROUS IN SHAPE BUT RIGHT IN EFFECT: the wider-domain
+  deviation is "violated in shape always, in effect in a narrow window". The auditor constructed the window rather
+  than arguing it — a budget-native model at ceiling 13,000 presents {Min, Lite, Low} with Mid excluded, the
+  classifier can answer Mid, and the step-down accepts it because it leaves ≥1 answer token where feasibility
+  requires ≥1,000. Money is untouched (the wire cap equals the held ceiling exactly) but the turn runs at a level
+  the affordability layer marked infeasible and returns 712 answer tokens. NOT a regression — the baseline reached
+  the identical outcome by the same 1-token step-down. Stays routed to C2, now with a worked example rather than a
+  principle.
+  THE RESERVE ITSELF IS CONFIRMED AN UPPER BOUND BY CONSTRUCTION, both legs derived independently: the excerpt
+  budget now starts at the cap MINUS the envelope, and the envelope arithmetic checks out at exactly the 54
+  characters the plan named (40 labels + 8 separators + 6 newlines); the template prices every description at the
+  declared maximum, which `truncateDescription` makes the exact worst case. THE PROPERTY THAT CHANGED IS THE SIGN —
+  the old shape had an error whose direction was not fixed, which is what mattered rather than its magnitude.
+  B6's OWN CONCERN 4 CLEARED BY INDEPENDENT PRICING, which is why asking auditors to price rather than judge is
+  worth it: the description rise on the trial reserve is ≈0.002¢ while the storage leg removed in the same list is
+  ≈0.41¢ of the 1¢ cap — two orders of magnitude apart, so the rise cannot bite the cap.
+  MY ROUTING OF THE FOURTH `B + H` SITE IS VERIFIED SOUND, both halves: it genuinely shares the canonical wire-budget
+  derivation (no second budget table exists), and `cap ≤ B + H` is the correct statement rather than equality,
+  because the physical clamp binds in the stamping direction and the priced amount IS the stamped amount. C3 can
+  inherit that claim as verified rather than re-deriving it — which was the point of routing the distinction along
+  with the item.
+  ATTRIBUTION NOTE TO PLACE, flagged by the auditor as out-of-scope for B6: `smartModelMinimumRequiredNanoUsd`
+  passing storage into the pool pricing is B5's, not B6's — it is the item B5's own auditor raised as undisclosed
+  and unpinned, which B5 then pinned vacuously and finally fixed under mutation proof. Already accounted for; no
+  action, recorded so it is not re-raised as new.
+  CI COST CONFIRMED EXACTLY AS DISCLOSED, cited to the cassette doc: a changed prompt misses on a request-hash key,
+  records once, and self-heals; a recording-version bump is for header-allowlist changes and explicitly not for new
+  prompt text. One real charged call on the next CI run.
+  ONE CORRECTION TO B6's ATTRIBUTION: the trial 403 in chat/routes.integration.test.ts DID reproduce for the
+  auditor where B6 reported it did not. It passes in isolation and touches no code path B6 changed, so B6's
+  reasoning holds and its verdict stands — but its "did not reproduce" was optimistic rather than established.
+- 2026-07-27: B6 audit, COLLAPSE lens: PASS, 2 Minors. With the reserve lens, four findings batched into one cycle.
+  **_ THE TWO LENSES DO NOT CONFLICT, AND THE DISTINCTION MATTERS: the collapse lens verified the `B + H == ceiling`
+  CAP-SWEEP pin discriminates (mutating the plan to recompute headroom reddened five tests) and explicitly called it
+  "not one of the two looked-done-could-not-fail pins". The reserve lens found a DIFFERENT pin vacuous — the
+  upward-direction one. Both are right about different tests. Had I read only the first I would have concluded the
+  task's pins were sound. _**
+  THE COLLAPSE LENS ALSO SETTLED THE UNDERLYING PROPERTY STRUCTURALLY, which changes what the fix is: the step-down
+  walks only the already-resolved prefix over declared-ascending order and CANNOT turn upward. So the code is right
+  and the test is wrong — the fix is to make the test real, not to change behaviour. That is in the fix brief,
+  because a fixer told only "this pin is vacuous" on a directional property might have gone looking for the
+  direction bug instead.
+  IT PROVED EXACTLY ONE RESOLUTION SURVIVES, by grep AND by execution: all three former call paths route through the
+  single registry rule, and the distance sort is grep-clean across the module, the api and apps/web. Both dropped
+  behaviours confirmed by mutation rather than by reading the adapter — removing the step-down reddens 2 tests,
+  collapsing the wire-silence arm reddens 2 including an independent oracle.
+  MINOR — AND IT IS A BEHAVIOUR REGRESSION IN THE PATH B6 REWROTE: `LABEL_NOISE` strips quotes and brackets but NOT
+  markdown emphasis, so `'effort: **Max**'` resolves to null and the executor falls back to `medium` — a silently
+  different rung than the one classified. Verified by execution against shipped code. Pre-B6 the fuzzy matcher
+  resolved it correctly, and markdown emphasis is among the commonest decorations an LLM applies. This is the
+  fuzzy-matcher fix's own shadow: tightening the matcher to stop `Max` binding inside `turbo-max-overdrive`
+  correctly closed a 65k-token defect and incorrectly closed a legitimate answer shape.
+  MINOR — STRAY UNTRACKED DEBUG SCRIPT in the owned package, which escapes typecheck (tsconfig include misses it),
+  eslint AND knip, so no gate catches it and it would ride into a commit as debris. Attribution genuinely unsure —
+  its mtime is after the impl report, so it may be a sibling auditor's leftover. Told the fixer to delete it either
+  way and to say so if it is not theirs.
+  OWNERSHIP EXTENDED NARROWLY rather than deferring the sign inversion: the client used to price MORE than the
+  server for a pinned-model auto-effort turn and now prices ~118–126 characters LESS, opening an
+  affordable-then-402 window of ~2–6 μUSD. Correct figure is the empty list on BOTH sides. Extended to exactly that
+  change in two api files, nothing else, under ruling 6's standing rule — the task that superseded the path closes
+  it. Deferring would have left a live window in a class this run has now closed four times.
+  TWO REPORT-ACCURACY NOTES, both in B6's DISFAVOUR and neither a defect: a deviation claimed a stale comment was
+  corrected in a file that is byte-identical to HEAD — the overstatement makes its evidence STRONGER, since the
+  independent oracle really is untouched; and its "four consecutive identical test:api runs" did not hold on file
+  count, an auditor seeing a second failed file that is a documented stale-optimizer collection failure passing in
+  isolation.
+  DESIGN QUESTION RAISED FOR LATER, not a task failure: `nodeReasoningBudgetTokens` re-implements the three-arm wire
+  dispatch the canonical budget function already contains. Pre-existing and outside B6's ownership — but it is the
+  natural close-out of "one implementation" once the fourth `B + H` site gets an owner, so the two belong together.
+- 2026-07-27: B6 fix cycle 1 DONE\*WITH\*CONCERNS (impl-report-2.md); all four findings addressed. Gates post-final-
+  edit: lint 0 both packages, typecheck 0 at 16/16, test:shared 0 (127 files), test:api 1 with only the known
+  template-html snapshots.
+  \*\*\* F1's COUNTERFACTUAL TOOK THREE MUTATIONS, AND THE TWO FAILURES ARE THE VALUABLE PART. Walking upward from the
+  resolved option, and distance-sorting from it, BOTH left all 28 tests green — only re-injecting the ACTUAL deleted
+  resolver (a distance sort over the whole ladder keyed on the CLASSIFIED option) reddens, taking 11 tests including
+  both repaired pins. B6's stated reason the first two cannot bind above is that resolution still runs first, and it
+  recorded them so nobody re-tests them. That is the difference between "I mutated something and it went red" and a
+  counterfactual that actually reproduces the regression the pin claims to guard. \_\*_
+  IT ALSO ADDED A SECOND PIN IN A DIFFERENT SPACE — budget rather than label ("never spends more thinking than
+  asked") — deliberately independent of the reference-comparison that made the first one vacuous. Routed to
+  verification with the sharp question: a second pin sharing the first's failure mode is not defence in depth.
+  F2's SAFETY ARGUMENT WAS REFRAMED, not just extended: `_`and`\*`added to both noise classes with the case set
+grown 3→8, and the justification restated as a PROPERTY OF THE LABEL SET (no label contains these characters)
+rather than a case list. Routed with the matching question — a property argument that is an enumeration in
+disguise is worse than the enumeration, because it stops anyone checking.
+F3 VERIFIED BY ME: the stray script is absent from the entire repo and packages/shared carries no untracked
+files, so B6's "not mine" stands and the auditor's own attribution caveat was right.
+F4 CLOSED AT BOTH SITES THROUGH THE ONE AUTHORITY the executor short-circuits on, so priced list and prompted list
+cannot drift — the structural form rather than two independently-computed equal values. Routed to verification as
+exactly that distinction, since coincidental alignment today would look identical.
+NEW ORPHAN CREATED AND CORRECTLY NOT WIDENED INTO: F4 left`pinned`dead in`pickEffortClassifier`, lint forced
+`\_pinned`, and removing it needs a file outside the grant. B6 left it with a comment and reported it. Routed to
+  C2, which owns that file — with the reason stated: a parameter named to satisfy a linter teaches the next reader
+  the wrong thing about what the function selects on.
+  TWO SELF-CORRECTIONS, BOTH IN B6'S DISFAVOUR AND ONE NAMING THE RULE IT BROKE: its cycle-1 deviation claimed an
+  edit to a file that is byte-identical to HEAD (the error strengthens its evidence, since the independent oracle
+  really is untouched); and its "four consecutive identical api runs" leaned on REPETITION as evidence for a
+  LOAD-DEPENDENT failure class — which §Known Breakage explicitly warns against — with B6 declining to claim this
+  cycle's single-file run as stable either. An implementer citing the rule it violated is the behaviour that makes
+  the rule worth having.
+  → Two narrow verifications dispatched, both resumed: the reserve lens on F1's counterfactual reasoning, the second
+  pin's independence, and F4's shared-authority derivation; the collapse lens on F2's property argument and that
+  nothing it already cleared regressed.
+- 2026-07-27: B6 fix verification, COLLAPSE lens: BOTH FINDINGS CLOSED, no new findings, cycle-1 PASS stands.
+  MARKDOWN REGRESSION CLOSED, verified by execution BEYOND the committed case set — nested and combined emphasis
+  forms resolve too, because the class is a run rather than a pair. And it probed the exact risk the fix created:
+  `max_tokens` and `max_effort` are where adding `_` to the noise class could have RE-OPENED the 65k-token hole,
+  and they still refuse, because the class is anchored so an interior underscore is never stripped. Testing the
+  shadow of your own fix is the check that separates a closed finding from a traded one.
+  **_ ITS JUDGEMENT ON THE SAFETY ARGUMENT IS THE BEST-CALIBRATED NON-FINDING OF THE RUN. B6 reframed the
+  justification as a PROPERTY of the label set rather than a case list. The auditor tested that rather than reading
+  it: the property holds for the literal effort domain, but is NOT true as worded over "option label" — catalog
+  labels are model ids and routinely carry underscores, dots and colons. It proved by execution that the strip is
+  structurally unreachable for them (the fuzzy branch returns before the strip is computed). Then it asked my own
+  question back honestly — is the property an enumeration in disguise? "Partly, and honestly so" — but checkable in
+  ONE place instead of at each call site, with the dimension id set closed, the confusable declaration already
+  refused, and, decisively, A VIOLATION FAILING CLOSED: a future label starting or ending with a stripped character
+  would simply stop matching and take the declared fallback, never bind the wrong rung. On that failure direction it
+  declined to raise it, and named the single word it would want if anyone edits the comment again: "literal-domain".
+  I agree with the severity call. I will fold that one word in rather than spend a cycle on it, because this run's
+  own standing rule says a claim that is false as worded is the wrong-comment class regardless of direction. _**
+  NOTHING REGRESSED, PROVEN BY RE-RUNNING THE WHOLE MUTATION BATTERY POST-FIX with identical counts to cycle 1 —
+  cap recomputation 5 red, step-down removal 2, wire-silence collapse 2, fuzzy-for-every-domain 1, restored 1,369
+  green. So the cycle-2 edits disturbed none of what it had already cleared. The three expectation-only api test
+  files were not touched this cycle at all (mtimes and diff stats unchanged), so no assertion could have lost teeth.
+  IT ALSO CONFIRMED BOTH OF B6's SELF-CORRECTIONS INDEPENDENTLY — the claimed edit was never in the diff, and the
+  api failed-file count was two rather than one. Both now stated accurately by both parties.
+- 2026-07-27: B6 fix verification, RESERVE lens: **PASS, no findings ⇒ B6 CLEAN** (11 of 26). Both lenses in.
+  **_ THE SINGLE MOST IMPORTANT SENTENCE OF THIS AUDIT, and it retroactively justifies running two lenses: under the
+  deleted-resolver mutation, PIN1 — the `maxTokens == handed cap` sweep that the OTHER lens verified as
+  discriminating — shows ZERO mismatches, because the deleted resolver still passed `cap − budget` through. So the
+  cap sweep does NOT catch the upward-resolver regression at all. The ENTIRE discrimination rested on the two pins
+  the reserve lens flagged as vacuous. Had I run only the collapse lens, I would have read "the B+H pin
+  discriminates, mutation-confirmed" and concluded B6's guards were sound while the property the task exists to
+  establish was unguarded. _**
+  IT BUILT A CONTROLLED HARNESS RATHER THAN TRUSTING THE REPORT: rebuilt the sweep and both helpers in a scratchpad,
+  ran all three mutations PLUS the real implementation as a control, and showed the control reproduces the green
+  suite exactly — so the instrument is faithful before it is used to judge. The deleted resolver reddens both
+  repaired pins at 608 violations each, with a concrete example (asked Min, bound Lite, 2,048 thinking tokens never
+  asked for).
+  IT ALSO STRENGTHENED B6's OWN REASONING AND CORRECTED ONE WORD OF IT: B6's explanation for why two mutations stay
+  green is right, and the auditor supplied the missing proof — the budget is non-decreasing in ladder position, so
+  once the resolved rung's budget fails the cap check no higher rung can pass it either. It corrected B6's
+  description of the second mutation as "a no-op": the ordering DOES change, and the outcomes coincide for a
+  different reason. Conclusion unaffected, but the stated mechanism was wrong — the class this run keeps finding.
+  THE SECOND PIN IS GENUINELY INDEPENDENT, verified structurally: it performs no lookup of the plan's wire, so it
+  cannot inherit the reference-comparison failure, and its degeneration makes the assertion STRICTER rather than
+  vacuous — it fails loud. That is the right answer to "a second pin sharing the first's failure mode is not
+  defence in depth."
+  F4 CLOSED FROM THE SAME AUTHORITY, not an equal value: one function read by both estimator and executor, so the
+  priced list and the prompted list cannot drift without that function changing. The gap is measured gone in both
+  directions — both sides now price the identical figure rather than merely closer ones — and the tightened site
+  retains 319 characters of slack, so the upper bound survives. Both new expectations carry NOT-EQUAL guards, so
+  neither can pass by coincidence.
+  **_ THE AUDITOR OWNED ITS OWN DEBRIS: the stray `probe-audit.ts` was ITS file, created while building the
+  empirical falsification in cycle 1 and deleted the next command — not the implementer's and not a sibling's. It
+  volunteered this unprompted and re-verified absence. B6's "I did not create it" is vindicated, and an auditor
+  that finds a stray file, files it as a finding, and later discovers it was its own is exactly the failure mode
+  that stays cheap only if the auditor says so. _**
+  → **B7 and C1 DISPATCHED CONCURRENTLY** — the first real parallelism since the spine began.
+  C1's DEPENDENCY WAS AMBIGUOUS AND I RESOLVED IT ON SUBSTANCE, NOT ON THE DIAGRAM: the ASCII graph is unreadable at
+  that branch and neither section states its own dependency, so I settled it by what the work needs — C1 consumes
+  B6's classifier prompt and effort registry, consumes nothing from B7's notice copy, and their file sets are
+  disjoint; the graph prose agrees, since "lane C's first task lands mid-spine" is only true if C1 runs beside B7.
+  Recorded in the plan with the reasoning rather than acted on silently, so a reader who thinks it wrong can see
+  what it rests on.
+  C1's FILES-LIST GAP RESOLVED BEFORE DISPATCH — fourth instance of that class, third caught in advance: the port
+  authorities were missing and its central change cannot land without them. Two files it was expected to need are
+  explicitly NOT granted, because under the derived-streaming shape they are unnecessary and needing them means the
+  derivation was abandoned. C1's brief leads with the fact that its own streaming criterion was WRONG and that the
+  correction makes its task smaller, then hands it the three money consequences as its own.
+  ONE-WORD COMMENT PRECISION carried to the close batch rather than spent as a cycle, with the reasoning recorded:
+  the auditor declined to raise it because a violation fails closed, and I agree on severity — but a claim false as
+  worded is the wrong-comment class regardless of direction, so it gets corrected, just not at the cost of an
+  implement-and-audit round trip.
+- 2026-07-27: FOUNDER INSTRUCTION — take B7 and C1 to a clean audit, then PAUSE; dispatch no new tasks. Recorded in
+  the RUN STATE block so it survives a compaction. Reading applied: audits, validators and fix cycles for those two
+  are completing in-flight work and remain in scope; opening B8, C2 or anything else is not, however ready the graph
+  says it is. Nothing else is running.
+- 2026-07-27: B7 implementer DONE\*WITH_CONCERNS → auditing (1 auditor; the section is not sensitive-flagged and the
+  work is copy and vocabulary rather than money arithmetic). Shared 128 files; web 395/395 with the only exit-1 the
+  §Known Breakage markdown-renderer coverage on an unmodified file; typecheck 16/16; eslint exit 0 across three
+  packages.
+  \*\*\* IT FOUND A LIVE USER-FACING FALSEHOOD IT COULD NOT REACH: three refusal conditions still collapse into one
+  wire reason, so a CONCURRENT-RUN-CAP refusal renders as "Your balance can't cover this message" — a user with
+  ample balance told they are out of funds, and offered payment as the action. B7 shipped the typed reasons and copy
+  for both affected conditions but the wire widening lives in a file it does not own. Routed to C3 with the
+  mechanism named. This is §Notices' one-wording-per-condition rule broken in the direction that misleads, which is
+  the one direction that matters. \_\*\*
+  TWO BEHAVIOUR CHANGES SENT TO AUDIT RATHER THAN ACCEPTED, both plausible and both the shape where a rule gets
+  over-applied: read-only became a BLOCKING non-dismissible error (could now block a send the verdict permits —
+  breaking the spec in the opposite direction from the fix); and the payer-switch disclosure stopped riding refused
+  sends, with a guest-suppression special case DELETED alongside — a deleted special case being exactly where a
+  condition goes missing silently. The auditor is also deriving the refusal vocabulary itself rather than reading
+  B7's list, and reading the five UNRUN e2e files, since an unrun test carrying a stale id is a false green waiting.
+- 2026-07-27: C1 implementer DONE\*WITH_CONCERNS → auditing, 2 auditors (money / mechanism).
+  THE CORRECTION I GAVE IT LANDED AND MADE THE TASK SMALLER: streaming shipped DERIVED — one conjunction in the
+  interpreter and ONE additive field rather than two — with the two deliberately-withheld registry files untouched,
+  and the blast-radius claim carried by the fact that no production definition builds a fanIn.
+  \*\*\* AN OWNERSHIP CONFLICT I CREATED: my brief assigned C1 the three money consequences as its own, while the
+  ownership table assigns those settlement files to C2. C1 followed the brief. I wrote that brief from the lane-C
+  pre-answers without reconciling it against the table. ACCEPTED rather than reverted because the result is strictly
+  better — the anchor rule is now ONE function instead of two hand-maintained implementations asserting non-drift
+  "by construction", which closes a sync contract that was itself a standing finding against C2's scope. C2's
+  criterion now VERIFIES a collapse rather than performing one. \_\*\*
+  MONEY CONSEQUENCE 2 IS THE ONE TO WATCH, and C1 rated it its own lowest confidence: settlement now raises whenever
+  no charge carries persistable content, SUBSUMING a pre-existing branch that used to commit an empty success. C1's
+  fuller report names that branch's cause — a MEDIA/NON-MEDIA SHAPE MISMATCH — which turns my general question into
+  a testable hypothesis, so I sent the money auditor a sharpened instruction: construct a media turn that previously
+  committed and determine whether it now raises. The asymmetry is the reason it deserves the hardest look — the
+  other two consequences push toward safety (a vanishing fee now lands, a silent failure now raises) while this one
+  makes settlement REFUSE where it used to succeed.
+  INTERPRETATION CALL ROUTED, NOT ACCEPTED: "clamp to the printed ceiling" was implemented as a closed-ladder clamp,
+  on the reasoning that a registered reducer sees only its graph inputs so the presented set is unreachable from it.
+  The mechanism auditor is asked to judge whether that honours the standing rule that the classifier sees
+  `admissible` and never a wider set, or defers a real gap — and to say plainly which.
+- 2026-07-27: B7 audit: FAIL — 1 Important + 1 Minor I ruled. Most of the task landed and was verified: severity is
+  STRUCTURAL rather than asserted (a dismissible error is unrepresentable; an action-less entry does not typecheck),
+  both directions of the biconditional pinned at the producer, and the magnitude enumeration stricter than required.
+  BOTH BEHAVIOUR CHANGES I SENT TO AUDIT CAME BACK CLEARED, which is why sending them was right rather than
+  cautious: read-only does NOT block a send the verdict permits — the send gate reads a separate flag and notice
+  type only drives dismissibility, so the change merely makes an already-blocked state non-dismissible. And the
+  payer-switch deletion lost no condition: the new trigger is strictly WIDER than the old one, and the only case
+  dropped is a refused send, which the spec excludes by construction.
+  **_ THE IMPORTANT IS SHARPER THAN B7's OWN FRAMING: it did not merely inherit the collapsed refusal, it MADE THE
+  COPY WORSE. The previous sentence ("Your balance or budget is too low… Add credits or adjust your selection") was
+  deliberately HEDGED and covered every condition the wire code carries. B7 replaced it with a specifically false
+  one — a payer with ample balance and five runs streaming is now told their balance cannot cover the message and
+  offered "Add credit", which cannot help. That is the false payment path §Notices 9 forbids, and the exact
+  condition `funds_held_by_run` was minted for. B7's test now pins that identity as "the same condition". _**
+  AND THE AUDITOR FOUND THE IN-SCOPE FIX B7 SAID DID NOT EXIST: B7 framed this as needing an apps/api emitter it
+  does not own. True of the per-reason split — but `INSUFFICIENT_ADMISSION` is a wire CODE, not a condition, so
+  giving it a condition-neutral sentence and dropping it from the shared-conditions table is entirely inside B7's
+  files. My earlier routing of this to C3 was built on B7's framing; C3 still owns the un-collapse, but the
+  misleading copy gets fixed now rather than surviving until C3.
+  MINOR RULED RATHER THAN WEIGHED: with an over-capacity prompt AND denied funding the composer shows two
+  non-dismissible errors whose actions CONTRADICT — "Shorten your message" and "Add credit". The auditor flagged it
+  as genuinely ambiguous, since §Notices 4 is framed over per-option ceiling terms. I ruled the precedence applies
+  at the composer too: the rule exists to stop a user being handed two blocking demands that disagree, and that harm
+  is worst exactly where both are rendered. The criterion's own words are "pinned where both would otherwise be
+  true", and at that surface both are true.
+  ROUTED TO E1, not scored against B7: the model picker still renders "Top up"/"Sign up" as a THIRD phrasing of the
+  two premium conditions B7 single-homed. E1 already owns that file and already has the typed-reason criterion —
+  this is that criterion with a named instance. B7's repo-sweep claim was overstated by exactly that one file.
+- 2026-07-27: C1 audits BOTH IN — mechanism lens PASS zero findings, money lens PASS zero findings ⇒ **C1 CLEAN**
+  (12 of 26). No fix cycle needed.
+  **_ THE MEDIA HYPOTHESIS I SHARPENED WAS ANSWERED DEFINITIVELY, AND SENDING IT WAS WORTH IT: the auditor ran a
+  REAL end-to-end image turn in isolation (real runtime, real settlement) — it passes, 2 messages and 1 usage
+  record. And it gave the structural reason rather than only the observation: charge modality and output kind are
+  both derived from THE SAME DESCRIPTOR, so they cannot disagree for a real generation. The subsumed branch is
+  reachable only if a model declares text-only outputs yet returns media, and audio cannot reach it at all because
+  audio models are never runnable. So the one consequence whose error direction was "refuses a turn that should
+  have committed" has no live turn shape behind it. _**
+  ALL THREE MONEY CONSEQUENCES CLOSED AND VERIFIED BY EXECUTION, each with a discriminating pin: the all-failed
+  detector now reads CONTENT rather than charge count, pinned by a real fenced transaction asserting the throw plus
+  zero usage_records and zero messages; the prompt fee folds onto the first PERSISTED charge, pinned red under the
+  old index-0 rule and with a second pin that the run total is unchanged; and the anchor collapse is real rather
+  than two lists agreeing — the display resolver is DELETED and both predicates trace to one origin set.
+  PLAINLY, ON THE QUESTION I ASKED: settlement can no longer commit reporting success while having persisted and
+  billed nothing. Every chat commit raises before any write when the persistable set is empty, and the throw rolls
+  the whole fenced transaction back.
+  THE MECHANISM LENS RESOLVED THE INTERPRETATION CALL IN A WAY NEITHER I NOR C1 HAD: the closed-ladder clamp
+  honours the standing rule TODAY, because the classifier prompt renders the full closed ladder and is never
+  narrowed per turn — so the reducer's clamp IS the presented-set clamp. The deferred gap is in PRESENTATION, not
+  in the clamp: the per-candidate "up to High" annotation does not exist anywhere yet, so there is no printed
+  ceiling for a third reducer input to carry. The interpretation is correct BECAUSE the presentation gap exists,
+  and closing that gap is what would make a third input necessary.
+  TWO FORWARD ITEMS ROUTED TO C2, both currently unreachable: the anchor still returns undefined for a bare
+  top-level key, so a turn-level classifier charge would be absorbed until C2 lands the run-level anchor (now a
+  one-function change thanks to C1's collapse); and `finalizeStopped` skips settlement when sink outputs are empty,
+  so A USER STOP AFTER THE CLASSIFIER BUT BEFORE ANY SIBLING OUTPUT WOULD ABSORB THE CLASSIFIER'S SPEND — the one
+  path where "no output" and "nothing owed" are not the same thing, and worth checking against the carve-out that a
+  user stop settles its partial.
+  ATTRIBUTION QUESTION ANSWERED: the modified `classifier-context.ts` the money lens could not place is B6's — its
+  Files list was extended to cover exactly that file as the emitter side of the classifier-envelope fix, and B6 is
+  clean. Not orphaned work.
+  ONE CROSS-LANE SYMPTOM PASSED TO B7 RATHER THAN FILED: C1's mechanism auditor, running later than B7's own gate,
+  saw `test:shared` RED with 14 assertions crashing at one line in B7's own package. B7's self-gate and its audit
+  both showed green, so this is its fix cycle mid-edit — the B4/B5 moving-tree lesson. Sent as a symptom to save a
+  debugging pass, explicitly not as a defect.
+- 2026-07-27: B7 fix cycle 1 DONE (impl-report-2.md). Both findings fixed, both watched red first, gates re-run
+  after the last edit: test:shared exit 0 three times post-fix, typecheck 16/16, eslint exit 0 across three
+  packages, web green but for the §Known Breakage coverage entry on an unmodified file.
+  IT ACCEPTED THE REGRESSION AS ITS OWN rather than as inherited, and the new copy is honestly hedged rather than
+  differently specific: "Check your balance and budgets, or wait for your other replies to finish" covers all three
+  collapsed conditions — balance, budget, run-cap — and carries NO LINK, so there is no false payment path. The
+  wire code is out of the shared-conditions table and a pin asserts it is not the funds reason, which fails if
+  anyone re-points it.
+  IT NARROWED MY RULING AND I THINK CORRECTLY: I ruled the precedence applies at the composer; B7 applied it only
+  where BOTH notices are blocking, leaving pairs whose partner is an INFO notice unchanged, on the reasoning that
+  an info notice makes no competing demand. That is narrower than my words and truer to the harm the rule addresses.
+  Sent to the auditor to confirm no untouched pair still hands the user two contradictory demands.
+  **_ MY RELAYED SYMPTOM WAS ITS OWN TDD WINDOW — roughly two minutes between a watched-red step and the table
+  entry landing, with three subsequent full runs at exit 0. That is the right outcome for something passed along as
+  a SYMPTOM rather than filed as a defect: it cost B7 one sentence to dismiss, where filing it would have cost a
+  cycle and left a phantom in the record. The B4/B5 moving-tree lesson generalising correctly. _**
+  NEW §KNOWN BREAKAGE FACT: the coverage-merge crash is NOT api-only — a test:shared run aborted with the same
+  "removed the coverage directory" shape and ZERO FAIL lines. Recorded as a general gate hazard rather than an api
+  quirk; the auditor is asked to say if it hits the same thing, since a second sighting on a different package is
+  what settles it.
+  FORWARD ITEM ROUTED TO C3, and it is the standing rule applied PROSPECTIVELY by the implementer rather than by
+  me: `send_cannot_start` must be DELETED when the emitter carries the real admission reason, never left as a
+  fallback, because a permanent catch-all silently re-absorbs every condition added later — the exact defect it was
+  minted to stop. B7 put that in the entry's own docblock; C3 now carries the owning copy.
+  → B7 fix re-audit dispatched (same auditor, resumed). This is the last thing running before the founder-ordered
+  pause.
+- 2026-07-27: B7 fix verification: PASS with 1 Minor. Both fixes confirmed closed — the condition-neutral copy is
+  true across ALL FOUR arms of the collapsed code (the auditor traced the smart-model-unbuildable case separately),
+  it is honestly hedged rather than differently specific since both remedies are offered as alternatives, and the
+  regression pin is real: re-pointing the wire code at any single condition fails both assertions, because both
+  sides compute from the live table at module load. The narrowed precedence boundary was judged SOUND, with no
+  surviving pair re-opening the blocking condition's remedy set.
+  MINOR, AND IT IS THE EXACT GAP IN B7's OWN NARROWING ARGUMENT: two info-notice ACTION clauses contradict the
+  blocking notice they render beside. "Send when you are ready" renders on a composer whose send is disabled — and
+  that clause is NEW in this task, arriving with the every-notice-names-an-action requirement. "Add credit for
+  longer conversations" renders beside a context-length refusal money cannot relieve. B7's argument was that an
+  info notice makes no competing DEMAND; true, but it can make a contradicted OFFER, which is what these two do.
+  Copy edit only — explicitly not a change to the precedence mechanism or to which notices fire. Fix cycle 2
+  dispatched; a PASS with a validated Minor is not clean under the standing rule that severity orders work and
+  never defers it.
+  **_ I GENERALISED FROM ONE DATA POINT AND THE AUDITOR CAUGHT IT. I had widened the §Known Breakage
+  coverage-merge entry to "NOT api-only" on the strength of B7's single sighting. The auditor ran the shared suite
+  four times across two cycles — two forced and uncached — plus two full web runs, and reproduced it ZERO times. It
+  said plainly that this run gives no second data point to generalise on. Entry narrowed back to "one unreproduced
+  sighting", with the correction itself recorded in the entry, because generalising from one observation is the
+  same error this section penalises elsewhere and it was mine. _**
+- 2026-07-27: B7 fix cycle 2 DONE (impl-report-3.md). Both action clauses reworded verdict-neutral — "Send when you
+  are ready" → "Ask them for more if it runs out"; "Add credit for longer conversations" → "Add credit for more
+  messages each day". Mechanism, triggers and precedence untouched. All gates green including test:web at exit 0.
+  B7 ACCEPTED THAT ITS OWN NARROWING ARGUMENT WAS TOO NARROW, in its own words: the problem was the OFFER, not the
+  demand. That is the second time this task restated a finding more precisely than the finding stated it.
+  THE NEW PIN DERIVES ITS SET FROM THE PRODUCER rather than listing notices — it drives the producer at 150%
+  capacity across every approved funding shape and collects what actually co-renders, so a newly co-rendering
+  notice is covered without a test edit. Routed to verification with the matching question: a pin that enumerates
+  while claiming to derive is the failure mode.
+  NEW EVIDENCE STRENGTHENING AN EXISTING ENTRY: test:web exited 0 with NO markdown-renderer coverage error this
+  run, on the same untouched file that failed in both previous cycles — direct confirmation that entry is
+  load-dependent in BOTH directions, which the run had only inferred. And B7 accepted my correction: the
+  coverage-directory crash stayed unreproduced across five further shared runs. One sighting, not a pattern.
+  → Final verification dispatched. Nothing else is running; the founder-ordered pause begins when it returns.
+- 2026-07-27: B7 fix verification: **PASS, no findings ⇒ B7 CLEAN** (13 of 26: B1, B1b, A1, F1, B2, F2, B3, A2,
+  B4, B5, B6, C1, B7). **RUN PAUSED at founder instruction — everything in flight taken to a clean audit, nothing
+  dispatched beyond it.**
+  BOTH CLAUSES VERIFIED VERDICT-NEUTRAL, and the auditor pressed the turn-count claim against the MECHANICS rather
+  than the copy: the free allowance is day-keyed while charges land on a wallet that is not, so "more messages each
+  day" is literally true and makes no assertion about the context bound the co-rendered block names. It also ruled
+  the payment link on that entry correct rather than a false path — the ban is on a REFUSAL offering a payment
+  action that cannot help, and this is an informational notice whose own subject credit does relieve.
+  THE PIN DERIVES, VERIFIED, AND ITS ONE LIMIT NAMED RATHER THAN OVERSOLD: the assertion set is collected from the
+  producer's live output at 150% capacity across every funding shape, so a notice nobody has written yet is
+  covered; but the DRIVER set is hand-listed, because no runtime enumeration of funding sources exists to derive it
+  from. The auditor recorded that "so nobody later over-reads the pin's reach" — the derived half guards the drift
+  the finding was about, which is the half that matters.
+  IT ALSO BOUNDED B7's ONE REMAINING CLAIM precisely rather than accepting or rejecting it: `answer_may_be_shortened`
+  is safe, but its protection is via a SIBLING under the same single guard rather than by its own name — enough to
+  hold, and stated so it is not later believed to be pinned directly.
+  §KNOWN BREAKAGE ENTRY UPGRADED FROM INFERENCE TO EVIDENCE: the markdown-renderer coverage failure is now
+  corroborated in BOTH directions across two agents and six runs — same untouched file, opposite outcomes. Neither
+  a green nor a red web run says anything about that entry, and that is now observed rather than reasoned.
+- 2026-07-27: STATE RECONCILED after compaction (ledger + `git status` over recollection, per the skill's resume
+  rule). Disk agrees with the ledger: 13 of 26 clean, nothing running, `HEAD` still `53daba72`, 178 working-tree
+  entries (none written by an agent). Three lines of the RUN STATE block were stale and are corrected: the header
+  still said "resumed 2026-07-26 — A2 and B4 in flight"; the not-started list still counted C1 among the 13 not
+  started while the clean table listed it clean — the same task on both sides of the same block; and the readiness
+  sentence still said "B5 is next once B4 clears" with "no parallelism available until B6", which the last four
+  cleans overtook. **I ALSO GOT THE REPLACEMENT WRONG ON FIRST WRITE** — I wrote that B8, C2 _and D1_ were ready,
+  from memory rather than from the graph. §Dependency-graph gives `C2 → C3 → D1`, so D1 is two edges out. Corrected
+  before it could brief anything, and the correction is now written into the sentence itself so the next reader
+  sees the checked fact rather than the plausible one. Ready set is exactly **B8 and C2**, disjoint files,
+  concurrent. Pause holds; nothing dispatched.
+- 2026-07-27: PAUSE LIFTED by founder ("continue execution"). **B8 and C2 dispatched concurrently** — the run's
+  second genuine parallelism, and the first off a fully clean spine. Both money-flagged, so both get two
+  independent auditors.
+  **PRE-DISPATCH RECONCILIATION CAUGHT THREE PLAN DEFECTS, ALL OF WHICH WOULD HAVE COST A CYCLE:**
+  1. **A routed criterion filed under the wrong task.** The premium-marking obligation (`releasedAtMs` on
+     `PriceableModel`, `nowMs` on the producer's input, because the money core reads no clock) was recorded inside
+     §B5's prose as "Routed to B8" — but B8's implementer reads §B8, not §B5. Design knowledge that lives where the
+     owning task cannot read it is not routed, it is lost. Moved into §B8's acceptance criteria with its
+     E1-blocking status stated, since E1's "premium rows are MARKED, not removed" has nothing to mark with until
+     it lands.
+  2. **A file collision between the two tasks I was about to dispatch together.** C2's added item told it to remove
+     `pickEffortClassifier`'s dead `_pinned` parameter. That removal is two-sided — declaration in
+     `models/domain/smart-model-candidates.ts`, call site in `chat/domain/smart-model-turn.ts` — and half of it does
+     not typecheck. The declaration file is simultaneously **one of B8's four re-export sites**. Dispatching both
+     would have put two implementers in one file. Moved the whole pair to C3, which already owns the call site and
+     runs after both, and stated the reason in both sections so neither task re-adopts it.
+  3. **C2's Files list was wrong on disk in two places** — it named `workflows/engine/settlement.ts` (where
+     `anchorChargeKey` is defined) but not `chat/domain/settlement.ts` (where it is consumed), and omitted
+     `workflows/engine/interpreter.ts` entirely, which is where `finalizeStopped` lives — the exact symbol C2's
+     forward item (2) exists to fix. C2 would have hit BLOCKED mid-task on a file that was already free, C1 having
+     cleared it. **I VERIFIED ALL FIVE PATHS AND SYMBOLS ON DISK BEFORE WRITING THEM,** which is the specific
+     discipline this run has failed at before: earlier I put a relayed, never-checked path into B6's grant and B6
+     had to find the real one.
+     RUN STATE corrected in the same pass: pause block marked lifted, in-flight set updated, not-started count 13 → 11
+     (it had been counting C1, which the same block listed as clean — the same task on both sides of one table).
+- 2026-07-27: **B8 → NEEDS_CONTEXT, zero files changed, and it is RIGHT.** This is a plan defect, not a brief
+  defect, so it goes to the founder rather than back out as a sharpened brief.
+  **I VERIFIED THE LOAD-BEARING CLAIMS MYSELF RATHER THAN RELAYING THEM,** which is the discipline this run has
+  repeatedly failed at: `chooseFrom` and `renderOptions` have **zero** producers in the repo; `BILLING.md:1298-1300`
+  documents both as part of "the six things feature code touches". Consumers reach exactly three walled subpaths —
+  `affordability/estimate` (68 refs), `constants` (10), `smart-model` (4) — i.e. the inbox is overwhelmingly
+  reaching module **internals**, not the barrel's names.
+  **THE CIRCULARITY, STATED PLAINLY:** B8's criterion "every consumer flipped from internal path to barrel"
+  presumes consumers import symbols the barrel carries. They do not — they import walled internals, so "flipping"
+  them means **rewriting them onto `getTurnOptions`**. That rewrite is E1's and G2's work by the ownership table
+  (`:2581-2582`), and **E1 and G2 both depend on B8**. B8 cannot finish without doing the work of the tasks that
+  wait on it. I wrote that criterion; it was never buildable at this graph position.
+  **ONE CORRECTION AGAINST B8's REPORT:** it listed `notices` among three exports that "do not exist anywhere in
+  the repo". `packages/shared/src/affordability/notices.ts` exists and exports `noticeFor`/`noticeText` — that is a
+  rename case, not a missing producer. So the real split is **2 genuinely absent** (`chooseFrom`, `renderOptions`),
+  **2 present under other names** (`notices`→`noticeFor`, `wireFor`→`spec.wire`). B8's conclusion survives the
+  correction; its count did not.
+  Also raised and carried to the founder: set-equality would delete ~103 published names against a ~20-name
+  documented list; walled `DeclaredCeiling`/`NodeStorage` are load-bearing on the **models slice's public barrel**;
+  and the plan contradicts itself on whether a task may edit `BILLING.md`. C2 continues untouched — B8 changed no
+  files, so there is no conflict.
+- 2026-07-27: **FOUNDER RULED ALL THREE ESCALATIONS; §B8 rewritten and B8 RESUMED from its own transcript** rather
+  than respawned, so its 47 tool-calls of measurement are not paid for twice.
+  1. **SPLIT (as recommended).** B8 now lands the real surface; new **§B8b** deletes the 14 subpaths, gated on B8
+     - E1 + G2 and on B8's walled-consumer inventory being empty. The graph changed with it: **G1 moved from B8 to
+       B8b**, because rule 6 asserts the export MAP, which stays false until the entries are gone — an edge that
+       would have quietly broken G1 had I only split the task and not re-read what depended on which half.
+  2. **DOCS: subagents never edit `.md`.** Ruling 6 means the task surfaces the correction and I relay it. The plan
+     had asserted BOTH — read-only `.md` and in-task correction — and B8 was right to refuse to guess. Recorded at
+     ruling 6 as existing practice, not a new rule.
+  3. **WALLED TYPES: unwind now** — the founder took the scope-growing option over recording it as debt.
+     `DeclaredCeiling`/`NodeStorage` must leave the models slice's public barrel with a test pinning their absence.
+     I verified the blast radius myself (`models/domain/{estimate,estimate-run,index}.ts`, `models/index.ts`,
+     `affordability/estimate/run-ceiling.ts`) and confirmed **zero overlap with C2's five files** before granting
+     it, since C2 is live. Named escape hatch: if the only route is making a walled type public, stop — that fixes
+     a wall breach by widening the wall.
+     **I PUSHED BACK ON ONE OF B8's CLAIMS RATHER THAN ACCEPTING THE WHOLE REPORT.** B8 argued the `T`-clamp criterion
+     is unreachable until `getTurnOptions` has a production consumer. The HAZARD needed one; the FIX does not — both
+     implementations exist on disk, so collapsing the clamp order and pinning the saturating-sibling case by amount is
+     a unit-level change available today. Criterion stays in B8, with "name the specific artifact you cannot produce"
+     substituted for the category claim. An implementer being right about four things does not make it right about
+     the fifth.
+     Also moved into B8b: the **totality** pin. B8 measured 123 runtime barrel exports against a ~20-name documented
+     list, so set-equality today would mean deleting ~103 published names while consumers still reach the module
+     through subpaths. Totality is only meaningful once the surface is final and the subpaths are gone.
+- 2026-07-27: **C2 → DONE_WITH_CONCERNS; two independent auditors dispatched (money-flagged).** Nine raises, and I
+  am ruling on them rather than passing them through:
+  **SCOPE — C2's reading ACCEPTED.** It delivered the classifier mechanism and did NOT wire the node into a shipped
+  definition, arguing C3's criteria confirm the split. They do. C2's objective is that the charge bills rather than
+  being absorbed; wiring is C3's "multi-model auto". Not incomplete.
+  **TWO MONEY DEFECTS ROUTED TO C3, both created by wiring and neither previously owned:**
+  (1) the classifier node gets priced **twice** once it is an ordinary `modelCall` — generic `modelCeiling` on top
+  of `estimateSmartModelNode`'s reserve. Safe direction, wrong amount, and an inflated hold refuses sends the user
+  can afford. (2) **the invariant-breaking direction:** `model-call-execution.ts:205,212` forwards the **full run
+  history** while the classifier reserve prices a **truncated 4,000-char context** — the moment the classifier is an
+  ordinary node, billed input can exceed reserved input and `reserve ⊇ bill` breaks. C2 found this reshaping a
+  live-run test and left it unpinned on purpose because wiring is not its scope, which is the correct call.
+  **MY OMISSION, NAMED: `models/domain/estimate-run.ts` was in NEITHER C2's nor C3's Files list**, and C2 was right
+  that C3 cannot satisfy its criteria without it. Granted to C3, with the note that B8 holds the same file for its
+  walled-type unwind and runs first — serialized, not shared.
+  **ONE INTERIM STATE IS A REAL PRODUCT REGRESSION, not a neutral half-build:** until C3 wires the node,
+  `buildSmartModelTurn` classifies nothing and binds the cheapest candidate at the fallback effort. Reserve held,
+  never spent, so no user is overcharged — but routing quality degrades. Recorded as **C3 must not be deferred past
+  the run's close**, and the close phase must verify the wiring landed. Every other interim state this run has been
+  invisible to users; this one is not, and that distinction is worth keeping.
+  **A NEW VACUITY INSTANCE — THE SIXTH — AND IT PRODUCES A FALSE GREEN.** C2 discovered that vitest's
+  `--coverage.include` does **not** accumulate: pass it repeatedly (or use a brace glob) and exactly one file lands
+  in the table while the run still exits 0. A scoped coverage gate over six files can therefore report clean having
+  measured one. Written into §Known Breakage with both consequences stated unequally: a procedure rule for future
+  tasks, but for the thirteen already-clean tasks it means any per-file coverage evidence gathered with stacked
+  includes proved less than it appeared to. I am not silently re-opening those; the founder should know.
+  **ESCALATING TO THE FOUNDER, not resolvable in this task:** the no-persisted-sink stop path. `ARCHITECTURE.md`
+  §Streaming says a user cancel bills consumed usage **even when nothing was persisted**; the data model requires
+  **billed ⟹ content persisted** plus a non-null `ChargeInput.contentItemId`. Those cannot both hold. C2 closed the
+  half it could (a stop WITH a persisted sink now carries the earlier consumed charge, pinned, watched red) and
+  absorbed ~0.1¢ on the other. Auditor B is verifying whether that absorption is bounded or grows with run size —
+  a bounded loss and an unbounded one are different decisions.
+- 2026-07-27: **C2 audit A → FAIL on one Important finding, and it is a genuine user-facing over-bill that C2's own
+  generalization introduced.** `collectCharge` runs BEFORE `commitValue`, so a generation whose provider call
+  succeeded but whose value fails the runtime `zodFor(out)` gate leaves a charge with **no output**; siblings are
+  `onError: 'skip'` so the run still succeeds; that orphan charge now anchors to the run's first persisted item and
+  both **debits the wallet and inflates the displayed cost**, where it was previously absorbed.
+  **THE IMPLEMENTER'S JUSTIFICATION WAS FALSE AS STATED AND THE AUDITOR PROVED IT RATHER THAN DOUBTING IT** — C2
+  wrote "a charge only exists for a generation that SUCCEEDED", and the auditor traced the ordering at
+  `interpreter.ts:648-650 → commitValue :707-713` to show a charge can outlive a failed commit. My brief asked it to
+  "test that argument rather than repeating it"; it did exactly that, and the argument fell.
+  **RULED: BILLABLE ⟺ THE NODE'S VALUE WAS COMMITTED.** Not a design choice — `BILLING.md` §Multi-Model 4 already
+  bills the **successful subset**, and a node whose output failed validation is not in it; a `zodFor(out)` failure is
+  our schema or a malformed model return, i.e. platform fault, absorbed like a cost-circuit trip. I took the
+  auditor's second resolution (mark the charges whose node committed a value) and **rejected its first** (narrow the
+  comments to "the provider call succeeded") — that would make a comment true by describing behaviour we do not
+  want, which is the documentation-as-cover pattern this run has already removed twice. The classifier charge keeps
+  billing because its value IS committed and consumed by the reducer; a validation-failed sibling stops. One rule,
+  no flag.
+  **THE VACUITY CLASS, SEVENTH INSTANCE, AND THIS TIME IN A TEST I ASKED FOR.** My audit brief demanded the
+  equivalence invariant "demonstrated numerically". C2 wrote `classifierReserve = pooled - max` then asserted
+  `max + classifierReserve === pooled` — an identity that cannot fail. The auditor also found the genuine pin
+  already exists untouched at `estimate-run.test.ts:483`, comparing against an independently computed
+  `classifierWorstCaseNanoUsd`. **Demanding a number is not the same as demanding an independent number**, and my
+  brief wording permitted the tautology. Fix: compare the residual to `classifierWorstCaseNanoUsd` or drop it.
+  **FOUR ITEMS ROUTED TO C3** — three properties whose tests C2 deleted as "covered elsewhere" where the auditor
+  verified that claim per property and found it **true for five groups, false for three**: the classifier output cap
+  is applied nowhere (only the estimator references it), the no-history property is unpinned, and **graceful degrade
+  is gone — a classifier `modelCall` without `onError: 'skip'` fails the whole run**. Plus a SECOND under-reserve
+  term: `ctx.customInstructions` is now forwarded to every `modelCall`, which the deleted code excluded from the
+  classifier on purpose, compounding the history under-reserve.
+  Attribution verified independently by the auditor, not accepted: the 7 red tests are the template-html family and
+  that directory is **byte-identical** to `53daba72`. The repo-wide typecheck is currently 10/16 — every error is
+  `PremiumClassificationInput`/`ModelId` branding in files B8 touched **after** C2's report, i.e. B8 mid-flight, no
+  C2-owned file involved. Holding the fix dispatch until auditor B returns so the fixer gets ONE consolidated brief.
+- 2026-07-27: **C2 audit B → FAIL. Both auditors independently caught the tautological pin; they DISAGREED on the
+  over-bill, and I arbitrated on the code rather than on the vote.** A called the outputless charge an Important
+  user-facing over-bill; B examined "outputless charge" and CLEARED it ("the node was priced in the hold; display
+  and debit move by the identical amount").
+  **THE DISAGREEMENT IS NOT REAL — B CLEARED A DIFFERENT SHAPE.** B's shape (d) was a media output under a text
+  charge, or a standalone media charge with no output. A's shape is a sibling whose provider call **succeeded** and
+  whose value then **failed `zodFor(out)` validation**. I verified A's shape on disk myself:
+  `interpreter.ts` calls `this.collectCharge(...)` and only then `return this.commitValue(...)`, and `commitValue`
+  fails on `zodFor(compiledNode.out).safeParse(value)`; `onError: 'skip'` is present at `turn-definition.ts:635`
+  and `:767`. So the charge outlives a failed commit and the run still succeeds. B never tested that shape.
+  **B's counter also answers the wrong question:** "priced in the hold" establishes `reserve ⊇ bill`, not
+  entitlement. Being within the hold does not make an amount owed. Ruling stands.
+  **A CORRECTION I OWE THE FOUNDER, because it changes the size of a decision I put in front of them.** I relayed
+  C2's claim that closing the no-sink stop path needs a billing contract change **plus a migration**. B checked the
+  schema: `usage_records.content_item_id` is already nullable with `ON DELETE SET NULL`, no NOT NULL, no CHECK, and
+  the partial index is `WHERE content_item_id IS NOT NULL`. **No migration is implied.** The cost is the domain
+  contract plus the insert-time invariant. I relayed an implementer's claim without checking the schema — the same
+  failure mode as the unchecked path in B6's grant.
+  **B answered the bounded/unbounded question precisely rather than binarily:** the absorbed amount is bounded and
+  run-size-independent **as priced** (fixed 2,472 input + 2,048 output tokens; ~0.05¢–0.16¢ depending on engine
+  rates), and today nothing is wired so nothing is absorbed at all — but the _absorbed_ figure is actual spend, not
+  reserve, so once C3 wires the classifier it grows with history length until C3 truncates. **Bounded now,
+  bounded-only-if-C3-closes-the-history-item later.**
+  B also independently re-derived the equivalence figures and got pooled 99,999,833,288 n vs single-candidate
+  99,999,822,200 n, delta **11,088 n**, equal to `classifierWorstCaseNanoUsd` exactly — and confirmed MAX-not-Σ
+  (cheap+wide = 100,004,706,100 n > pooled). The invariant is TRUE; only its pin was vacuous.
+  **Both auditors verified C2's coverage figures were NOT taken with the stacked-include trap** — B re-measured with
+  one include and a json-summary reporter and reproduced all six numbers including the single uncovered line.
+  → Fix cycle 1 dispatched by resuming C2 with three validated findings. Also noted for a later owner: a plan
+  identifier ("(D3)") leaks in comments at `builder/smart-model.ts:25` and `chat/domain/smart-model-turn.ts:53` —
+  pre-existing, not C2's edits, but a durable-naming violation and the recurring class this run keeps meeting.
+- 2026-07-27: **C2 fix cycle 1 DONE (impl-report-2.md); cycle 2 dispatched for one validated pin.** All three
+  findings closed with the evidence that distinguishes a fix from a claim:
+  **F1 fixed AT THE SEAM, not with a flag.** `applyValueResult` now commits first and charges only when the value
+  committed; `commitValue` returns `CommitOutcome {committed, step}` because a `NodeStep` genuinely cannot express
+  it — a `skip` node that failed validation also yields `ok`. No `SettlementCharge` field, settlement untouched.
+  Red first: `expected [ 'm0', 'm1' ] to deeply equal [ 'm1' ]`. **Both amounts given:** it would have billed
+  5,000 n against the persisted sibling's item (inflating that item's displayed cost by the same); it now bills
+  nothing and only the committed sibling's 7 n lands.
+  **F2's replacement was proven to have TEETH, which is the part that matters given the finding was vacuity.** On a
+  deliberately doubled reserve: the old identity PASSES, the old `< max` guard PASSES, the new assertion fails
+  `expected 22176n to be 11088n`. And it reproduces auditor B's independent figure exactly (99,999,833,288 −
+  99,999,822,200 = 11,088). It also did the right thing on ownership — `estimate-run.ts` is B8's, so it computed the
+  cross-check in a scratch file, ran it, deleted it.
+  **A DURABLE DESIGN FACT RECORDED FROM C2's OWN DISCLOSURE: accrual stays ABOVE the commit.** Only _billing_ is
+  gated on committing. An uncommitted generation's spend must still accrue toward the cost circuit or a model
+  returning malformed output repeatedly becomes **unbounded platform cost** — every attempt spends real money while
+  contributing nothing to the circuit built to stop that. Written into §C2 as design, and dispatched as **Finding 4**
+  rather than accepted as true-by-construction: C2 has just made billing conditional on the commit, so the next
+  reader sees a gated charge beside an ungated accrual and the natural tidy-up is to move the accrual down too —
+  an edit that reddens nothing today. The pin is what makes absorbed-but-counted a decision instead of an accident.
+  **ATTRIBUTION DONE IN THE RIGHT ORDER, and worth recording as the counter-example to this run's usual failure:**
+  a new red (`chat/routes.integration.test.ts` "round-trips history from a trial send", 403≠201, green 188/188 in
+  isolation) was attributed outward only AFTER grepping its own eight changed test files for
+  `modelCatalog`/`withSuiteCatalogLock`/`seedModelId` and finding zero. Auditor B independently saw a _different_
+  test in that same file fail the same way, so the shifted-percentile-403 class is corroborated across two agents.
+  New environmental data for §Known Breakage's coverage-crash entry: the ENOENT fired with zero FAIL lines while
+  scoped `--coverage` runs shared one `coverage.reportsDirectory` — concurrent coverage runs are a reachable
+  trigger, which the entry had not identified. B8's live shared-package edits also caused four "no tests" collection
+  failures mid-cycle, cured by clearing `apps/api/node_modules/.vite` — the vite pre-bundle invalidation already in
+  §Known Breakage, now with a second confirmed trigger.
+- 2026-07-27: **C2 fix cycle 2 DONE (impl-report-3.md) — the inversion was DEMONSTRATED, not described.** C2 made
+  the exact tidy-up a future reader would make (accrual moved into the committed branch) and ran the suite:
+  `expected { outcome: 'succeeded' } to deeply equal { outcome: 'failed' }`, **1 failed / 93 passed** — the new pin
+  is the ONLY test that reddens, which is the finding's severity in one line. Reverted from a byte-exact backup with
+  `diff` clean. The pin asserts the accrued figure **directly** via the trip's `absorbedNanoUsd: '5000'` (exactly the
+  uncommitted generation's cost; nothing else in the run spent) plus `settlements === []` for the no-bill half.
+  New §Known Breakage line from C2's own self-inflicted hazard: **never mutate source for a red-first demonstration
+  while a background suite is in flight** — its earlier scoped-coverage script was still running during the
+  inversion window and reported the new pin as a spurious FAIL. Same shape as the stood-down-agent entry, but inside
+  one agent.
+- 2026-07-27: **B8 (re-scoped) DONE_WITH_CONCERNS. Two deviations ACCEPTED, one plan gap CLOSED by creating a task,
+  two findings routed to C3, four `BILLING.md` corrections held for the founder.**
+  **DEVIATION 1 ACCEPTED — the premium VERDICT belongs in the core, not in E1.** The criterion asked only for data,
+  but B8 also produced `premium_requires_account`/`premium_requires_credit` as the row's availability reason. Its
+  argument is the deciding one: with data alone `nowMs` is an argument nothing reads, and a boolean field pushes the
+  verdict into E1 — which §What is enforced forbids and which E1's own criteria describe **deleting** a verdict
+  engine, not adding one.
+  **DEVIATION 2 ACCEPTED — `CatalogSnapshot = { models, nowMs }` instead of a fifth positional parameter**, which
+  would trip `max-params`. B8 refused to disable the rule, which is right, and the pairing is meaningful rather than
+  a bag: both premium legs are properties of the pool **as of an instant**. It is a documented-signature change
+  beyond what the criterion named, so it joins the doc-correction list.
+  **MY T-CLAMP PUSHBACK WAS HALF RIGHT, AND B8 ANSWERED IT THE WAY I DEMANDED.** I refused its category claim of
+  "unreachable" and asked it to name a specific artifact instead. It did: a genuine cross-implementation amount
+  comparison needs `turn-definition.ts`'s solver, which is owned by B4→C3→E4 and outside its Files list, and
+  re-deriving that solver inside `packages/shared` to compare against **is the golden-cross-check shape Global
+  Constraint 5 bans**. So it pinned the module side by amount — including the **8,225,200 nano** the other clamp
+  order would have reallocated — and left the comparison to whoever holds `turn-definition.ts` next. Right about the
+  module half, wrong about the comparison half; recorded that way rather than as a win.
+  **NEW TASK B9 CREATED, because the founder-approved split did not actually work without it.** B8 found **22 of the
+  96 remaining walled references are in `apps/api/src/slices/models/**`— the api's own estimator — and NO task owned
+rewriting them.** E1/G2 cover web, lane C covers the chat turn, nothing covered these, so B8b was permanently
+unstartable. B8 did not invent an owner, which was correct. B9 is that owner: re-express the api estimator against
+the barrel with behaviour identity on the amounts. Counts corrected: 28 lettered tasks (26 at approval + B8b + B9),
+13 clean, 13 not started.
+**ROUTED TO C3 — the defect family this run keeps removing, again: TWO FALLBACKS ANSWER ONE QUESTION.** C1's`turn-decision.ts`declares`CLASSIFIER_EFFORT_FALLBACK = 'medium'`while §Reasoning Effort 8 and the registry make
+the fallback **the cheapest presented option** —`off`for a disableable model. B8's`chooseFrom`follows the spec,
+so an unresolvable classifier answer lands on`medium`in one path and`off`in the other. B8 refused to rule on a
+file it does not own, which is right. Also routed:`buildClassifierSystemPrompt` still prompts the **declared**
+effort domain (`Min|Lite|Low|Mid|High|Max`) against a produced `Min|Low|Mid|High`, so §Reasoning Effort 6 is not
+true end-to-end — B8 pinned both sides so it cannot be lost silently.
+**FOUR `BILLING.md`CORRECTIONS SURFACED, NOT APPLIED (the ruling working as intended):** the producer's signature;`PriceableModel.releasedAtMs`; **`notices(decision, options)`and`wireFor(chosen, modelId)`do not exist at those
+documented signatures** — the real producers are`notices(reason)`and`wireFor(chosen, model: PriceableModel)`,
+  because a bare id cannot make a wire fragment; and "the storage-fee function" names nothing in the code, the seam
+  being two rate constants. Auditor B is verifying all four before I relay them.
+  → 4 auditors now in flight: 2 re-auditing C2's fixes (both resumed, so they judge their own findings closed) and
+  2 fresh on B8.
+- 2026-07-27: **C2 re-audit B → PASS, no findings.** C2 is not yet clean: money-flagged, so it needs auditor A's
+  re-audit too.
+  **THE AUDITOR ACCEPTED THAT ITS OWN EARLIER CLEARANCE WAS THE WRONG SHAPE, in its own words** — it had checked a
+  media output under a text charge and reasoned from "priced in the hold, display and debit move together", and it
+  now states that this establishes `reserve ⊇ bill` and display/debit consistency **and not entitlement**. It then
+  went further than agreeing with my ruling: it grounded it independently, on evidence I had not used —
+  **`commitValue` calls `applyNodeFailure` on a `zodFor(out)` rejection, so the engine ALREADY classifies that node
+  as failed**, and billing a node the engine treats as failed contradicts §Multi-Model 4 directly. It also noted the
+  anchor would have attached the amount to a **different model's message**, making the per-item cost unreconcilable —
+  a user-visible consequence neither the finding nor my ruling had named. And it checked for an abuse vector before
+  endorsing the absorb: a user cannot force malformed output on demand, `hold × K` bounds the run either way, and no
+  shipped turn shape lets a user supply a port schema.
+  **IT DISTINGUISHED THE TWO EQUIVALENCE ASSERTIONS RATHER THAN CALLING ONE REDUNDANT** — the cross-path equality
+  catches the estimator's fold diverging from admission's (the C3-routed double-pricing defect), while the literal
+  `11_088n` catches a change in the **shared** formula that would move both sides together, e.g. a storage term
+  folded back in. Non-vacuous on both axes, with three separately-derived figures agreeing on 11,088 n.
+  **IT REPORTED THE LIMIT OF ITS OWN EVIDENCE:** having no edit tools, it could not re-run C2's inversion, so it
+  reports that half as the implementer's claim while verifying directly what it could — that the pin reads
+  `absorbedNanoUsd` straight off the accrual rather than a proxy, and that `INSUFFICIENT_ADMISSION` maps **only** from
+  `cost-circuit-tripped`, so the test cannot pass via a different failure route.
+  **A WARNING THAT CHANGES HOW THE CLOSE PHASE MUST BE READ, now in §Known Breakage.** Across five sweeps it saw
+  **four distinct** failing chat-integration tests, every one green in isolation, with the failing set **moving
+  between identical commands**; a deliberate two-suite pairing reproduced a failure in the _other_ file. Shared
+  `model_catalog` contention. The consequence agents get wrong is not the red but the green: **because the failing set
+  moves, one clean api sweep does not establish that a suite is healthy**, so a single green run must never be cited
+  as evidence a regression is absent. Recorded with the distinguishing test — a real compile-level defect fails in
+  isolation, and none of these do.
+  Repo-wide typecheck is back to **16/16 uncached**: the `trial-eligibility.ts`/`PremiumClassificationInput` break
+  this auditor reported in its first pass is gone, B8 having landed its side. The cross-task red resolved itself
+  exactly as attributed.
+- 2026-07-27: **B8 audit B (money/boundary lens) → PASS with 7 Minors. All 7 will be fixed — severity orders work,
+  it never defers it. Holding the fix dispatch until auditor A returns, because it is still reading these files.**
+  **THE AUDITOR CAUGHT AN ERROR IN THE DOC BATCH BEFORE I RELAYED IT — which is precisely why I held it.** B8's
+  correction 4 said "the storage-fee function names nothing; the seam is two rate constants". Conclusion right,
+  **enumeration wrong**: `turn-arithmetic.ts`'s `inputStorageNanoUsd` and `estimate/pre-adapters.ts`'s
+  `outputStorageRatePerTokenNanoUsd` also compute storage money, and all three are walled. It also added a **fifth**
+  item B8 missed and which indicts the doc against itself: `chooseFrom(options, rawAnswer)` is documented with a bare
+  `string` carrying model-generated text, while §Where the Code Lives makes "no export takes a bare `string`
+  parameter" **structural** and §Data Structures cites that rule as the reason `ModelId` is branded — this task's own
+  first criterion. The batch is now recorded in `plan.md` as verified rather than relayed. Two sessions ago I relayed
+  an implementer's claim unchecked; this is the corrected behaviour paying off.
+  **A MONEY-VISIBLE PERMISSIVE FAILURE, FOUND BY EXECUTION NOT READING:** `nowMs` crosses the barrel unvalidated, and
+  with `nowMs = NaN` a premium row flips from `{available:false, reason:'premium_requires_credit'}` to
+  `{available:true}` with a hold of `44,870,000n`; a far-future instant does the same, while `0` and `-1` fail closed.
+  The finding is the **asymmetry**, not the missing check — the same module fail-fasts on `promptChars` with a
+  `RangeError` and on empty ids via `ModelId.min(1)`. Unreachable today (no production caller), but B9, E1 and C3 all
+  supply this argument next, so it gets fixed now rather than becoming their problem.
+  **THE BRAND ITSELF IS UNPINNED — the eighth vacuity instance, and it is inside the criterion that created it.**
+  `model-id.ts` asserts the brand is "load-bearing rather than stylistic", but rewriting `ModelId` to
+  `type ModelId = string` reddens nothing, because every fixture routes through `modelId()`. The precedent is one line
+  away in the same package: `nano-usd.test.ts:78`'s `@ts-expect-error — unbranded bigint is not assignable to NanoUSD`.
+  **"TRUE CONCLUSION, FALSE STATED MECHANISM" — AGAIN, and the auditor named the pattern.** B8's report justified
+  no-behaviour-change with "only three affordability tests use a non-paid tier, none of whose fixtures classifies
+  premium". False: two property/agreement sweeps cover all four tiers and 2 of 5 rows classify premium in each. The
+  **conclusion** survives — the auditor independently confirmed the sweeps' own tallies (`enabled>100`, `greyed>100`,
+  `rungsChecked>500`) would catch collapse — but the next reader trusts the mechanism, not the conclusion.
+  Three mechanical Minors: a docblock B8 rewrote now states the doc's signature wrongly (a wrong comment about the
+  very sentence the founder is being asked to amend); `CatalogSnapshot` was inserted **between** `AnswerSources`'
+  docblock and `AnswerSources`, and the same insertion error left `boundReason`'s docblock describing `tierAxisBlock`;
+  and `export * from './tiers.js'` is duplicated with a comment claiming premium is "published below" when it is
+  above. No linter catches a duplicate `export *`.
+  **INVENTORY CORROBORATED WITH ONE CORRECTION THAT MATTERS FOR B9:** 29 files / **97** refs / 13 units against B8's
+  29/96/13 — files and units exact, references off by one from C2's concurrent edits. And **B8's "22 in
+  `models/**`" reproduces exactly only when counting PRODUCTION (non-`.test`) files**, which is now written into B9's
+criteria as the reading to use. `./affordability/budget`confirmed at zero external consumers by both agents.
+Affirmed independently:`ModelId`branding is undefeated (no`as ModelId`, no `as unknown as`, no `@ts-expect-error`anywhere; both production branding sites go through the validating`modelId()`); premium rows are **marked, never
+removed** (all six rows survive in `all`, the hold only ever shrinks, `admissible ⊆ affordable`untouched, and the
+reason mapping is right way round —`free`→requires_credit, `trial`/`guest`→requires_account, with "sign up" a true
+action because the welcome credit lands them on `paid`); the walled-type pin is a slice-side **AST** read with
+positive controls and neither barrel uses `export \*`, so it cannot be bypassed; and the `8,225,200n` unspent figure
+I asked to be verified independently reproduces, discriminating the two clamp orders rather than restating one.
+It also confirmed B8's correction of MY plan text: **`NodeStorage`never reached either barrel** —`HEAD`'s domain
+barrel exported only `CallUsage, DeclaredCeiling`. I had written both names into the criterion from a relayed report.
+- 2026-07-27: **B8 audit A (surface lens) → PASS. Both B8 auditors now pass on substance; 5 validated Minors
+  dispatched as fix cycle 1.** Two findings arrived from both auditors independently (the duplicate `export *` with
+  its false directional comment; the bare-`string` public parameter), which is the strongest form of a Minor.
+  **BOTH AUDITORS INDEPENDENTLY CONFIRMED THE JUDGEMENT THE TASK TURNED ON** — that `chooseFrom`/`renderOptions` are
+  genuine compositions and not adapters satisfying a name. A verified it by finding **zero occurrences of either name
+  at `HEAD`**, then checking each carries a decision the dimension-granular pieces cannot make: turn-level totality
+  where the underlying matcher returns `undefined`, rendering the **presented** set rather than the declared domain,
+  and skipping an axis a model does not offer so an unoffered choice cannot reach the provider as an invented
+  parameter. It also confirmed no second matcher was created — `parseDimensionAnswer` delegates to the shared one.
+  **THE `8,225,200n` FIGURE WAS RE-DERIVED FROM FIRST PRINCIPLES, not just reproduced.** A solved the linear cost
+  model itself (`r = 800` nano/output token, fixed `F = 175,000`) and showed `F + 12_281·r = 9,999,600 ≤ 10,000,000 <
+F + 12_282·r`, so `T = 12,281` is the largest count the **unclamped** sum admits, the tight sibling clamps to its
+  own 2,000-token cap, and the remainder is exactly what a clamp-inside-the-sum solve would have reallocated. It
+  ruled the named residual "a correct application of Global Constraint 5, not an evasion".
+  **IT ALSO PROTECTED B8 FROM MIS-ATTRIBUTION IN THE OTHER DIRECTION** — the large diff in `trial-eligibility.ts`
+  (`promptChars`, storage removal) is **B5's**, and B8's portion is only the `releasedAtMs` removal plus a two-line
+  comment; the 32-line `error-codes.ts` change is **B7's** `noticeText` derivation. An auditor that only hunts for
+  the implementer's faults would have charged both to B8.
+  A third Minor from A: B8 **skipped `pnpm lint:unused`** and justified it by citing a §Known Breakage entry that
+  describes a template snapshot test and says nothing about knip. A ran the gate itself — red only for an unrelated
+  unmodified file, `issues: []` — and B8's own hypothesis (`resolveClassifierOutput`/`parseDimensionAnswer` becoming
+  unreachable) did not materialise. Citing a real entry that does not cover your gate is a new species of the
+  attribution error: not "blamed the environment", but "blamed the wrong documented thing".
+- 2026-07-27: **C2 re-audit A → FAIL on one Important; fix cycle 3 dispatched (my escalation cap).** All four prior
+  findings verified genuinely closed.
+  **THE AUDITOR REPRODUCED ALL THREE OF C2's INVERSIONS ITSELF, in memory, via scratchpad vitest configs without
+  modifying the repo** — the accrual inversion (1 failed / 93 passed, only that test reddening), the charge-before-commit
+  inversion (`[ "m0", "m1" ]` vs `[ "m1" ]`), and a doubled classifier reserve (`expected 22176n to be 11088n`). Every
+  one behaved exactly as reported. **It also tried to REFUTE `CommitOutcome`'s necessity and failed, which is worth
+  more than agreeing:** `NodeStep` is a four-variant union shared by every node kind, so carrying "committed" there
+  widens a type used everywhere for a fact only value nodes have; and probing the channel is unsound because the skip
+  path _sets_ `channels.set(node.id, undefined)`, so `has()` is true in both cases. Argument upheld under attack.
+  **THE REMAINING FINDING IS THE REJECTED JUSTIFICATION, STILL IN PRODUCTION CODE.** `settlement.ts:215-216` reads
+  "the charge still settles, against the run's anchor, **because the provider spend happened**" — after the fix,
+  provider spend is exactly what does NOT license a charge. That is the documentation-as-cover sentence the ruling
+  rejected, left in the file the ruling was about, in a task whose cycle-1 report said this file's comments were swept.
+  Five more sites still name deleted mechanisms (auxiliary classifier charges, a classifier anchoring to its answer's
+  item, a classifier that failed and fell back, empty-charges as the all-failed signal). Called Important for one
+  reason I accept: **C3 works next in this exact file family and those comments teach it the two rules this task
+  exists to replace.**
+  **THE AUDITOR OWNED ITS OWN SHARE UNPROMPTED** — four of the six were already stale at its first audit and it
+  missed them; only `:216` is new to cycle 1. A residue both it and the implementer walked past, recorded as such.
+  New §Known Breakage entry from its environmental discipline: **a concurrent agent regenerating `.env.development` /
+  `.env.scripts` voids an in-flight suite run** — it lost a full `test:api` pass to exactly that (35 files / 16 tests
+  red, admin Access config errors, trial 402s) and **declared its own run void rather than reporting either result**.
+  The tell is configuration-shaped failures bursting across unrelated slices at once.
+- 2026-07-27: **Both fixers KILLED mid-cycle by a weekly API quota limit** (B8 fix cycle 1, C2 fix cycle 3), and both
+  RESUMED FROM THEIR OWN TRANSCRIPTS rather than respawned — a fresh spawn would have discarded B8's five-finding
+  working state and C2's verification that all six comment sites are genuinely false against current code, which is
+  the substantive half of its task.
+  **HONEST NOTE ON THE RESTART: the reported reset is Aug 1 and today is 2026-07-27, so the quota has NOT actually
+  reset.** The restart may fail again immediately. I am recording that expectation before the outcome is known rather
+  than after, so the ledger does not read as if I predicted whichever way it goes.
+  Neither kill damaged the tree: both agents were mid-edit on disjoint files, no git operation was involved, and
+  nothing was committed.
+- 2026-07-27: **Both fixers survived the quota kill and completed. B8 fix cycle 1 DONE_WITH_CONCERNS, C2 fix cycle 3
+  DONE. Verifications dispatched.**
+  **B8 CLOSED THE `nowMs` FINDING HALF WAY, DELIBERATELY, AND FLAGGED IT — I ACCEPTED, and the argument is worth
+  keeping.** It added `requireUsableInstant` (safe integer, ≥ `PREMIUM_RECENCY_MS`, `RangeError`, watched red on all
+  seven cases) and **no upper bound**, because a far-future instant is representable, **the module holds no clock to
+  check a caller's against**, and any calendar ceiling is a policy that rejects a correct clock the day it passes. You
+  cannot detect a wrong-but-representable future clock without a clock. It pinned the money-visible half instead — a
+  **price-premium row stays refused a thousand years later**, the price leg reading no clock — and stated the
+  residual precisely: a **recency-only** row does flip under a false future instant, which is a served-value contract
+  for whoever supplies `nowMs`. I asked its auditor to tell me if I accepted too easily rather than assuming I did not.
+  Severity recorded as bounded and **Inferred, not Verified**: no production caller of `getTurnOptions` exists yet, so
+  the residual is prospective; the server-re-validates-with-its-own-instant step is reasoning, not a traced path.
+  **C2's CYCLE 3 DID MORE THAN THE FINDING ASKED, in the direction that matters.** It verified all six sites false
+  before touching them rather than rewording to match my description; **found two MORE sites the finding had not
+  listed**; **left one alone because it is still true** and recorded that so it reads as checked rather than missed;
+  and **caught its own replacement text being unenforced** — it asserted a conjunction no test held — then pinned it.
+  **A STANDING METHOD RULE, now in §Known Breakage, and this is the run's most transferable lesson so far:** sweeping
+  a diff's own hunks finds the comments you EDITED and **structurally cannot find the comments your edits FALSIFIED
+  elsewhere in the file**. That is why this file was swept twice and still carried six false comments. The reliable
+  method is to grep every owned file for the **vocabulary of the removed mechanism** and check each hit — which is
+  exactly how C2 found the two sites two audits had missed. A sweep not done that way is not a sweep.
+  **VERIFICATION RIGOUR REDUCED ON PURPOSE FOR C2, AND STATED RATHER THAN SLID:** cycle 3 is comment-only in
+  production plus one test assertion, so no executable production code moved and the second auditor's money verdict
+  cannot be affected by it. I sent the single auditor that found the class — twice — rather than both, and told it
+  why. B8 keeps two, because its cycle touched a money-visible guard and a type brand.
+  B8's re-raise that "the 22 `apps/api/src/slices/models/**` rows have no owning task" is **stale, not wrong** — B9
+  now owns them; its resumed transcript predates B9 and my fix brief did not cite that section. My omission.
+- 2026-07-27: **C2 verification → PASS. C2 IS CLEAN (14 of 28.)** The auditor closed its own finding by
+  **three independent vocabulary sweeps and two further source inversions**, not by reading the report:
+  sweep #1 over the removed mechanism's words (12 hits, every one corrected text or a true statement about a
+  surviving mechanism); **sweep #2 using vocabulary the implementer did not use** — the strongest form of an
+  independent check, since it cannot be gamed by matching the fixer's own grep; sweep #3 over the **deleted code's
+  own identifiers** across all ten owned files including tests — **zero hits**.
+  **IT ALSO INVERTED THE PRODUCTION RULE TO PROVE THE COMMENTS ARE ENFORCED RATHER THAN ASSERTED:** removing rule 3
+  from `anchorChargeKey` in memory reddened all three of the pins the new comment names (6 failed / 87 passed), and
+  making `badged` require a decision reddened exactly the test carrying the new assertion and only that test. It
+  verified the comment-only claim structurally too — `execution-registry.ts` has **zero** non-comment diff lines and
+  the other two files' non-comment diffs are byte-identical to the state it verified last cycle.
+  **THE CYCLE GOT TWO OPPOSITE JUDGEMENT CALLS RIGHT, and the auditor named why that matters:** six false comments
+  corrected AND one true one refused, with the refusal recorded so the next reader sees it was examined. "Doing only
+  the first would have looked more thorough and been worse." It independently re-derived that the left site is still
+  true — a `fallback` build declares no open axis, so the estimator's classifier reserve term is never reached, and
+  §Effort 10(c) makes that absence durable past C3 — so rewording it would have _introduced_ the error.
+  **IT RECORDED TWO THINGS IT DELIBERATELY DID NOT RAISE**, which is the discipline that keeps a Minor list
+  meaningful: the stale adjective "composite" survives at three sites, but every load-bearing claim in those
+  sentences is true today, none asserts a classifier call or auxiliary charge, and the file is C3's next — so
+  raising them "would be the nitpick, not the catch".
+  **VERIFIED SELF-CORRECTION AT ONE LEVEL ABOVE THE FINDING:** the implementer caught its own replacement text
+  asserting an unpinned conjunction and closed it with a test rather than softening the sentence. The auditor called
+  that "the durable-claim rule applied to its own work, and the reason I could verify the fix by inversion rather
+  than by reading" — which is exactly what the rule was written to produce.
+  Readiness recomputed: **nothing new is ready.** C3 needs B8 as well as C2 (graph edge `B8 → C3`), and B9 needs B8.
+  When B8's verification lands clean, **B9 and C3 both open at once** on disjoint files.
+- 2026-07-27: **B8 verification A → PASS with 2 Minors. One is a correction against THIS LEDGER, and I am making it
+  rather than leaving my own entry standing wrong.**
+  **LEDGER CORRECTION.** My earlier entry recorded B8's restated no-behaviour-change argument as "the correct
+  mechanism: those sweeps' own coverage floors would trip on a wholesale-greying collapse". **That is wrong, and it is
+  the THIRD pass at this one sentence.** The auditor verified every artifact B8 cited is real and that the sweeps do
+  genuinely drive the new gate — over that fixture pool the price threshold is `4800n`, so two models classify premium
+  while `releasedAtMs: 0` keeps the recency leg off, and 3 of 4 drawn tiers lack premium access — **but the floors
+  cannot catch this change's collapse shape**: `greyedCount > 0` moves the _permissive_ way under a collapse (more
+  greying satisfies it), `rowsWithRungs` counts every candidate row irrespective of availability, and
+  `sendable > 20` / `setsDiffer > 5` are satisfied by the ~1/4 of draws at `paid` alone.
+  The defensible statement, which I adopt: **the sweeps exercise the gate at every tier over a pool where rows do
+  classify premium, assert per-entry presence, prefix and subset on every draw, and are green; the gate's own verdicts
+  are pinned separately in `turn-options.premium.test.ts`.** The pattern to name is that a _true conclusion_ has now
+  survived two wrong justifications — first B8's, then mine — because each reader checked that the cited artifacts
+  exist rather than that they discriminate. Existence is not discrimination.
+  **EVIDENCE UPGRADE I ASKED FOR AND GOT:** I had recorded "no production caller exists" as **Inferred**. It is now
+  **Verified** — 57 `getTurnOptions(` call sites repo-wide, **zero** outside test files. The residual is prospective by
+  measurement.
+  **MY ACCEPTANCE OF THE ONE-SIDED GUARD WAS CHECKED AND UPHELD, with a refutation I had not constructed.** I asked
+  whether I accepted too easily. The auditor said no, and showed the only clock-free alternative fails three ways:
+  pool-relative freshness (`nowMs ≤ max(releasedAtMs) + K`) puts the same arbitrary policy in a different coordinate,
+  breaks on a legitimate single-old-model pool (a pinned `Selection` is exactly that), and **would reject correct calls
+  today** because every fixture in the module carries `releasedAtMs: 0`. It named the structural asymmetry: `NaN` and
+  `±Infinity` are **unusable** values recognisable from the value alone; a future instant is a **wrong** value only its
+  server can recognise.
+  **REMAINING FIX (cycle 2, within cap):** `turn-options.premium.test.ts:106-107`'s comment claims "Every case below
+  FAILED PERMISSIVE before the guard". Measured: true for **2 of 7** — `NaN` and `+Infinity` fail permissive, while
+  `-Infinity`, `0`, `-1` and `PREMIUM_RECENCY_MS-1` fail **closed** (every model reads as recent), and `NOW_MS + 0.5`
+  changes no verdict at all. The production docblock is correctly scoped; only the test comment overstates.
+  Also carried forward: the report's "18/18 in that file" and "9 guard pins" tallies are wrong — the file runs **14**
+  tests and this cycle added **10** (7 rejections + 1 deliberate boundary acceptance + 2 clock-immunity pins).
+  **MY PROCESS SLIP: I said B8 would keep two verifiers and then dispatched one.** Auditor B, whose angle was
+  money/callers/amounts and who raised four of the seven Minors, was never sent a verification brief. Dispatching it
+  after this fix cycle rather than pretending one verifier was the plan.
+- 2026-07-27: **B8 fix cycle 2 DONE. Both verifications dispatched — including the one I owed auditor B.**
+  **THE IMPLEMENTER MEASURED THE DIRECTION TABLE ITSELF RATHER THAN COPYING THE AUDIT'S**, which is the right instinct
+  for a finding that was _about_ an unmeasured claim: it bypassed the guard behind a probe flag, evaluated the file's
+  own fixture once per case, restored `turn-options.ts` from a pre-edit copy, and re-verified by grep that no probe
+  branch survives. 2 permissive / 4 closed / 1 no-change, matching independently.
+  **THE NEW COMMENT QUANTIFIES NOTHING OVER THE CASE LIST** and names the mechanism per direction (recency test false
+  vs. the window reaching before the epoch) instead of restating a count a later edit could falsify — the correct
+  response to a finding about overstatement is not a smaller overstatement.
+  **NEW STANDING RULE, and it is this run's sharpest self-diagnosis: EXISTENCE OF A CITED ARTIFACT IS NOT
+  DISCRIMINATION BY IT.** For any "this test would have caught X", the check is whether **X moves that assertion the
+  failing way** — not that the test exists, runs, or has real assertions. It is the vacuity test asked about a test's
+  claimed _reach_ rather than about a test's own assertion. The worked example is now permanent: coverage floors that
+  genuinely exist and run, where `greyedCount > 0` moves the **permissive** way under the very collapse it was cited
+  against. **This shape survived two wrong justifications and one wrong ledger entry of mine**, because every reader
+  checked that the artifacts existed. A conclusion can be true while every stated reason for believing it is
+  worthless, and that is the most expensive shape in this run — because it looks like evidence.
+  Tallies now correct and the discrepancy explained: 18 was a combined premium + `model-id` run; the premium file runs
+  **14** (original 4 + 10 added). B8 withdrew its §B9 raise as stale itself, and added the right caveat — the 22 rows
+  still need re-deriving at B8b time, because C2 moved two of them while B8 ran.
+  Disclosed and accepted: no repo typecheck this cycle, the change being comment-only inside a test file. Stated
+  rather than silently skipped, which is the standard §Known Breakage asks for.
+- 2026-07-27: **B8 verification A → PASS, no findings; "B8 is clean from my lens."** Not yet clean overall — the money
+  lens (auditor B) is still out, and that is the verification I owed it.
+  **THE RESTORATION WAS VERIFIED BEHAVIOURALLY, NOT BY READING THE DIFF** — the fix required temporarily defeating the
+  guard to measure it, so "I put it back" is exactly the claim that needs independent proof. The auditor ran all seven
+  bad instants through the **public producer**: every one throws `RangeError`, the boundary instant is accepted, and a
+  correct instant still classifies `premium_requires_credit`. A surviving bypass would have shown as a `NO THROW`
+  line. It also grepped for probe residue (`probe|bypass|__guard|SKIP_GUARD`) across the module, plus non-`.ts` files
+  and the untracked list — the only hit is the word "bypassed" inside the new comment.
+  **IT JUDGED THE NEW COMMENT AGAINST THE STANDARD ITS OWN FINDING SET, on three axes** rather than just checking the
+  universal quantifier was gone: nothing quantified that was not measured; the mechanism named **per direction**
+  (`releasedAtMs > nowMs - PREMIUM_RECENCY_MS` made false vs. the window reaching before the epoch) rather than the
+  observed verdict; and no count in the prose that a later edit could falsify. It then noted two things the new
+  wording gets right that earlier ones did not: **`-Infinity` is grouped with the sub-window arm**, which is
+  mechanically correct because its comparison is well-defined and true so it over-refuses; and the fractional case is
+  described as refused **for being unrepresentable rather than for what it decides**, which is the only accurate
+  reading since it classifies identically to a correct clock.
+  **AGREEMENT ON THE AWKWARD CASES IS THE EVIDENCE, and the auditor said so explicitly:** its cycle-3 probe table and
+  the implementer's independently produced table match case for case, **including the two cases where the earlier prose
+  and the earlier table contradicted each other**. Two independently produced tables agreeing where the original
+  account was self-inconsistent is worth more than either table alone.
+  It also checked that the new §Known Breakage rule is recorded accurately — right per-floor mechanisms, and including
+  that the pattern survived **one wrong ledger entry of mine**, which it called "the part that makes it a rule rather
+  than a note about one implementer."
+- 2026-07-27: **B8 verification B → PASS, "B8 is clean from this lens", with one final Minor. Micro-fix dispatched;
+  B8 is one comment from clean.**
+  **IT RE-RAN ITS OWN EXECUTION-FOUND DEFECT RATHER THAN READING THE FIX.** The `NaN` flip it originally discovered
+  (premium row → `{available:true}`, hold `44_870_000n`) now throws `RangeError` across **all 14 combinations** of
+  seven bad instants × two selections. The boundary instant is accepted and correctly refused.
+  **IT GAVE THE HONEST ANSWER ON ITS OWN FINDING RATHER THAN THE FLATTERING ONE:** "the compensating pin does **not**
+  cover the case I found; it covers the adjacent leg." What it reported was a _recency-only_ row flipping, and that
+  still flips under a false future instant — its probe reproduces it. It closed the finding anyway, on three grounds it
+  verified: the surrogate ceiling is **testably worse** (every `PriceableModel` fixture in the package carries
+  `releasedAtMs: 0`, so `nowMs ≤ max(releasedAtMs) + K` would refuse the existing corpus wholesale); exposure is
+  bounded by fact (zero production callers, and every `nowMs` in production already comes from `Date.now()` at a route
+  edge); and the residual is correctly typed as a caller obligation. **Declining the ceiling is now demonstrable
+  rather than arguable** — it would have reddened the package's own tests.
+  **AND IT REFUSED TO LET THE ROUTING BE A WISH.** At its request the residual now has a **grep-able form** in §B8:
+  the first production caller derives `nowMs` at the same boundary that resolves the catalog, from the server's own
+  clock, and **`nowMs` is never sourced from a Zod-parsed request shape** — that last clause is the actual test, since
+  a traceable path back to a request field breaks the contract regardless of any comment. Plus an _Inferred_ note
+  routed to E1: pass a **session-stable** instant, not a per-render `Date.now()`, because it churns the memo key of a
+  set `turn-types.ts` documents as keystroke-stable.
+  **IT PROVED "NO AMOUNT MOVED" BY REPRODUCTION, NOT BY READING THE DIFF** — eight figures bit-identical to its
+  pre-fix measurements (threshold `1500n`; holds `340_187_700n` paid / `64_777_700n` free; `365_115_000n`;
+  `339_510_000n`; `25_665_000n` ×2; `340_194_900n`; `358_960_000n`), and the four shared-ceiling pins textually
+  unchanged. And it verified the guard **cannot refuse a legitimate call**: floor ~1970-07-01, every `setSystemTime`
+  value in the repo ≥ 2024, every production `nowMs` from `Date.now()` at a route edge with file:line.
+  **THE 18-vs-14 CONFUSION IS FULLY RESOLVED AND ALL THREE AGENTS NOW AGREE:** 14 executed tests from 8 declarations
+  in the premium file (4 original + 10 added), and **18 is the premium + `model-id` pair measured together** — which is
+  exactly what report 3 had quoted without saying so. A tally wrong twice turned out to be one true number attached to
+  the wrong scope.
+  **REMAINING [Minor]: the premium test file's HEADER was falsified by cycle 3's own additions and cycle 4 did not
+  reach it** — it claims one injected `nowMs` (there are seven) and a deliberately single-model catalog (the last
+  describe uses four, and says so inline). **This is the standing rule predicting itself within hours of being
+  written:** a sweep that re-reads the hunk finds the comment you edited and structurally cannot find the comment your
+  edit falsified elsewhere in the file. Finding 6 was inside the added block; this is the header of the same file. The
+  fix brief asks for the rule's _method_ — a vocabulary sweep of the whole file — not just the two sentences named.
+- 2026-07-27: **B8 final fix DONE, and the vocabulary method EARNED ITSELF: the sweep found a THIRD site that no
+  auditor and no orchestrator had named.** `turn-options.premium.test.ts:149-151` claimed a price-premium row "stays
+  refused **however wrong the clock is**" — a universal quantifier over clocks resting on two measured draws, the same
+  overstatement class as Findings 6 and 7. Restated to the mechanism (`isPremiumModel` takes no clock into its price
+  comparison, so the row is refused at whatever instant the guard admits) and checkable by reading `premium.ts`.
+  **THE IMPLEMENTER'S OWN DIAGNOSTIC IS THE BEST ARTICULATION THE RUN HAS PRODUCED OF WHY SWEEPS FAIL:** the cycle-4
+  comment sat _inside_ the block it added, so re-reading its hunks reached it; the header sat **fourteen lines above**
+  and was falsified by the same addition, which **no number of hunk re-reads can reach**. The vocabulary method keys on
+  **what changed**, not on the diff's geometry — "I added instants" ⇒ grep instant-counting words wherever they sit.
+  **A SIBLING RULE, now recorded: do not replace an overstatement with a smaller one.** Both corrections dropped the
+  falsifiable quantity rather than shrinking it — "driven from one injected `nowMs`" became "every instant here is
+  injected", which is what the file _guarantees_ and cannot be falsified by a later test addition. A count in prose is
+  a sync contract with the code beside it, which is the ban this codebase already carries for constants.
+  It reported per-mechanism sweep counts over **six** changed mechanisms and made "nothing else found" a claim **on the
+  sweep rather than on a re-read of the diff** — which is the assertion I asked the verifier to test hardest, because it
+  closes the class rather than an instance.
+  Verification sent to the auditor that found Finding 7. Rigour reduced deliberately and stated: prose-only inside one
+  test file, no declaration moved, so the surface lens cannot be affected.
+- 2026-07-27: **B8 verification B → PASS. B8 IS CLEAN (15 of 28), after five fix cycles.** C3 and E1 dispatched.
+  **THE AUDITOR TESTED THE CLAIM THAT CLOSES THE CLASS, not the instance** — it swept every comment block **and every
+  test name** in the file and traced each claim to its mechanism, then independently checked the module-level half of
+  "nothing else found" (`resolveFundingDecision`/`noticeFor` → 0 hits; "fifth argument" prose → 0; every release-date
+  claim current). It also stated what it did NOT audit — prose in files B8 never touched — rather than letting the
+  clean verdict imply more reach than it had.
+  **IT APPLIED MY OWN DISTINCTION HONESTLY AND SPLIT THE VERDICT, which is better than passing both claims:**
+  "every instant here is injected" is **structurally** unfalsifiable (`CatalogSnapshot.nowMs` is required, so a new
+  test cannot call the producer without supplying one) and its companion clause is gated by a purity test's structural
+  `\bDate\b` scan. But "the window and guard blocks use a single-model pool" is only **currently accurate and narrowly
+  scoped** — and it argued that is the right trade rather than a defect, decisively: the falsifying edit would sit
+  _inside the block the sentence names_, which is exactly the geometry where re-reading a hunk DOES find it. That is
+  the inverse of the geometry that produced Findings 6 and 7. **One claim clears the strong bar, one clears the
+  appropriate weaker bar, and it said which is which.**
+  It also named a seam it could have hidden: a future test could pass `nowMs: Date.now()` and still be "injected", so
+  clause 1 stays true while that test stops being literal-reproducible. The sentence attributes reproducibility to the
+  producer's inputs rather than the file, so it survives — "but that is the seam, and it is the narrowest available".
+  **THE THIRD SITE'S REPAIR WAS JUDGED ON SHAPE, NOT WORDING:** "no clock in the price comparison" is a universal
+  **licensed by a mechanism** and additionally gated (adding a clock term reddens the thousand-years test), where
+  "however wrong the clock is" was a universal resting on two draws. It verified the mechanism needs one fact the
+  sentence does not name — that the threshold's own producer is clock-free too — and checked it.
+  **ACROSS FIVE CYCLES NOTHING REPRICED**, verified by reproduction each time: every phase-A amount bit-identical, the
+  four shared-ceiling pins untouched, and the test arithmetic closing at every step (3170 → +10 guard/clock → +1 brand
+  → 3181, flat through cycles 4 and 5).
+  **MY GRANTS COLLIDED AND I CAUGHT IT AT DISPATCH: B9 vs C3.** B9 owns `apps/api/src/slices/models/**`; C3 was
+  granted `models/domain/{smart-model-candidates,estimate-run}.ts` inside that tree. **Serialised, not split** —
+  splitting hands one file to two owners, which is the rule this plan exists to keep. **C3 goes first** because it
+  carries the run's only user-visible interim regression, two `reserve ⊇ bill` defects that bind on wiring, and it is
+  the original blocker the run was opened to remove; B9 is cleanup toward a wall that waits on E1 and G2 anyway. B9's
+  behaviour-identity criterion now applies to the tree **as C3 leaves it**, and C3's brief tells it someone
+  re-expresses those files next against the amounts it leaves behind.
+  **E1 became ready the moment B8 cleared** (`B5, B6, B8 → E1`, all clean) and is disjoint from C3 — `apps/web` vs
+  `apps/api` — so it went out concurrently. Its brief carries the two files deliberately removed from its glob
+  (G2's media-cost hook, E4's modality panel), the warning that the verdict engine it must delete is a **hook** so
+  "no component recomputes this" is too narrow to close it, and B8's `nowMs` session-stability clause addressed to it
+  by name.
+- 2026-07-27: **BOTH C3 AND E1 RETURNED NEEDS_CONTEXT WITH ZERO FILES CHANGED, and both are blocked on defects in MY
+  plan rather than on their own work.** Two tasks in a row stopping at the first test is a signal about the planning,
+  not the implementers — recorded as such.
+  **C3's BLOCKER IS A DESIGN GAP IN THE LANDED ENVELOPE: a classifier `modelCall` cannot be RECOGNISED at execution.**
+  No field on the `modelCall` variant marks it, and `params` is **structurally impossible rather than merely
+  unclean** — `language-adapter.ts` parses call parameters with `z.strictObject` and throws on any unknown key. Without
+  recognition the classifier call carries the base chat system prompt, the full history and the custom instructions,
+  and returns an ordinary answer, so `decideTurn` falls back **every turn**: a paid call that decides nothing, which
+  C3 rightly calls **worse than the interim regression it was sent to remove**. Four things depend on recognition —
+  the classifier prompt, the 4,000-char truncation, excluding custom instructions, and excluding output storage from
+  the reserve.
+  **I ROUTED IT TO AN ANALYST RATHER THAN RULING FROM A HYPOTHESIS,** because my recurring failure this run is
+  asserting mechanisms I have not derived. The hypothesis I gave it to test is a precedent from this very run: C1
+  established that streaming suppression is **a graph property, not a flag**, so "the `modelCall` whose output feeds a
+  `turnDecision` reducer's decision port" may be derivable the same way. The open question is whether that derivation
+  is reachable at **all four** sites — in particular the estimator, which runs at **admission, before execution**, and
+  may not have the graph structure the interpreter has.
+  **C3 CLEARED BOTH OF THE TRIGGERS I NAMED rather than using them as an exit:** `onError: 'skip'` is expressible
+  (`decideTurn`'s second input is already `optionalTag(textTag())`), and truncate-vs-reprice is settled **by the spec**
+  in favour of truncate, for history and custom instructions alike. It also refused to ship the one in-grant item (the
+  dead `_pinned`) as this task's delivery, which is the right call — a task's output is not a consolation edit.
+  **TWO MORE PLAN ERRORS OF MINE, both found by C3 and corrected in place:** the refusal-mapping grant named
+  `chat/routes.ts` when all three admission reasons collapse onto one wire code in `chat/domain/runtime.ts`, and
+  deleting `send_cannot_start` also reaches `shared/src/error-codes.ts` and `affordability/notices.ts`. And a **scope
+  correction that changes a criterion**: the double-pricing binds **only** where a `smartModel` node coexists with a
+  turn-level classifier; a pure multi-model auto turn has no `smartModel` node at all, so the pin is **two figures,
+  not one**.
+  **E1's BLOCKER 1 IS THE SEVERE ONE, AND IT IS A COMPLETENESS DEFECT IN THE PLAN: a FREE payer has no served funding
+  number at all.** `/billing/spendable` serves the purchased wallet — the free-tier daily allowance "rides the budgets
+  endpoint, never this number" — so a free payer's snapshot is `{spendable:'0', held:'0', tier:'free'}`. E1 **ran
+  `getTurnOptions` on exactly that** and got `sendable:false`, `refusal:insufficient_funds`, every row unavailable;
+  the same call at `tier:'paid'` with funds returns `sendable:true`. **Driving greying from `affordable` would grey
+  every model and refuse every send for every free user.** The only client-reachable allowance figure is
+  `/billing/balance`, which E1's own criterion and §Affordability 4 both forbid as an affordability input. E1's
+  diagnosis of the root cause is exact and damning: **`plan.md` contains ZERO occurrences of "allowance" or "free
+  tier".** A whole user tier was missing from the plan.
+  E1 also raised: `evaluateTurn` refuses **every non-text modality** (`modality_not_priceable`), so criterion 1 read
+  literally makes every media turn unsendable while criterion 2 deletes the pricing builder the media arm still needs,
+  and **no task owns `turn-core.ts` for media** (E4's list excludes it); and the remaining trial message count reaches
+  the client **nowhere** — serving it is `apps/api` + shared schema + typed client, outside its grant.
+  **Brief correction against ME, cleared not blocking:** I told E1 that user-facing copy's single home is
+  `ERROR_MESSAGES`. It is `NOTICE_COPY`/`noticeText` in `affordability/notices.ts`, from which `ERROR_MESSAGES`
+  derives. E1 checked, found `NOTICE_COPY` is a total `Record<NoticeReason, …>` with `REFUSAL_CODES ⊂ NOTICE_REASONS`,
+  and reported that my trigger therefore does not fire — rather than following my wrong pointer.
+  Both agents left the tree untouched and E1 explicitly restored its probe file, verified against the 14 pre-existing
+  modifications it started with.
+- 2026-07-27: **FOUNDER RULED OPTION A — recognition is DERIVED. C3 re-dispatched unblocked; F3 dispatched.**
+  The design is now written into §C3 as seven numbered items plus four required pins, each of which the analyst
+  verified is **red today**. Summary: one shared predicate in `packages/shared/src/workflow.ts` (a `modelCall` is the
+  classifier iff a `decideTurn` `fanIn` names it at `ins[1]`); `history` and `customInstructions` **withheld** in the
+  interpreter exactly as C1 withholds `emit`; storage excluded by the **class** rule (consumed ⇒ never persisted ⇒ no
+  output-storage reserve) rather than a classifier exception; the prompt rendered at the route onto the existing text
+  input channel, where the admissible narrowing is actually available.
+  **SECOND FOUNDER RULING: SUPPRESS the base system prompt on classifier calls** rather than widening the reserve to
+  cover it. That closes the fifth under-reserve term (~+2.3 KB against a 4,000-char priced budget, ~55% input-leg
+  overshoot) by **lowering real spend as well as making the reserve honest** — the more expensive option in interface
+  terms, since it puts a field on `InferenceRequest` and touches the ModelProvider seam, and the founder took it
+  anyway. Grant extended to `shared/src/inference.ts` and `models/adapters/language-adapter.ts`.
+  **DELIBERATE OVER-RESERVE, RECORDED SO IT IS NOT LATER "FIXED":** the estimator reads definitions, never input
+  values, so it cannot see the route-rendered narrowed list and keeps pricing the **declared** effort domain. The hold
+  is knowingly larger than the narrowed prompt needs. Declaring the option list on the node was the rejected option;
+  a future reader who "notices" the over-reserve must not undo this.
+  **I RULED THE §C1 EXECUTION-REGISTRY CLAUSE MYSELF, because it was my text blocking my own ruling.** That clause
+  makes needing `engine/execution-registry.ts` a NEEDS*CONTEXT stop on the grounds that "the derivation was abandoned
+  for a declared flag". It was written about a **declared flag**; a **derived** fact travelling the same route is the
+  opposite case, and read literally the clause forbids precisely the shape this run prefers. Scoped it to declared
+  flags explicitly so C3 does not stop at the same wall twice.
+  **THE ANALYST REFUTED MY HYPOTHESIS, NOT JUST C3's.** I told it the estimator probably could not see graph structure
+  because it runs at admission before execution — that was the fact most likely to sink the derived option, and it is
+  **false**: `createEstimateRun` receives the whole `WorkflowDefinition` and iterates `definition.nodes` including
+  `fanIn` reducers and their `ins`. It also refuted C3's claim that the prompt producer must be a reducer: workflow
+  inputs are a first-class run-start channel and the route already holds the history **and** the funding decision.
+  Both refutations widened the option set rather than narrowing it.
+  **F3 created and dispatched — the third task this run created because work had no owner** (after B8b and B9), and
+  the only one created from a \_completeness* defect rather than a scoping one. Task count is now 29.
+- 2026-07-27: **C3 cycle 2 DONE_WITH_CONCERNS — the Option A foundation is LANDED, the wiring is not, and the stop was
+  correct.** Built: the derived predicate, both withholdings, preamble suppression, the storage class rule, and the
+  double-pricing fix. Not built: the multi-model `auto` definition and the route rendering that feeds it.
+  **THE BOUNDARY IT CHOSE IS THE RIGHT ONE, in its own words: a definition whose classifier input no route supplies
+  "fails every run at validation, which is worse than the regression."** It also said plainly that nothing is blocked
+  — the remainder is simply unbuilt — rather than dressing an incomplete delivery as a blocker. Pins 1 and 2 green;
+  **pins 3 and 4 remain red because both need the definition to exist**, so there is nothing useful to audit yet and I
+  did not dispatch one. Continuing the same task rather than splitting: the wiring _is_ the objective, and splitting
+  would let the foundation be audited against criteria it structurally cannot satisfy.
+  **A MEASUREMENT CORRECTING ME: the base preamble is 1,739 chars, not "~2.6 KB", against a real priced basis of
+  4,929 chars, not 4,000 — so the unpriced overshoot was 35.3%, not ~55%.** I carried the analyst's _estimate_ into
+  the plan and presented it as fact; C3 measured it. Direction and ruling unaffected, figure high by about a third.
+  Corrected in place. This is the third time this run a number of mine has been an estimate wearing the clothes of a
+  measurement.
+  **DOUBLE-PRICING CLOSED WITH BOTH FIGURES, AND THEY ARE ASSERTED IN ONE TEST SO THEY CANNOT DRIFT APART** —
+  coexisting shape 39,142,500n → **12,500,000n**; pure shape **39,142,500n unchanged**. That is the two-figure pin
+  C3's own scope correction established was needed, delivered against its own correction.
+  **THE VOCABULARY SWEEP EARNED ITSELF AGAIN: five falsified comments, FOUR of them outside the diff's hunks** — two
+  in `execution-registry.ts`, two in `estimate-run.ts` (one false _before_ this change), one in `turn-definition.ts`.
+  Every one rewritten to state a guarantee rather than a quantity. Fourth consecutive task where the method found what
+  a hunk re-read structurally cannot.
+  **A DISCLOSED GRANT USE THAT IS THE OPPOSITE OF SCOPE CREEP:** it edited `registry-fakes.ts` so the shared fake
+  registers the real `decideTurn` name — without which the derivation would have been tested against a graph
+  production never emits. That is a vacuous pin caught before it was written, by the implementer, unprompted.
+  **RULED 4 in C3's favour: PUBLISH the two classifier helpers through the workflows barrel** rather than moving them
+  into `chat`. They are engine-side prompt machinery consumed by a slice, which is what a barrel is for; moving them
+  would put workflow prompt assembly inside the chat domain. Two grants added: `workflow-capabilities.ts` (one line,
+  to import `TURN_DECISION_REDUCER` instead of re-declaring the literal — a mirrored constant it correctly refused to
+  fix in a file it did not own) and the `compileMultiModelTurn` resolver→`listDescriptors` path it identified.
+- 2026-07-27: **F3 delivered the free-tier fix and CORRECTED THE PREMISE I HAD RELAYED TO THE FOUNDER AS FACT.** Two
+  independent auditors dispatched (money-flagged).
+  **THE CORRECTION, stated plainly because a decision was taken on my version.** I told the founder — relaying E1 —
+  that a free payer's snapshot is `{spendable:'0'}` and that driving greying from it would **grey every model and
+  refuse every send for every free user**. F3 verified against the running endpoint: it served **500,000,000n, the
+  PAID $0.50 cushion, at `tier:'free'`**, against a gate of **50,000,000n**. The real defect is a **10×
+  OVERSTATEMENT in the UNSAFE direction** — the client is offered sends admission then refuses. **The opposite
+  direction from what I reported.** E1's `'0'` came from somewhere other than this endpoint.
+  The task was still right to create and the fix is unchanged, because a served number that disagrees with the gate by
+  10× is a defect either way and offering-what-cannot-be-afforded is the worse half. But the reasoning was wrong and
+  it was mine. **The sharpest part: `BILLING.md` §Funding ALREADY specified that a free payer's effective balance is
+  the allowance. The doc was right and the code was not** — I invented a premise instead of checking the spec that
+  already answered it, in a run whose whole discipline is that the spec is the authority.
+  **TWO OF MY F3 CRITERIA WERE UNSATISFIABLE AS WRITTEN, both corrected:** "pinned at all four tiers" is impossible —
+  `/billing/spendable` is billing-token-classed and `route-class.ts` refuses trial-session principals on **every**
+  class by design, so trial and guest have no served figure to pin; narrowed to paid and free, pinned two-sidedly
+  against `admitRun`. And **the trial-count criterion is unservable here at all** — the counters are chat-owned,
+  keyed by trial token + hashed IP. **Criterion withdrawn.**
+  **ORCHESTRATOR SCOPE CALL, flagged as mine and reversible: E1's dependency on the trial count is SEVERED.** E1's
+  objective is rendering the produced sets; a remaining-trial-message count is not one of them. If a surface must show
+  one, that is a separate task with a named owner. E1 is unblocked by F3 without it.
+  **F3 RE-POINTED AN EXISTING PINNED EXPECTATION and disclosed it** — "serves a negative spendable for an overdrawn
+  wallet" now serves the allowance, because a balance ≤ 0 **is** free-tier and its turn is gated on the allowance; the
+  test was re-pointed to holds-exceeding-cushion so no-clamping stays pinned on a **reachable** state. Routed to the
+  auditors to judge whether a real behaviour was quietly dropped rather than accepted on the implementer's account.
+  **AN OUT-OF-SCOPE ONE-IMPLEMENTATION FINDING IT COULD NOT CLOSE, correctly:** the tier boundary exists **twice** —
+  `getUserTier`'s `balance > 0` and a literal `purchased.balanceNanoUsd > 0n` in `chat/domain/turn-context.ts` that
+  picks the payer wallet. It cannot be collapsed from billing, because **billing may not import chat**. Recorded as a
+  hidden-coupling comment and routed to an auditor with the sharper question: can the two actually disagree? A
+  duplication that cannot drift is a different finding from one that can.
+  Also open and inherited by E1: criterion 3's client half — `use-user-tier-info.ts` / `use-tier-info.ts` still take
+  `freeAllowanceNanoUsd` from `/billing/balance` beside the spendable read.
+- 2026-07-27: **F3 audit B → PASS, no findings against the task.** Awaiting auditor A before F3 is clean.
+  **IT CAUGHT A TRAP I SET BY MAKING A SCOPE CALL HALFWAY.** I severed E1's _dependency_ on the trial count when F3
+  proved it unservable — and left **E1's own criterion** standing at `plan.md:2701` ("the remaining trial message
+  count reaches the client and renders before it binds"). The auditor grepped repo-wide: **nothing serves that count,
+  zero hits.** E1 would have inherited an unsatisfiable criterion. **Severing a dependency without striking the
+  criterion behind it is not a scope reduction, it is a trap** — struck now.
+  **IT ALSO FOUND THE THIRD INSTANCE THIS RUN OF A CRITERION WHOSE FILE NOBODY OWNS:** dropping `freeAllowanceNanoUsd`
+  reaches `packages/shared/src/affordability/billing/client-billing.ts`, which sat in **neither** E1's nor F3's Files
+  list — so E1 could not have satisfied its own "no funding from the balance endpoint" criterion. Granted to E1.
+  **THE DUPLICATION ANSWER I ASKED FOR WAS SHARPER THAN THE QUESTION.** I asked whether the two tier-boundary sites
+  can disagree. Answer: **no** — same operand, operator and literal, both reading DB truth, so no input separates
+  them; the only divergence is temporal, which is the accepted staleness contract. It is **edit-drift duplication
+  only**, real the moment one side gains a term. **A duplication that cannot drift on an input is a different finding
+  from one that can, and only the second is urgent** — that distinction is now in the plan. It added the consequence
+  I had not asked for: F3's coupling comment is defensible only while both sites stand, so whoever collapses them
+  deletes it.
+  **AND IT FOUND A SECOND DUPLICATION WITH A LIVE CONSEQUENCE:** "remaining allowance today" is derived twice, and F3
+  correctly took the admission-side one while `/billing/balance` keeps serving the other — **that second derivation is
+  the server-side root of the very client-side composition E1 must remove.**
+  **A NON-VACUITY CONTROL ON ITS OWN COVERAGE GATE, unprompted:** the empty coverage table looked like the vacuous
+  gate §Known Breakage warns about, so it ran the same command against a different file, watched it print a row and
+  **fail** the threshold, and thereby proved the gate can fail and the empty table was the reporter hiding a
+  100%-covered file. That is the discipline this run has been building applied by an auditor to its own evidence.
+  It contradicted two of F3's gate claims as **stale rather than wrong** (1 failing api file → 5; typecheck 16/16 → one
+  TS2339 in `chat/domain/turn-definition.ts`), attributed every delta to C3's in-flight work plus vite-optimizer
+  churn, and gated on its own runs. One imprecision corrected: a trial principal gets **403**, not 401.
+- 2026-07-27: **F3 audit A → PASS, no findings. F3 IS CLEAN (16 of 29).** E1 re-dispatched, unblocked.
+  **THE CORRECTED PREMISE WAS VERIFIED INDEPENDENTLY AND ITS CAUSE DERIVED, not just its value.** Auditor A traced why
+  the endpoint served the paid cushion at `tier:'free'`: `spendableFor` keys the cushion off the wallet **type**
+  (`purchased` → `paid` → `0 + 50¢`) while the snapshot labelled the tier off the **balance**
+  (`tierForBalance(0n)` → `free`). **The number and its label described different wallets.** It corroborated this
+  against a pre-existing pin at `HEAD` that asserted exactly the paid-cushion figure for a caller whose tier is free —
+  so the defect was pinned into the suite, not merely present. My `{spendable:'0'}` story is refuted twice over.
+  **THE FIX IS STRUCTURAL, WHICH IS WHY BOTH AUDITORS SCORED IT SO HIGH:** one `getUserTier` derivation now both
+  selects the arm and labels the tier, so **the class of bug that produced `500,000,000n` beside `tier:'free'` is
+  unrepresentable**, not merely absent. And the free figure is _reproduced from_ `resolveBudgetScopes` rather than
+  recomputed, so it cannot drift from the gate **by construction rather than by agreement** — the correct reading of
+  One Implementation, Shared, and the reason the pins are behavioural instead of the golden cross-check Constraint 5
+  bans.
+  **A WARNING I AM RECORDING RATHER THAN LETTING A PASS IMPLY OTHERWISE, in the auditor's words: "the orchestrator
+  should not read PASS as 'the composition is gone.'"** Criterion 3 is **half**-discharged, by ownership. Today
+  `use-budget-calculation.ts` still branches `tier === 'free' → freeAllowanceNanoUsd` from `/billing/balance`, and
+  that figure is **hold-blind** — so the composer can still offer a send admission refuses while one of that user's
+  own runs holds. Server half done, client half is E1's, and E1's brief now carries it as the live defect to pin.
+  **ONE UNPINNED LINK, INHERENT TO THE SLICE BOUNDARY AND HONESTLY NAMED:** billing can prove the allowance scopes
+  gate the way the served figure says, but **nothing in billing can pin that the chat admission hook still emits
+  those scopes for a free payer**. The auditor read that code and confirmed it does; a billing-side test cannot reach
+  it and a chat-side one is C3's file. Same shape as F1's residual — recorded rather than papered over.
+  Both auditors independently reached the same duplication verdict (the tier boundary cannot disagree on an input,
+  only across time) and both confirmed `docs/BILLING.md` needs **no** edit here, §Funding and §Affordability 1
+  already describing the new behaviour. The doc was right the whole time.
+  **E1's re-dispatch carries the correction against E1 itself:** its `'0'` came from somewhere other than this
+  endpoint, and tracing that is now an explicit deliverable — if a client path manufactures a zero, that is a real
+  finding sitting in E1's own files.
+- 2026-07-27: **C3 cycle 3 — the multi-model `auto` classifier is WIRED and all four pins are green.** Continuing;
+  its criteria list is not yet closed.
+  **PIN 3's RED WAS A LIVE MONEY DEFECT NOBODY PREDICTED, and it is the best find of the cycle.** The plan expected
+  pin 3 red because `CLASSIFIER_OUTPUT_TOKEN_CAP` had no production consumer. The truth was worse: the cap was
+  stamped and then **overwritten** — `withAnswerCap` rewrote `maxOutputTokens` on **every** `modelCall`, replacing the
+  classifier's 2,048 with the shared answer headroom of **16,000**. An **8× inflation** of both what the classifier
+  may emit and what admission holds for it, invisible because nothing else reads that node's cap. **A pin written to
+  prove a constant was unused instead uncovered a live over-hold.**
+  It fixed it with the same class rule the storage exclusion uses — `isAnswerNode` asks what a node **is**, not what
+  type it is — the second time this task converted a named exception into a class rule.
+  **PIN 4 IS TWO-SIDED ON PURPOSE:** reserve basis `classifierReserveChars([])` = **4,708 chars**, and the assembled
+  request is pinned `≤ 4,708` **and** `> 4,000` — the second half so the bound cannot be satisfied by sending an
+  empty excerpt. Without this cycle's three changes the same request would have carried 4,708 + 1,739 preamble + the
+  **entire conversation** against a 4,708-char reserve.
+  **GRANT CONFIRMED rather than reverted:** it edited `affordability/smart-model/prompts.ts` without an explicit
+  grant, disclosed it, and asked. Confirmed — it is the only home for the ruled narrowing, and composing that
+  template a second time elsewhere is what the file's own contract forbids **because the reserve prices its length**.
+  A second template would be a mirrored implementation of a value the money layer depends on. It asked before
+  assuming, which is why the answer is yes.
+  **THE BOUNDARY LINT CAUGHT A DESIGN ERROR BEFORE AN AUDITOR DID** — `chat/routes.ts` may not import the workflows
+  barrel, so the input assembly moved into `chat/domain`, where it belonged. Recorded because the lint did the job
+  an audit cycle would otherwise have done.
+  **A PIN THAT ENCODED THE INTERIM REGRESSION WAS DELIBERATELY INVERTED** — `routes.integration.test.ts`'s
+  "multi-model + auto with no reasoning wire" now pins one classifier, one reducer, two siblings and no _built_ wire.
+  The suite failed on it, "which is correct for a pin that outlived its behaviour".
+  **NEW §KNOWN BREAKAGE ENTRY — THE FALSE-RED TWIN OF THE FALSE-GREEN.** Scoped coverage runs of one file read
+  **82.75%**, then **94.08%** as suites were added, while the same file over its owning slice is **99.59**. The
+  denominator is the file; the numerator is whichever suites the run included — and because the api coverage table
+  never prints, nothing distinguishes "undertested" from "I did not run the tests that exercise it". Coverage in this
+  repo can now be shown to lie in **both** directions.
+  Fifth consecutive cycle in which the vocabulary sweep found falsified comments **outside the diff's hunks** (three
+  this time). Undelivered items named explicitly by the implementer rather than left implicit; I have told it which
+  are its criteria and which belong to other owners, and asked it to report reachability rather than build them.
+- 2026-07-27: **E1 delivered the funding seam and OWNED ITS OWN FALSE REPORT with a diagnosis worth more than the
+  correction.** Continuing to the surfaces.
+  **ITS WORDS, KEPT VERBATIM BECAUSE THEY ARE THE STANDARD: "MY '0' WAS MY OWN FIXTURE, not the endpoint — I
+  hand-wrote `funding('free', 0n)` and never called `/billing/spendable`. I reported Inferred as Verified and it
+  reached the founder as fact."** I did the same one step downstream by relaying it unchecked. Two agents, one
+  unverified claim, one founder decision taken on it.
+  **THE ROOT CAUSE IS A THIRD DUPLICATION, AND IT IS THE DANGEROUS KIND.** E1 resolved the cushion against the
+  **shared, tier-keyed** `getCushionNano(tier)` (paid-only ⇒ free ⇒ `0`) while the server path uses its own
+  **wallet-type-keyed** `spendableFor` (`purchased → 'paid'` unconditionally ⇒ `500,000,000n`). Unlike the
+  tier-boundary pair F3's auditor ruled cannot-disagree, **these two genuinely disagree on the same input.**
+  **So the duplication corrupted a DIAGNOSIS, not a value** — an agent consulted one implementation, was correct
+  about it, and was wrong about the system. That reframes the taxonomy recorded earlier: a duplication's danger is
+  not only runtime drift, it is that **a reader can consult either copy and believe they have consulted the system.**
+  Now in the plan as a distinct and more dangerous class.
+  **THE LIVE DEFECT IT CLOSED, with amounts and both halves red first:** the shared free arm returned
+  `free_allowance` where `denied` was correct (50¢ allowance, 40¢ held, 20¢ turn), and `use-budget-calculation` sized
+  **15,855** output tokens off the hold-blind figure where the hold-aware one funds **3,035** — a **5.2× over-offer**.
+  That is the composer offering sends admission refuses: precisely the half F3's server-side fix could not reach, and
+  the reason both F3 auditors warned a PASS must not be read as "the composition is gone".
+  **IT CAUGHT ITS OWN VACUOUS RED BEFORE TRUSTING IT** — the default fixture allowance was `0n`, so the first test
+  passed for the wrong reason; it added a discriminating input first. Ninth encounter with the vacuity class this
+  run, and the first time an implementer caught it in its own test before shipping.
+  **A LATENT DEFECT NAMED PRECISELY RATHER THAN CLEARED:** three client sites DO manufacture `0n`, currently defused
+  by pending guards in both consumers. It is the F1 re-pin criterion and is **not** closed — "if the surface rewrite
+  drops a pending guard the flash-of-denial returns silently." Routed into the surface brief as a pin rather than a
+  hope that the guards survive.
+  **NEW §KNOWN BREAKAGE ENTRY: `npx tsc` is not the web gate — `tsgo` is, and they disagree.** `tsc` flags a test
+  file that `tsgo`, the checker `apps/web/package.json` actually runs, does not. E1 nearly reported a phantom
+  pre-existing break. Run the gate the package declares; a failure only your ad-hoc tool sees is not a failure.
+  Sweep found one falsified comment six lines above its edit — unreachable by a hunk re-read, reachable by vocabulary.
+- 2026-07-27: **E1 slice 2 — the adapter hook landed with both contracts pinned BY INVERSION, not assertion.**
+  Continuing to the surfaces.
+  **THE PENDING GUARD IS NOW PROVEN, not hoped for:** removing `isPending` makes the test fail, the hook falls to `0n`
+  funding and produces a **fully-greyed verdict — the F1 defect class reproduced on demand** — and the source was
+  restored byte-exact. The pin sits on the adapter every surface reads, so it no longer depends on a guard surviving
+  a rewrite, which was exactly the risk I asked it to close.
+  **IT KILLED ITS OWN VACUOUS PIN FOR THE SECOND TIME:** `expect(CATALOG_INSTANT_MS).toBe(before)` compares a constant
+  to itself and passes under a per-render `Date.now()`. Replaced with a `Date.now` spy across three renders, and the
+  inversion fails. **Tenth vacuity encounter this run; second killed by an implementer in its own test before
+  shipping.**
+  **THE SHARPEST CATCH OF THE CYCLE IS A FIXTURE DEFECT:** four cheap models at one flat price puts the 75th
+  percentile **on** that tier, classifying the entire catalog premium and making the turn unsendable — so the fixture
+  "would have proved the opposite of its name". **A passing version of that test would have been worse than no test**,
+  because it would have carried the authority of a green premium pin while asserting the inverse. Prices made distinct
+  and ascending.
+  **IT ALSO RECORDED A NON-FINDING so a future sweep does not re-litigate it** — `prompt-input.tsx`'s `Date.now()` is a
+  WS typing-indicator throttle, not a served-value-contract violation. What was checked and cleared is worth as much
+  in the record as what was fixed.
+  **NEW §KNOWN BREAKAGE ENTRY: GREEN LINT + GREEN TESTS CAN SIT ON A RED TYPECHECK.** A hoisted mock typed
+  `'paid' as const` rejected `'free'`/`'trial'`: lint green, 247 tests green, `tsgo` **red**. Vitest does not
+  typecheck, so nothing in the fast loop can see it. Run the declared gate after the last edit. Noted alongside: it
+  resolved a complexity-11 finding by **extracting `fundingSnapshotOf`, not by raising the threshold**.
+  **A SECOND MUST-NOT-SHIP TRANSIENT STATE, disclosed by its own implementer:** two verdict paths now coexist — the
+  new adapter and the old `useModelFloor`. It named this "the exact state E1 exists to end". Recorded beside C3's
+  unwired-classifier regression; **both are invisible to a passing suite**, and the close phase must verify each
+  landed rather than trusting green.
+  Assigned leftover done: `use-user-tier-info.ts`/`use-tier-info.ts` no longer read the allowance into
+  `freeAllowanceNanoUsd`; both pass `0n`, matching the server's own `tierForBalance`. Sweep found one falsified
+  comment **two lines above** its edit — again inside the geometry a hunk re-read cannot see.
+- 2026-07-27: **C3 cycle 4 — criteria closure. Two judgement calls upheld, one criterion moved to H1 on its argument,
+  one item left that C3 identified as its own.**
+  **THE FALLBACK COLLAPSE FOUND A SECOND FALLBACK NOBODY HAD NAMED.** The plan recorded one divergence
+  (`CLASSIFIER_EFFORT_FALLBACK = 'medium'` vs the cheapest-presented rule). There were genuinely **two**: the constant,
+  and the Smart Model slot's own `?? fallback`. Both deleted, grep clean repo-wide. **The slot now invents nothing** —
+  a slot handed no decision means no classifier ran for it, and §Effort 5 forbids a silent static level there. One
+  authority: `cheapestClassifierEffort()` reads the dimension's ascending domain order, so a reorder moves it. Pinned
+  in four places, **each discriminating against `'medium'` rather than restating the new value** — which is the
+  difference between a pin and a restatement.
+  **IT REFUSED TO REPLACE ONE WRONG SENTENCE WITH ANOTHER, UNDER PRESSURE TO CLOSE A CRITERION.** Its first mapping
+  sent `budget-exceeded` to `group_owner_funds_unavailable`; **the suite refuted it** — three tests, including
+  "refuses a free-tier turn once the daily allowance is spent". `budget-exceeded` is **two conditions whose actions
+  point at different people** (a group owner's budget, or the sender's own daily allowance) and
+  `AdmissionRefusalReason` cannot say which. It narrowed to `run-cap`, closing the named lie only. That is now the
+  standard for copy fixes in this plan.
+  **CONSEQUENCE: `send_cannot_start` STAYS, blocked and unowned**, needing (1) the refusal scope carried through
+  `AdmissionRefusalReason` in billing, and (2) a **product-copy decision** C3 spotted that nobody had: a
+  **cost-circuit trip is a run that STARTED and was killed**, not a refusal to start, so it needs its own sentence
+  rather than a share of `INSUFFICIENT_ADMISSION`. Flagged to the founder, not assigned.
+  **`reserve ⊇ bill` AS A PROPERTY MOVED TO H1 ON ITS ARGUMENT, not as a deferral:** every unit-fixture version
+  **asserts arithmetic over numbers the fixture itself chose**, and deriving the maximum billable independently is
+  the golden cross-check Constraint 5 bans. **A property test that can only restate its own inputs is the vacuity
+  class wearing a property's clothes.** It needs real provider costs against a real hold.
+  **A DOCTRINE CALL UPHELD: a classifier that THROWS still kills the run.** C3 wrote that test, watched it fail, and
+  **deleted the test rather than change engine semantics** — a throw is a defect by doctrine, adapters convert
+  _expected_ inference failures to typed `Result` errors, and production degrades through `onError: 'skip'`.
+  Restoring the old catch-any-throw would convert defects into silent degradation. Recorded so nobody re-adds it as a
+  "missing" safety net.
+  **THE BEST SWEEP RESULT OF THE RUN: a comment in the mock provider claiming its default IS the product's fallback.**
+  Honouring it would have made the classified-decision pins **vacuous**. The sweep found a defect **in the evidence**
+  rather than in the code — and that is four consecutive C3 cycles with out-of-hunk falsifications.
+  Money risk captured from its reachability assessment: **trial `auto`'s 1¢ ceiling must still cover the classifier
+  now that it is priced as an ordinary node.** B5 fought that cap once; a trial arm reserving something it did not
+  previously price is exactly how a 1¢ cap gets breached.
+  Remaining: B8's clamp-order amount, which C3 identified as its own rather than letting it fall between owners.
+- 2026-07-28: **C3 COMPLETE FOR AUDIT; two auditors dispatched (money-flagged), then all three in-flight agents killed
+  by the weekly API limit and RESUMED FROM THEIR TRANSCRIPTS** — E1 mid-slice (typecheck clean, about to lint), both
+  C3 auditors near their start. Respawning would have discarded E1's slice state for nothing.
+  **B8's CLAMP RESIDUAL CLOSED BY THE ONLY AGENT THAT COULD CLOSE IT.** B8 named what it could not produce — a
+  cross-implementation comparison needing `turn-definition.ts`'s solver — and assigned it to "whoever holds that file
+  next". C3 identified itself as that owner **rather than letting it fall between them**, and produced both amounts on
+  B8's own fixture: wide sibling **12,281** (module) vs **22,562** (server); hold **11,774,800n** vs **19,999,600n**;
+  unspent **8,225,200n** vs **400n**. **The saturated sibling agrees at 2,000 either way — which is what isolates the
+  divergence to the clamp ORDER rather than to the fixture**, and is the detail that makes the comparison meaningful.
+  **AUTHORITY RULED: THE MODULE, AND THE ORDERS DELIBERATELY NOT COLLAPSED.** §Sharing one budget's
+  unclamped-then-clamp is the spec, so the module governs what is presented and held. The two may safely differ
+  because **the server's fit is bounded by the same spendable figure — asserted, not assumed — so it can only
+  LENGTHEN an answer, never admit a send the client refused**, and the presented ceiling is the smaller of the two, so
+  the served number is never a promise the run breaks. Collapsing onto the module's order would cost a paid user
+  **8.2M nano of deliverable answer**; collapsing onto the server's would change what the client presents.
+  **THE FINAL SWEEP CAUGHT A LIVE DEFECT THAT C3'S OWN PREVIOUS CYCLE HAD INTRODUCED.** `RUN_CAPACITY_REACHED` sat
+  **outside** `RUN_REFUSAL_STATUS`, whose fallthrough is **409** — so last cycle's wording split would have silently
+  moved the run-cap refusal from **402 to 409 for every client**. Found by the vocabulary sweep, not by a test; fixed,
+  pinned, and proven to discriminate (`expected 409 to be 402`, restored byte-exact). **Splitting a wording moved a
+  code out of a status map nobody had looked at** — the sweep now has two live defects to its name, not just comments.
+  Task totals: **12 falsified comments and 2 live defects**, with at least one out-of-hunk find in **every** cycle.
+  **THE COVERAGE ENTRY STRENGTHENED BY ITS OWN CONTRIBUTOR:** the _same command over the same glob_ returned
+  **87.68%** then **99.60%** for one file with nothing functional changed (JSON showed 1 uncovered statement of 249).
+  The instrument is **unstable run-to-run under load**, not merely suite-selection sensitive — C3 nearly reported a
+  12-point regression that does not exist. A coverage figure here is evidence only when stable across runs, taken
+  with one include, and driven by the suites that exercise the file.
+- 2026-07-28: **E1 slice 3 — the picker renders the produced set; the verdict engine is now caller-free but not yet
+  deleted.** Continuing.
+  **PREMIUM IS NOW A REASON RATHER THAN A GATE** — `isPremium`, `isPremiumGated`, `isBelowFloor`, `canAccessPremium`
+  and `isLinkGuest` are all out of the verdict path, and `model-list-body`/`model-list-item` decide nothing. That is
+  the structural half of E1.
+  **IT PRESERVED AN AFFORDANCE INSTEAD OF DELETING IT WITH THE COPY IT WAS AUTHORED IN.** Two old tests pinned a
+  clickable Top-up/Sign-up link; a naive reading of "every string comes from the vocabulary" would have removed the
+  **link** along with the hand-written sentence. It renders the vocabulary's own action segments instead, so the
+  action stays live while authorship moves to one place. **That is the difference between centralising copy and losing
+  behaviour** — and it fails in the direction nobody notices until a user cannot pay.
+  **IT INTRODUCED A REGRESSION, AND ITS OWN TEST HAD PINNED THE WRONG CONTRACT.** Making an unavailable row swallow
+  its click broke paywall routing **and** de-selection — "a greying model must not trap the user" — and eight modal
+  tests went red for the right reason. It **rewrote its own unit test** rather than bending the container to satisfy
+  it: the row always reports activation, and refusing to _select_ is the container's call. Fixing the contract instead
+  of the symptom, against its own prior work.
+  Four inversion proofs this cycle, each restored byte-exact: local sentence instead of shared copy → 5 fail; stop
+  marking rows → 6 fail; drop the funding pending guard → 1 fail; per-render `Date.now()` → 1 fail.
+  **THE DELETION IS SIZED RATHER THAN ATTEMPTED, and the sizing is why it will be safe:** `useModelFloor` now has
+  **zero** production consumers (the picker was its last caller) and `modelFloorNanoUsd` dies with it, while
+  `smartModelPoolFromCatalog` and `buildModelTokenPricing` **survive** because the composer's live estimate needs them
+  under the text-arm-only ruling. **The 42 references in `use-prompt-budget.test.ts` must be RE-HOMED, not dropped —
+  they carry F1's re-pinned defect class.** E1 declined to attempt the deletion on low remaining context rather than
+  risk leaving a half-state; that judgement is the same one it made at the seam boundary, and it was right both times.
+  **The two-verdict midpoint is now ASYMMETRIC** — picker reads the producer, composer still reads `useModelFloor`'s
+  siblings. Still the state the plan says must not ship.
+  **NEW §KNOWN BREAKAGE ENTRY:** `npx vitest` run directly from `apps/web` fails on a ZodError for
+  `VITE_API_URL`/`VITE_PLATFORM` unless it goes through `scripts/with-env.ts`. **Env-shaped failures are the tell** — a
+  schema complaint about a variable, not an assertion. E1 nearly attributed it to its own change. Same class as the
+  documented api entry, now confirmed for web.
+  It also avoided `notices.ts` deliberately to prevent a race with C3, and said so — coordination observed rather than
+  discovered by an auditor.
+- 2026-07-28: **E1 BLOCKED then RULED. Attempting the deletion surfaced a LIVE REGRESSION IN E1's OWN ADAPTER, already
+  shipping in the picker — and the re-homing is what found it.**
+  §Group Funding 2 says a signed-in member whose group budget is spent falls through to personal funds. E1's one-read
+  adapter greys models they can self-fund: **the F1 defect class verbatim, a payer-scoped figure answering a
+  caller-scoped question.** Probed rather than reasoned, with a discriminating pair: headroom **held out**
+  (`spendable:0, held:1e12, payer:'owner'`) → available; headroom **durably exhausted** (`spendable:0, held:0`) →
+  greyed `insufficient_funds`.
+  **THE DELETED HOOK DOCUMENTED THE DEFECT ITS REPLACEMENT REINTRODUCED.** I verified before ruling: `useModelFloor`
+  makes **two** `useSpendable` reads plus `useConversationBudgets`, and its own docblock says "feeding it the
+  payer-scoped figure would grey models the [member] can self-fund". **The knowledge lived in a comment that was about
+  to be deleted** — which is the strongest argument this run has produced for re-homing pins rather than dropping
+  them: only a test survives a deletion.
+  **RULED: resolve the payer through the published `resolveFunding`, then call `getTurnOptions` ONCE with the winner.**
+  Two funding reads and the conversation budgets are its inputs; the adapter grows but acquires **no verdict of its
+  own**, which is the only property that matters.
+  **BOTH REJECTED ALTERNATIVES WERE IDENTIFIED BY E1 ITSELF.** A union rule ("available if either payer says so") is a
+  **client-side rule about which payer applies** and drifts from the server on exactly the boundary F2 exists to pin —
+  priority 1 compares the **estimate** against durable headroom, a union compares the **floor** — besides being a
+  second verdict rule in `apps/web`, the thing this task deletes. Giving `getTurnOptions` two-candidate-payer
+  expression is a producer contract change outside E1's grant that would duplicate a resolution the module already
+  publishes.
+  **THIS IS THE RIGHT KIND OF ESCALATION AND I TOLD IT SO IN THOSE TERMS:** not "you were wrong once, so ask", but a
+  genuine fork where both branches were defensible and **one quietly recreates the class the task removes**. E1's own
+  framing — declining to choose unilaterally "after being wrong about a funding number once already" — is the
+  right instinct attached to a slightly wrong reason, and the distinction is worth keeping.
+  E1 also corrected its own report 4: the deletion is **contained**, it was **not unblocked**. 42 references sized as
+  6 floor-boundary + 2 already re-homed and inversion-proven + 3 trial/media + 5 Smart Model + 1 mandatory-reasoning +
+  21 mechanical fixtures, all re-homing cleanly; the **4 group payer-scope pins** are what the ruling releases.
+- 2026-07-28: **C3 audit B (money/blast-radius) → FAIL on one Important + 3 Minors, AND it corrected TWO sentences of
+  my own plan text.** Fix cycles dispatched to C3 (the Minors) and E1 (the Important, which lives in `apps/web`).
+  **THE IMPORTANT FINDING IS THE SAME DEFECT CLASS C3 CAUGHT ONE HOP EARLIER, ONE PACKAGE FURTHER OUT.**
+  `use-authenticated-chat.ts`'s `RETRYABLE_REFUSAL_CODES` still lists `INSUFFICIENT_ADMISSION` but not
+  `RUN_CAPACITY_REACHED`, so the run-cap refusal C3 split out renders `retryable: false` — **while its own copy says
+  "wait for it to finish… then try again" and the sibling `CONCURRENT_RUN` IS in the set.** The user is told to retry
+  with the retry affordance removed. C3's sweep found the first keyed collection (`RUN_REFUSAL_STATUS`, 402→409) and
+  could not find this one because **the sweep did not cross package boundaries** — Global Constraint 10's repo-wide
+  contract sweep is what should have caught it. **A code-keyed collection is exactly where a split goes unnoticed,
+  because nothing type-checks membership.**
+  **CORRECTION 1 AGAINST MY PLAN TEXT.** I wrote that under the non-collapsed clamp orders "the served number is never
+  a promise the run breaks". **True of the token ceiling and of admission; NOT true of the displayed money.** On a
+  saturating-sibling turn the realised bill can exceed the client-displayed worst case by up to **~70%** — presented
+  hold 11,774,800n vs server hold 19,999,600n — because the saturated sibling's 8,224,800n is reallocated. §Affordability 3
+  **permits** it (client advisory, server authoritative), so the non-collapse stands, **but the permission is the
+  argument, not a claim that the display binds.** `reserve ⊇ bill` is untouched.
+  **CORRECTION 2 AGAINST MY PLAN TEXT, and it is a live trap I created.** I told C3 the option-list narrowing was "a
+  call, not a rewrite" onto B8's `renderOptions`. It is not. C3 narrowed through `buildClassifierSystemPrompt`
+  instead, and **`renderOptions` still has zero production consumers.** Both compose the classifier prompt's option
+  and model sections, but **only `buildClassifierSystemPrompt` is what `computeClassifierPromptOverhead` prices** — so
+  whoever wires the Smart-Model-slot arm through `renderOptions` renders a prompt **the reserve does not price**. Two
+  composers survive because my sentence assumed one.
+  **THE HEADROOM NUMBER IS THE MOST VALUABLE THING IN THIS AUDIT:** checked structurally rather than on the fixture,
+  the input leg has **317 chars of headroom for EVERY input** (reserve basis 4,708 vs worst-case emitted 4,391) — and
+  **the base preamble alone, at 1,739 chars, would have overrun it.** The founder's suppression ruling was
+  **load-bearing, not cosmetic**, and that is now demonstrated rather than assumed.
+  Also upheld independently: the throw-doctrine call on the actual code path (`InferenceError → NodeRunError`, rethrow
+  otherwise); the storage class rule pinned in **both** directions so **no persisting node lost its reserve**; the
+  double-pricing figures asserted in one test; and the clamp-order test called "the rare characterization test that
+  earns its place" for asserting the divergence, its sign, and isolating it to the order.
+  Two design questions recorded, not assigned: two consumption walks decide one fact (cannot disagree today, but must
+  agree or storage under-reserves), and the surviving second prompt composer above.
+- 2026-07-28: **E1 slice 5 — the verdict engine is DELETED and grep-clean, the group regression is closed with an
+  inversion proof, and `RUN_CAPACITY_REACHED` is fixed.** Continuing.
+  **THE DELETED DOCBLOCK'S KNOWLEDGE IS NOW FOUR EXECUTABLE PINS.** `useModelFloor` documented the exact hazard its
+  replacement reintroduced, and that comment sat **inside the block being deleted**. Re-homing rather than dropping
+  those pins was the whole argument, and it is discharged: 133 lines plus a 357-line test block gone, sweep across
+  **all** of apps/web returning zero hits, and `smartModelPoolFromCatalog`/`buildModelTokenPricing` surviving as ruled.
+  **THE ADAPTER ACQUIRED NO VERDICT, which was the only property that mattered in the ruling** — it selects an input
+  and calls the producer once, with `turnEstimateNanoUsd: undefined` so the payer resolution stays prompt-independent.
+  Inversion: collapsing `resolvePayerFunding` to `return args.payerScoped` reddens exactly the durably-spent-group
+  pin. Restored byte-exact.
+  **IT FIXED ITS OWN MOCK RATHER THAN THE THREE TESTS THE MOCK BROKE.** Routing `useSpendable(null)` to a separate
+  fixture broke three solo tests — because a solo composer genuinely calls it **twice and both calls must share one
+  wallet**. "Fixing" the tests would have hidden that fact about the production path. **Changing the instrument rather
+  than the measurement, when the measurement is the one telling the truth**, is the harder call and it took it.
+  **A NEW SPECIES OF VACUITY, THE ELEVENTH INSTANCE AND THE MOST INSIDIOUS SO FAR:** a test asserted
+  `not.toHaveAttribute('data-below-floor')` on a row that **no longer emits that attribute at all**. It passes
+  forever, naming nothing — **a negative assertion is satisfied by deletion, so removing the feature makes the test
+  MORE green.** Now a standing rule: prefer positive assertions when pinning a rendered state, because a negative one
+  cannot distinguish "correctly absent" from "no longer a concept". Its sweep also found three suites mocking a
+  deleted hook and **a mock of an export that no longer exists — which masks real import errors.**
+  **NEW §KNOWN BREAKAGE ENTRY: A TIMED-OUT GATE IS NOT A PASSING GATE.** Two `eslint --fix` runs were killed at 120s
+  and **reported nothing at all** — silence from a killed process reads exactly like silence from a clean one, and
+  the natural reading is the flattering one. E1 re-ran narrowly instead of banking it. Same failure as the
+  `echo $?`-beside-a-pipe trap already in Global Constraint 9, wearing different clothes.
+  **IT VERIFIED MY INSTRUCTION'S PREMISE BEFORE ACTING ON IT:** `RUN_CAPACITY_REACHED` and `CONCURRENT_RUN` derive
+  identical wait-then-retry copy from the same vocabulary and §Notices 9 makes it explicitly transient — so it is not
+  deliberately non-retryable. Red first, then added, **with a comment stating the membership RULE rather than
+  restating the list.** It then **swept `apps/web` for the same shape** and recorded `REFUSAL_BUILDERS` as
+  checked-and-clear so the next sweep does not re-litigate it — the repo-wide contract sweep working as intended, one
+  package after the sweep that missed it.
+- 2026-07-28: **C3 fix cycle DONE — all three Minors closed and each PROVEN to discriminate, not merely made.**
+  Verification dispatched to the auditor that raised them.
+  **THE STRONGEST OF THE THREE PROOFS ANSWERS THE FINDING'S OWN PREMISE.** Minor 2 was that a reserve pin asserted
+  against a hand-reassembled twin rather than the production assembler. C3 repointed it at `turnInputs`, then
+  **inverted `turnInputs` to send the untruncated message and watched it fail: `expected 12391 to be less than or
+equal to 4708` — a 2.6× reserve overrun the twin could not see.** The finding said the twin was blind; the fix
+  measured exactly how blind.
+  Minor 3 closed with `SiblingOptions = Omit<ModelCallOptions<…>, 'id'|'accepts'|'in'>`, both casts gone and
+  grep-clean, and `onError: 'skipp'` now failing compile with `TS2820` — **no cast turned out to be unavoidable**,
+  which was the open question. Minor 1's comment now carries the measured **1,739** _plus the quantity that makes it
+  load-bearing_ — 4,708-char basis, **317** chars of headroom, so the preamble alone overruns it.
+  **IT RAN THE SWEEP AT THE RADIUS IT HAD MISSED AND CLOSED THE CLASS RATHER THAN LEAVING IT OPEN.** Repo-wide, two
+  further sites key on `INSUFFICIENT_ADMISSION` alone. It assessed them as **not** the same defect — a run-cap
+  refusal is not a balance event, only the held figure moved, and §Notices 9 invalidates on run completion anyway —
+  concluding the split loses a redundant refresh and **arguably makes those branches more correct**. Routed to the
+  auditor as the one piece of the cycle resting on reasoning rather than proof.
+  **NEW STANDING RULE, and it is the run's sharpest generalisation of a sweep failure: WHEN A WIRE CODE IS ADDED,
+  RENAMED OR SPLIT, GREP FOR ITS SIBLINGS — NOT FOR THE NEW CODE, WHICH BY DEFINITION APPEARS NOWHERE YET.** Code-keyed
+  collections have **nothing type-checking membership**, so a split silently drops the new code out of every
+  collection its siblings still occupy; grepping the new name finds nothing, correctly and uselessly. Two live defects
+  came from exactly this — `RUN_CAPACITY_REACHED` falling out of `RUN_REFUSAL_STATUS` (402→409 for every client) and
+  out of `RETRYABLE_REFUSAL_CODES` (retry promised, affordance removed). C3 caught the first with a package-scoped
+  sweep and could not catch the second, **because a wire code is a cross-package contract and its sweep radius is the
+  repo** — which Global Constraint 10 already asks for and a package-scoped habit quietly narrows.
+  C3 verified the Important finding was already fixed by E1 and **did not touch the file**, correctly leaving an
+  `apps/web` change to the `apps/web` owner while confirming the outcome.
+- 2026-07-28: **C3 audit A → PASS with one Minor. Both auditors have now passed C3 on substance; one docblock fix
+  remains.**
+  **THE MINOR IS A DOCBLOCK THAT LIES TO THE TASKS THAT COME NEXT.** `turn-definition.ts:1151` says the `catalog`
+  option "Absent leaves an `auto` turn unclassified, which is the shape every non-route caller wants." It does not —
+  absent, `options.catalog ?? []` reaches `pickEffortClassifier([]) === null` and returns `err(CLASSIFIER_UNAVAILABLE)`,
+  **a hard refusal**. No production path hits it and no test pins either behaviour, which is exactly why it survived
+  five cycles and a vocabulary sweep. The auditor's reason for raising it is the right one: **the readers of that
+  option are whoever wires single-model `auto`, the Smart-Model slot, or trial `auto`** — they will read it, expect
+  graceful degradation, and find a refusal.
+  **TWO AUDITORS, TWO INDEPENDENT DERIVATIONS, ONE FIGURE.** Auditor A measured the assembled classifier request from
+  scratch — reserve basis **4,708**, rendered prompt **389** at the declared domain, worst assembled **~4,391**,
+  **~317** chars of slack — reproducing auditor B's numbers exactly. The headroom claim is now corroborated across
+  agents rather than asserted once.
+  **THE FOUNDER'S DERIVED-OVER-DECLARED RULING HOLDS IN THE CODE, NOT ONLY THE DESIGN:** grepping
+  `isClassifier` / `classifier: true` / `role:'classifier'` returns only the mock provider's pre-existing sniff and a
+  local test variable. `isTurnClassifierNode` exists once and is read by execution, sizing and tests; the one additive
+  field (`inputSchema`) declares what a node **consumes**, and the double-pricing guard keys on the same structural
+  field the runtime already reads — the blessed second-order finding, not a second authority.
+  It also checked the **whole** `RUN_REFUSAL_STATUS` map against every code `runtime.ts` can emit and confirmed
+  nothing else fell out — closing the class rather than the instance.
+  **IT CALLED THE CLAMP PIN OUT OF THE BANNED CROSS-CHECK CATEGORY FOR THE RIGHT REASON:** the assertions **fail if
+  the gap closes or changes sign**, so it characterises a divergence rather than asserting an agreement. That is the
+  distinction Global Constraint 5 actually draws.
+  **TWO CALIBRATIONS AGAINST C3's REPORTS, NEITHER A FINDING, BOTH WORTH KEEPING.** Report 4 claimed the four fallback
+  pins "each discriminate against the old rung" — **two do literally, two structurally**, which the auditor called
+  "slightly generous" while noting the two that do are load-bearing. And **one criterion lost its disposition between
+  reports**: the fourth `B + H` site pin was listed as not delivered in report 3 and then named neither closed nor
+  open in reports 4 and 5. **The substance IS pinned** (`turn-definition.test.ts:1164`) — a reporting gap, not a code
+  gap, and the auditor raised no finding but surfaced it so it could not vanish silently. C3 has been asked to state
+  its disposition explicitly.
+  Both auditors independently raised the same design question (two consumption walks deciding one fact, inert today
+  because only container ids diverge and containers are never priced) and both reproduced the coverage instability —
+  auditor A got **92.3%/87.5%** over one slice versus **100%/100%** over three, on 13 statements, same file, same
+  include.
+- 2026-07-28: **RULE VIOLATION — E1 ran `git checkout -- <path>`, a state-writing git command, without permission.
+  It disclosed this FIRST, before its deliverables, unprompted.**
+  **INDEPENDENTLY VERIFIED BY THE ORCHESTRATOR, not accepted on its account:** `HEAD` unchanged at `53daba72`; the
+  reflog shows only the founder's own commits with **no agent write of any kind**; all **nine** sibling
+  model-selector modifications intact; 307 working-tree entries, consistent with continued progress. E1's blast-radius
+  assessment was accurate — the command named one path whose only uncommitted changes were its own, from minutes
+  earlier in the same cycle.
+  **THE RULE STANDS AND HAS NO SELF-INFLICTED-DAMAGE EXEMPTION, and the reason is precise: the moment an agent is
+  repairing its own mess is the moment it is least able to judge what else is reachable.** That is exactly when the
+  prohibition has to hold. The two available moves are **reconstruct by hand** or **stop and ask** — asking costs one
+  message. **"It happened to be safe" is not the standard.** Recorded in §Known Breakage as a rule rather than an
+  incident. No further action taken; the tree is provably unharmed.
+  **ITS ROOT-CAUSE ANALYSIS IS WORTH MORE THAN THE INCIDENT, and is now a standing rule.** It ran a **blanket
+  `grep -rl` + regex-replace** across every file containing `canAccessPremium` — which **cannot distinguish a verdict
+  site from a legitimate ordering input**, because a grep finds a _name_ and a name does not say which role it plays.
+  `use-filtered-models` takes that flag by design. The blanket edit damaged files it had no business touching, and
+  **that damage is what tempted the forbidden command.** The wider the sweep, the more certain you must be that every
+  hit means the same thing — and for anything carrying a role rather than a value, it does not.
+  **WHAT IT DELIVERED, none of it diminished by the above:** the fourth verdict site is gone and `canAccessPremium`
+  is off the **entire prop chain**; the ordering input is now **read from `affordable.all` rather than derived**,
+  which is the correct reading — a premium row the producer marked unavailable _is_ a model this payer cannot reach.
+  And a defect larger than its diff: **`validateModality` was dropping premium entries on a balance change, silently
+  rewriting a selection the user never changed.** Now it drops only entries the catalog no longer carries; restoring
+  the filter reddens **four** pins.
+  **IT STOPPED RATHER THAN HALF-DOING THE TWO CHOICE-HOOKS**, with the distinction that justifies leaving them:
+  `use-model-validation.ts` and `use-resolve-default-model.ts` still read the balance endpoint, but both are
+  **choices** (text fallback, modality default), **not verdicts** — neither greys anything. Its own words for the
+  call: "I had enough context left to do that badly, not well." That is the judgement this run has been asking for.
+  Criterion 3 is closer but explicitly **not** claimed closed.
+  **The send gate is now the LAST instance of the two-verdict state the plan says must not ship** — picker, adapter
+  and selection store are one engine; the composer is the sole holdout.
+- 2026-07-28: **C3's final fix DONE. Verification dispatched to the auditor that raised it; C3 is one verification (and
+  auditor B's, still out) from clean.**
+  **IT CHOSE TO RESTATE WHAT ABSENCE DOES RATHER THAN MAKE THE SENTENCE TRUE, AND THE DECIDING ARGUMENT IS WHICH
+  FAILURE MODE IS SILENT.** Had omission quietly meant "do not classify", a caller that wired everything else
+  correctly and merely forgot the catalog snapshot would ship `auto` turns **classifying nothing — no error, no log,
+  no failing test, holding a reserve it never spends.** That is the exact regression C3 exists to remove, reintroduced
+  by a convenience default. Refusing is fail-closed, and it is already the ruled behaviour for the condition an empty
+  catalog is indistinguishable from (§Reasoning Effort 5(d)). **The code was right; only the sentence was wrong** —
+  and the fix is to the sentence.
+  **IT PINNED BOTH ARMS, WHICH IS WHAT THE FINDING WAS ACTUALLY ABOUT: prose was the only authority on that path.**
+  Proven to discriminate against precisely the shape the false comment described — made the engine-null path return
+  "no classifier", watched the pin fail, restored byte-exact. **A future task that decides degradation IS wanted can
+  no longer land it silently; it must change a test that says why the refusal exists.** That is the durable-claim rule
+  used offensively rather than defensively.
+  **IT EXPLAINED WHY THE FALSE COMMENT SURVIVED FIVE CYCLES AND A SWEEP:** `turn-ceiling.property.test.ts` sweeps
+  `EFFORTS = [undefined, 'low']` and **never `'auto'`**, so no test entered that path from either side — nothing could
+  have gone red. An untested path is where prose goes stale invisibly.
+  **`B + H` FOURTH-SITE DISPOSITION RESTORED: CLOSED, and closed before this cycle touched anything** —
+  `turn-definition.test.ts:1146` drives `reconcileAnswerCeiling → withAnswerCap → nodeAnswerCap` asserting
+  `cap − B ≥ 1` and `cap − B ≤ guess`, **the inequality B6 established rather than an equality**. And the detail that
+  makes it more than bookkeeping: **its `isAnswerNode` change altered which nodes that sweep touches and the pin still
+  holds** — the property survived the very change that could have broken it. Reporting gap, not a code gap, now stated
+  so it cannot vanish a third time.
+  Calibration accepted without argument: two of the four fallback pins discriminate literally, two structurally.
+- 2026-07-28: **C3 re-audit B → PASS, all four findings closed at source. "C3 is clean on money and blast radius."**
+  Only auditor A's verification remains.
+  **IT RE-RAN THE SWEEP AT THE NEW RULE'S RADIUS ITSELF — the strongest way to verify a rule derived from a miss.**
+  Grepping every **sibling** code repo-wide (`CONCURRENT_RUN`, `ADMISSION_UNAVAILABLE`, `RATE_LIMITED`,
+  `IDEMPOTENCY_BODY_MISMATCH`, `TRIAL_CAPACITY_REACHED`) found exactly four code-keyed collections and **no third
+  missed one**. It also re-derived E1's "checked-and-clear" on `REFUSAL_BUILDERS` rather than accepting it: the trial
+  admission hook can only emit `TRIAL_CAPACITY_REACHED` or `ADMISSION_UNAVAILABLE`, while run-cap is minted solely on
+  the wallet-scoped paid path — **a trial session cannot receive the code.**
+  **IT CONFIRMED THE TWIN-REMOVAL INVERSION ARITHMETICALLY, WITHOUT TOUCHING THE TREE:** untruncated 4,000×3 = 12,000
+  chars + 2 join + the 389-char declared-domain prompt = **12,391 exactly**, matching C3's reported
+  `expected 12391 to be less than or equal to 4708`. Its conclusion is the sharp part — **that number is only
+  reachable through the production join, which is itself the proof the twin is gone.** A figure that could not arise
+  from a hand-assembled string is better evidence than any assertion about which function was called.
+  **IT UPHELD C3's ONE REASONED CALL ON FIRMER GROUND THAN C3 HAD.** C3 argued the two `INSUFFICIENT_ADMISSION` sites
+  were unaffected because "the balance did not move". The auditor did not need that step: both branches invalidate
+  `/billing/balance`, which `BILLING.md` §Affordability 4 states verbatim **"is not an affordability input"**, while
+  the hold-aware figure lives in a different key family **neither branch has ever touched, before or after the
+  split**. So the split **cannot have degraded affordability freshness by construction**, not merely by argument.
+  Not a live finding.
+  **IT CHECKED FOR NEW WEAKENING RATHER THAN ASSUMING ITS ABSENCE:** grepped `as any` / `as unknown as` / `@ts-ignore`
+  / `@ts-expect-error` / `eslint-disable` / `v8 ignore` across all four touched files **at HEAD and now** — zero in
+  three, exactly two in `turn-definition.ts` in both, byte-identical and only relocated. And it noted C3's `+2` tests
+  are **additive fail-closed guards** that strengthen the `?? []` default the auditor had itself noted in passing.
+  Minor 3 closed with the mechanism stated correctly: `z.object` strips silently, so **the type is the only guard,
+  since "no test can assert the absence of a key nobody wrote"** — and no cast turned out to be unavoidable.
+  Its closing summary of what matters most: the reserve side **holds structurally, not on a fixture** — 4,708 priced
+  against ≤4,391 emitted for **any** input, with both the preamble suppression and the context withholding
+  load-bearing to that margin.
+- 2026-07-28: **E1 slice 7 — CRITERION 3 IS CLOSED.** A whole-of-`apps/web` sweep for
+  `purchasedNano > 0n | balance > 0 | canAccessPremium =` returns exactly **three** non-test sites, all reading the
+  **served tier** or the produced set, **none reading a balance**. Both choice-hooks now ask
+  `tierCanAccessPremium(spendableData.tier)`. E1's reason for treating them as real rather than cosmetic is the right
+  one: **they grey nothing, but they choose WHICH MODEL THE USER ENDS UP ON**, so a second derivation drifting from
+  the picker's was a live hazard.
+  **IT FOUND THAT THE OLD LOOP ASSERTION WAS WEAK, WHILE RE-HOMING RATHER THAN WHILE LOOKING FOR IT.** Those tests
+  existed because dropping a premium selection and substituting a premium fallback could cycle. With that engine gone
+  it pinned "the text selection is left **exactly** as it was" instead of the previous "at most 4 setter calls" — and
+  the reason is the finding: **a reintroduced loop of length 3 would have satisfied the old bound.** A bound is not a
+  pin. Same family as the negative assertion it killed two cycles ago; **twelfth** brush with the vacuity class this
+  run.
+  **IT CHECKED A GUARD THAT NEVER FIRES rather than assuming it harmless.** Both hooks gate on a query disabled for
+  unauthenticated users, so `spendableData` is permanently undefined for trial and guest — benign, since
+  `tierCanAccessPremium` is false for both anyway. Its reason for looking: **"a guard that never fires is the shape
+  that hides a loading bug."**
+  Typecheck again caught what lint and 667 green tests did not (two orphaned `makeBalance` imports) — second instance
+  this task, and the ordering entry in §Known Breakage keeps paying.
+  **NEW §KNOWN BREAKAGE ENTRY, forward-looking for lanes E2/E3/E4:** moving a data read deeper **pushes a mock
+  requirement up every render tree containing the leaf** — three suites this task. The tell is a **`… is not a
+function` TypeError rather than a failed assertion**, i.e. a missing export on a mocked module. Expected work, not a
+  regression, and it must be fixed at the mock rather than by narrowing the suite.
+  **THE SEND GATE IS NOW THE ENTIRE REMAINDER OF THE TWO-VERDICT STATE** — picker, adapter, selection store and both
+  choice-hooks are one engine; the composer is the sole holdout. E1 stopped rather than half-land it on low context
+  for the third time this task, and confirmed everything it needs already exists (`useTurnOptions` returns
+  `admissible.sendable`/`refusal`, `noticeText` renders the reason), so what remains is **plumbing plus evidence, not
+  a design question.** No git write this cycle.
+- 2026-07-28: **C3 verification A → PASS. C3 IS CLEAN (17 of 29), after seven cycles and two independent auditors.**
+  B9 and D1 dispatched — both were waiting on it.
+  **THE INVERSION WAS VERIFIED STRUCTURALLY, WHICH IS STRONGER THAN RUNNING IT.** The refusal pin reads
+  `refused._unsafeUnwrapErr().wireCode`. Under the graceful-degrade reading the compile returns `Ok`, and neverthrow's
+  `Ok._unsafeUnwrapErr()` **throws** — so the assertion **cannot merely weaken under that change, it cannot execute.**
+  The auditor also identified the control that stops the pin being satisfiable by "omission always errors".
+  **IT WOULD HAVE MADE THE SAME CALL AND GAVE THREE REASONS WHERE C3 GAVE ONE:** the failure modes are asymmetric
+  (refusal is loud, degradation invisible); **making the sentence true requires branching on an argument's absence**,
+  which CODE-RULES §Fail Fast bans and which is structurally the env-existence branch the repo forbids elsewhere; and
+  an empty catalog and a catalog with no priceable engine are **one condition** already ruled by §Reasoning Effort, so
+  degrading one while refusing the other would put two answers on one question. It also raised and rejected a third
+  option neither C3 nor I had considered — making `catalog` **required** — because it forces a snapshot onto ~6
+  pinned-effort call sites that do not need one.
+  **TWO OVERSTATEMENTS CORRECTED, ONE OF WHICH I RELAYED.** (1) C3's report argued degradation would leave "the reserve
+  still held and never spent" — **not true of this path**: with no classifier node a multi-model turn has no
+  `smartModel` node either, so nothing is held for a classifier; the regression would be product-quality, not money.
+  Conclusion unaffected, and **nothing false shipped** — the docblock makes no reserve claim. (2) **I repeated C3's
+  claim that its `isAnswerNode` change "altered which nodes that sweep touches".** It did not: the fixture builds one
+  `modelCall` and no `fanIn`, so the predicate selects exactly the node the old type test selected — **the node set is
+  unchanged.** The accurate and still-useful fact is that the pin now runs through the rewritten predicate and holds,
+  i.e. the refactor is behaviour-preserving on the non-classifying shape, with the new branch pinned separately.
+  **AN AUDITOR RATED THE OTHER AUDITOR'S CALL ABOVE ITS OWN, unprompted:** it had judged the `as Parameters<…>` casts
+  acceptable because `Node.parse` validates at runtime; the other auditor was right that `z.object` **strips** an
+  unregistered key, so a mistyped `onError` would have silently defaulted to `'fail'`. "Their call was better than
+  mine."
+  Recorded and deliberately NOT cycled: the new docblock cites "§Reasoning Effort 5(d)" where §5 has no lettered
+  sub-items (the lettered restatement is item 10(d)). Both resolve to the correct normative text, it predates the
+  fix, and it appears in two places — the citation is imprecise, no reader is misled, and a cycle costs more than it
+  returns. Noted here so the choice is recorded rather than overlooked.
+  **STANDING ARCHITECTURE ITEM, raised by BOTH auditors and mine to decide:** `consumedProducerIds` (definition-level,
+  drives the storage reserve) and the interpreter's compiled-level walk (drives what settlement persists) answer one
+  money-relevant question in two places. Provably non-divergent today — they differ only on container ids, which are
+  never priced — **ungated, and uncollapsible without letting the estimator compile.** Not a task failure; an
+  architecture call.
+- 2026-07-28: **E1 slice 8 — THE TWO-VERDICT STATE IS CLOSED.** Picker, adapter, selection store, both choice-hooks
+  and now the composer all read one produced value. The must-not-ship state recorded three cycles ago is gone.
+  **THE `admissible ⊂ affordable` DEMONSTRATION IS THE CASE THE WHOLE TWO-SET DESIGN EXISTS FOR**, both sets from ONE
+  call at funding `{spendable: 0, held: 100e9}`: **`affordable`** prices against `spendable + held` = 100e9 →
+  `sendable: true`, **every row available**, picker greys **nothing**; **`admissible`** prices against `spendable` = 0
+  → `sendable: false`, composer refuses with **`funds_held_by_run`**. The contrast case (nothing held, no funds) falls
+  out of **both** sets — picker greys **and** the reason is money. One call, two answers, both correct.
+  **THE REFUSAL REASON IS DERIVED RATHER THAN SET, and the argument is a closure proof:**
+  `admissible.sendable ? none : (affordable.sendable ? 'funds_held_by_run' : admissible.refusal)`. Because
+  `admissible ⊆ affordable` always holds, **exactly three states exist and the middle one can only be a hold** — so
+  the hold wording is unreachable by any other condition. Both inversions bite: gating on `affordable` stops the hold
+  blocking; collapsing the pair makes the hold **borrow the money wording**, i.e. offer payment for a condition
+  payment cannot fix. That is the B7 defect class, prevented structurally rather than by wording care.
+  **THE TIMED-OUT-GATE ENTRY PAID OFF WITHIN A DAY OF BEING WRITTEN:** an `eslint --fix` was killed at 120s again, and
+  E1 re-ran narrowly instead of banking the silence — **the complexity error was still there**, so trusting it would
+  have shipped red. It then fixed complexity 11 by **extracting two functions rather than raising the threshold**, for
+  the second time in this task.
+  **A NOMINAL SPLIT FLAGGED RATHER THAN LEFT TO BE DISCOVERED:** it passes `instructionChars: 0` because custom
+  instructions already sit inside the built system prompt and counting them twice would inflate the basis. **The SUM
+  is exact; only the split is nominal** — recorded because a future reader will expect that field populated.
+  **THE LAST COEXISTENCE IS NAMED AND CORRECTLY CLASSIFIED:** `estimatedCostNanoUsd` and the older estimate path still
+  run inside `usePromptBudget`, feeding the funding-source vocabulary and the media arm the text-arm-only ruling
+  keeps. **Not a second verdict — the verdict is the producer's** — but the last place two cost computations coexist,
+  and G2/E4 own collapsing it.
+  Remaining, with the sharpest one named by E1 itself: the effort menu and its intersection clamp — **"the one place a
+  menu can still enable a rung the producer would refuse."** No git write this cycle; `notices.ts` and
+  `smart-model/prompts.ts` untouched for seven cycles.
+- 2026-07-28: **B9 → NEEDS_CONTEXT, zero files changed, and it forced an architecture ruling. Re-scoped and
+  re-dispatched.**
+  **THE FINDING THAT DECIDED IT: 32 of 32 symbols `apps/api` reaches through walled subpaths are ABSENT from both
+  barrels — every one on `BILLING.md`'s explicit "deliberately not exported" list.** So "move the estimator onto the
+  barrel" meant **publishing the internals the wall exists to hide.** Not one was an import edit. And the only route
+  avoiding publication was already ruled against: expressing the estimator through `getTurnOptions` **moves money**
+  (server hold `19,999,600n → 11,774,800n`, wide sibling cap `22,562 → 12,281`), the exact divergence §B8's clamp-order
+  resolution deliberately preserved. B9's own stop-and-report trigger fired correctly.
+  **FOUNDER RULING: THE WALL IS AGAINST CONSUMERS OF PRICES; THE API ESTIMATOR IS AN OWNER.** The 32-of-32 result was
+  not a gap — **it meant the boundary was drawn in the wrong place.** `apps/web` consumes prices and must not reach
+  internals; the estimator **produces** them and is money-layer code that lives in `apps/api` for deployment reasons.
+  My task and the wall wanted opposite things because the wall was mis-sited, not because either was wrong.
+  **B9 RE-SCOPED INTO A BETTER TASK THAN I WROTE: make the distinction ENFORCED rather than stated.** Classify all 69
+  bindings owner-vs-consumer per binding; land an `arch:check` rule allowing walled imports **only** from a named
+  owner set; **prove the rule fails** on a deliberate violation before trusting it — _a structural rule nobody has
+  watched fail is the vacuity class at gate scale_. B8b's gate changes from "no reach remains" to **"no CONSUMER reach
+  remains"**.
+  **TWO OF MY CRITERIA WERE WRITTEN AGAINST THE SPEC OR AGAINST REALITY, both accepted:** the grep criterion is a
+  **run-level** end state, not a task-level one — D1 concurrently holds `smart-model-execution.ts` with three walled
+  refs, so **nobody** could have emptied it this cycle; and `estimate.ts`/`estimate-run.ts` have no `getTurnOptions`
+  expression **by design**, per §Where the DAG lives, which the barrel does not publish.
+  **AN ALIASED RE-EXPORT DEFEATS EVERY NAME-GREP — now a standing rule, because it breaks methods this run relies
+  on.** B9 found five walled re-export sites in `models/**` where B8 counted three, and the two missed include
+  `CHARS_PER_TOKEN_CONSERVATIVE` **re-exported as `CLASSIFIER_CHARS_PER_TOKEN`**. No grep for the original name finds
+  its downstream consumers **because downstream the symbol is not called that.** The vocabulary sweep and the
+  sibling-grep rule both assume a name survives its hops; an alias breaks that silently. Sweep re-export **sites**,
+  not only names.
+  Second false-silence hazard recorded: **`with-env.ts <mode> -- cmd` is wrong usage and exits 1 with ZERO output** —
+  indistinguishable from a killed gate, same class as the timed-out `eslint`. Cost B9 one probe.
+  Inventory re-derived and superseding B8's: **24 files / 54 specifier lines / 69 bindings / 13 units**; B8's "22"
+  reproduces exactly on production `import` statements in `models/**`. **The 27 refs outside `models/**`are unowned
+AGAIN** — assigned to lane C, C3 landed, they remain. Sixth`BILLING.md` correction queued for the founder:
+  §What is enforced describes a package boundary where the real one is owner-versus-consumer.
+- 2026-07-28: **E1 slice 9 — the intersection clamp is retired, and it was WRONG IN BOTH DIRECTIONS on one selection.**
+  **MEASURED AGAINST THE REAL PRODUCER, NOT REASONED, and one fixture demonstrates both failures.** Siblings
+  `A={low,high}`, `B={low,medium,high}`: the producer returns `off`/`low` available, `medium`/`high` marked
+  `model_output_cap_too_low`. The intersection **HID `medium`** — only `B` offers it, but **per-model resolution falls
+  downward so the turn can honour it** — and **ENABLED `high`**, which both siblings name and **neither can fund**.
+  **A clamp built to be conservative was simultaneously too strict and too permissive.** That is the hazard I named
+  in the brief, plus a second one nobody had.
+  The replacement clamps against the **union** and lets the producer mark each rung — the same correction as premium:
+  **the menu presents, the producer decides.** `offeredEffortLabels`, `serverAcceptsChoice`, `EFFORT_DISABLED_REASONS`
+  and `effortOptionStates` are gone with zero grep hits; menu copy comes from `noticeText(reason)` and the component
+  authors no sentence. Inversion: filtering the presented set to available-only reddens **six** pins.
+  **IT DISCLOSED A TEST-COUNT REDUCTION AS A REDUCTION rather than letting a net number pass:** 35 → 28 in that file.
+  Eleven tests pinned the **deleted local classifier**, whose property is now pinned in `packages/shared`; four new
+  tests pin the new contract and 24 survived a harness change. "The lost 11 tested code that no longer exists" — the
+  right framing, and stated unprompted because a shrinking suite is exactly what an auditor should be told about.
+  **A THIRD `eslint --fix` WAS KILLED AT 120s** and again it re-ran narrowly rather than banking the silence — seven
+  errors fixed **at the cause**: `toReversed()`, narrowing on the union so an always-falsy branch **disappears instead
+  of being suppressed**, and an optional parameter instead of an explicit `undefined` argument.
+  **TWO CRITERIA IT EXPLICITLY DOES NOT CLAIM**, which is the behaviour I want at the end of a long task: the
+  "no text-modality pre-send cost figure" criterion is **unverified** — `estimatedCostNanoUsd` is documented
+  decision-domain-only but it has not grepped the render paths and will not assert it; and `turnDimensions` on a
+  smart-slot-only turn is **undecided** — the menu shows Auto alone, defensible but unpinned.
+  **ATTRIBUTION CORRECTED BY ME:** it reported the `smart-model-execution.ts` TS2322 as C3's fix-cycle area. C3 is
+  clean; **that file is on D1's Files list and D1 is in flight.** E1's conclusion (not mine, `apps/api`, never edited
+  by me) is right; only the owner named was stale.
+- 2026-07-28: **B9 killed by a server error mid-response (not a quota limit) and RESUMED FROM ITS TRANSCRIPT.** It was
+  mid-work — extending `barrel.test.ts`'s existing pin red-first before the deletion — so a fresh spawn would have
+  discarded the re-scoped classification it had already begun.
+  Tree verified after the kill, since an interrupted write is the case worth checking: `HEAD` still `53daba72`, the
+  reflog showing only the founder's two commits with **no agent write**, 339 working-tree entries. Nothing was left
+  half-committed, which is the property the no-git-writes rule exists to guarantee and which held even through an
+  abnormal termination.
+- 2026-07-28: **E1 COMPLETE after nine slices — criteria list closed. Two independent auditors dispatched** (it is
+  flagged non-sensitive, but it changed which wallet the client asks about, deleted a two-read funding engine and now
+  drives the send gate, so it gets the money-adjacent treatment).
+  **THE COST-FIGURE CRITERION CLOSED ON RENDERING EVIDENCE RATHER THAN INTENT, which is exactly what I asked for and
+  what it had refused to claim without.** `estimatedCostNanoUsd` has **zero render consumers** — every occurrence is
+  inside `use-prompt-budget.ts`. Both surviving money-formatting surfaces are permitted, and the second is the
+  interesting one: `MessageCost` renders the **billed** cost on a persisted message (§Affordability 11), while
+  `MediaCostLine`'s `modality` parameter type **excludes `'text'` structurally — a text turn rendering it would not
+  compile.** A criterion enforced by the type system rather than by a test or a habit.
+  **THE SMART-SLOT QUESTION DISSOLVED ON MEASUREMENT, which is the best outcome an "undecided" item can have.** E1
+  probed all three shapes: funded candidate → 3 graded rungs; candidate present but **unfundable** → 3 rungs all
+  marked `insufficient_funds`; **empty pool → `turnDimensions: []` AND `all: []`**. So the plan's worry — a blank
+  effort strip beside populated rows — **cannot occur**: B3's both-arms amendment keeps every rung on the unsendable
+  arm, and the only empty case has no rows either, so strip and list agree. **No ruling needed; the question was
+  ill-founded, and measuring it was cheaper than deciding it.**
+  Fifth component test landed (§Reasoning Effort 10c): Auto beside a single rung, **Auto still enabled when that rung
+  is refused**, rendered menu `['Auto','High']`, and grading Auto from the dimension reddens it. Set now 5/5 —
+  picker greying · premium/trial marking · heterogeneous multi-model effort · hold-vs-balance · single-choice-with-Auto.
+  **FOUR ITEMS CARRIED INTO AUDIT AS DISCLOSURES RATHER THAN LEFT TO BE FOUND:** the surviving `estimatedCostNanoUsd`
+  path (G2/E4 own collapsing it, **not** a second verdict); `instructionChars: 0` as a nominal split with an exact
+  sum; `use-filtered-models` taking `canAccessPremium` for **ordering only**, now read from `affordable.all`; and
+  media staying on the pre-existing estimate path by ruling.
+  Across nine slices: **no git write after the one disclosed violation**, and `notices.ts` / `smart-model/prompts.ts`
+  untouched throughout to avoid racing C3 — coordination sustained without a single collision.
+- 2026-07-28: **B9 (re-scoped) delivered: 69 bindings classified 55 OWNER / 14 CONSUMER across 24 files, and an
+  `arch:check` rule that makes the founder's owner-versus-consumer ruling enforceable rather than stated.**
+  **THE RULE EARNED ITSELF WITHIN MINUTES OF EXISTING, and this is the finding I care most about.** Its first real run
+  flagged `workflows/engine/live-run.test.ts` — modified by a concurrent agent **25 minutes after B9's own inventory
+  grep**. B9's framing is the durable one: **"a grep-and-classify pass is a snapshot; the rule is continuous."**
+  Every classification in this run has been a photograph of a moving tree; this is the first artifact that keeps
+  looking.
+  **B8b's GATE NOW HAS ITS ANSWER: 11 of 13 subpaths survive because OWNERS need them.** Only
+  `smart-model/effort-dimension` and `smart-model/resolve` are consumer-only and deletable — **and closing them is
+  import rewrites onto `chooseFrom`/`wireFor`, publishing nothing.** The wall closes without widening.
+  **LAUNDERING BEATS THE RULE, AND BEAT B9's OWN INVENTORY — flagged to the founder, correctly not taken.**
+  `trial-smart-model-candidates.ts` is a price **owner** with **zero walled specifiers**, reaching
+  `classifierReserveLineItems` through **an owner's re-export**. No specifier grep finds it **and the arch rule does
+  not see it either, because the import it makes is legal.** Closing it needs an _"owners may consume internals but
+  must not republish them"_ clause forcing four re-export sites and their consumers. **Same shape as the aliased
+  re-export B9 found earlier: a name changes identity at a hop and every name-based method loses it.** The rule is
+  real and continuous; it is not airtight, and the gap now has a name instead of being a later surprise.
+  **RULED — publish `planReasoning`/`planReasoningOff`.** B9 owned a consumer reach it could not close because routing
+  through `reasoningEntryFor` means **re-deriving `B + H`**, banned by GC5, in a cassette-hash-stable file. Its own
+  evidence decided it: **four sibling exports are already published**, so the wall does not protect that family and
+  the omission is an inconsistency. Rejected the alternative (`maxTokens` on `TurnReasoningEntry`) as the larger
+  change — altering a shared type to avoid publishing two functions.
+  **RULED — land B9's proposed ratchet.** `PENDING_CONSUMER_CLOSURES` holds nine files with **nothing forcing it to
+  shrink**, which is how an allowlist becomes furniture. A **non-increasing-length assertion** makes it a debt rather
+  than a shelf.
+  **TWO SELF-CORRECTIONS WORTH NAMING.** Its first docblock draft claimed `apps/web` is bound by an existing stricter
+  rule; it checked, found only `fee-seams`, and corrected before shipping — **a false claim about an enforcement
+  guarantee, inside a rule's own documentation, is the worst place for one.** And the second
+  `CLASSIFIER_CHARS_PER_TOKEN` breach it closed is **B8's breach one barrel down** — aliased onto the domain barrel
+  with zero consumers, invisible to name-grep. Second instance of the hazard B9 itself identified.
+  **A TYPO OF MINE, CAUGHT AND FIXED:** §B9's re-scope wrote `11,974,800n` where the measured figure is
+  `11,774,800n` — correct thirty lines above, wrong where I re-typed it. Exactly the mirrored-value failure this plan
+  bans in code, committed by me in prose.
+- 2026-07-28: **B9 DONE — both rulings landed, each pinned red-first with a hash-verified revert.** Two independent
+  auditors dispatched (money-flagged).
+  **IT PINNED THE LINE THE RULING DRAWS, NOT JUST THE PUBLICATION — the sharpest thing in the cycle.** Publishing
+  `planReasoning`/`planReasoningOff` is only correct if the **ladder they are built from stays behind the wall**, so
+  it added a test asserting `REASONING_BUDGET_TOKENS_BY_EFFORT` is absent from **both** barrels. Its own words:
+  **"without it, 'published the plan family' would be indistinguishable from 'opened the ladder'."** A publication
+  without a boundary pin is a hole nobody can see afterwards.
+  **THE CLOSURE WAS PROVEN REAL RATHER THAN ALLOWLISTED:** it removed `integration-setup.ts` from
+  `PENDING_CONSUMER_CLOSURES` and found `arch:check` **still green** — which is the only way to tell a closed reach
+  from a suppressed one. And the calls themselves were left unchanged, so the **cassette request shape is
+  byte-identical** and no `B + H` was re-derived.
+  **THE RATCHET BITES:** growing the list to 9 produced `expected 9 to be less than or equal to 8`, reverted
+  **sha256-identical**; it also added a duplicate guard so a repeated path cannot hide under the cap — a hole I had
+  not thought of when I ruled the ratchet in.
+  **FINAL FIGURES FOR B8b: 67 bindings / 23 files — 55 OWNER, 12 CONSUMER** (69 → 67 reconciles exactly to the reach
+  closed). **11 of 13 units survive because owners need them**; only `smart-model/effort-dimension` and
+  `smart-model/resolve` are consumer-only and deletable.
+  **A HANDOFF TO D1 THAT ONLY B9 COULD HAVE MADE:** `smart-model-execution.ts`'s `planReasoningOff` reach **changed
+  category this cycle** — it was blocked on publication, and is now a one-line import edit. Relayed to D1 mid-flight.
+  **GLOBAL CONSTRAINT 9 CAUGHT A RED GATE THAT EVERY TEST HID:** `packages/shared` lint was **red** — five prettier
+  errors in B9's new test block — while the entire suite passed. Only the run-lint-on-what-you-touched-after-the-last-edit
+  rule surfaced it. That is the exact failure mode the constraint was written from, recurring and caught.
+  **NEW §KNOWN BREAKAGE ENTRY: `git diff` AGAINST `HEAD` CANNOT ISOLATE YOUR OWN EDITS HERE.** B9 tried to verify what
+  `eslint --fix` had done and could not — **B8's uncommitted work is in the same file.** With ~340 uncommitted entries
+  from several tasks, `git diff HEAD` reads _the run_, not _you_; verify your own edits by re-running the suite or
+  against a pre-edit copy. Also recorded: this is a different question from §git-baseline's deliberate
+  compare-against-`HEAD` identity claims — the two methods must not be borrowed for each other.
+  It also caught `eslint --fix` **splitting a docblock from its declaration** (`WALLED_EXPORTS`'s comment separated
+  from its const by an insert), reordered and re-verified. Two eslint runs timed out to background with no output and
+  it recorded **neither** as green.
+- 2026-07-28: **E1 audit A → FAIL, three Important findings. Holding the fix until auditor B returns so the fixer gets
+  ONE consolidated brief.**
+  **FINDING 1 IS A CORRECTION AGAINST WHAT I TOLD THE FOUNDER.** I reported the two-verdict state closed. It is closed
+  **for the gate, not for the explanation**. `sendRefusal` (`'funds_held_by_run'`) has **no render consumer anywhere in
+  `apps/web`** — it is folded into `hasBlockingError` and nothing displays it. The composer's only rendered
+  explanation still comes from `generateNotifications` over `useResolveBilling`, **a second client-side affordability
+  comparison**, which in exactly the hold case returns `denied/insufficient_balance` and renders _"Your balance can't
+  cover this message. Add credit…"_ — **the B7 defect class alive at the rendered surface**, forbidden by §Notices 9
+  by name because paying does not help. The send is disabled, so the user cannot discover the block is transient.
+  **`grep "Wait for"` across `apps/web/src` returns ZERO product hits: the correct copy exists, is derived, is pinned,
+  and is never shown.** A derived value nothing renders is not a closed loop, and impl-report-11 marked the criterion
+  met.
+  **FINDING 2 — THE F1 DEFECT CLASS IS ONLY HALF RE-PINNED, and the reason is a sequencing trap worth naming.** The
+  `isOwnPending` arm is never exercised: **deleting it reddens nothing.** With a warm scoped read and an in-flight
+  own-wallet read inside a group conversation, every affordable row greys — F1's exact finding. **The second read was
+  added in cycle 6, after the cycle-3 pin was written, and the pin was never extended.** A pin written before the code
+  it guards grows does not grow with it.
+  **FINDING 3 — A PROCESS FAILURE I SHOULD HAVE CAUGHT.** E1's scoped check per the plan table is `pnpm test:web`.
+  Across **eleven** reports it ran un-instrumented `vitest run <subset>` instead, which passes while `pnpm test:web`
+  **exits 1** on per-file coverage — **identical numbers on two independent full runs**, so not the documented
+  load-dependent artifact. CODE-RULES makes a coverage shortfall a test failure. And the uncovered regions are not
+  incidental: **the pinned-effort input path is never exercised**, the adapter-side half of a criterion. Now a
+  standing entry: run the scoped check the plan NAMES, because a subset run cannot see the gate.
+  Minor routed onward: retiring the clamp orphaned `offeredEffortLabels` (zero production callers), but the file is
+  outside E1's Files list — B8b/G2's, and `pnpm lint:unused` will surface it at the Phase-4 gate.
+  **WHAT THE AUDITOR CONFIRMED INDEPENDENTLY rather than accepted:** the deletion is genuinely complete (its own
+  vocabulary sweep of fourteen removed symbols across all of `apps/web` returns zero hits, verified **against HEAD**
+  because the hook lived inside another file and no deletion shows in `git status`); the `admissible ⊂ affordable`
+  case reproduces exactly by calling the producer directly; and the clamp was wrong in **both** directions on one
+  selection, reproduced rather than restated. It also verified the `MediaCostLine` structural exclusion compiles as
+  claimed, and reconciled the test-count movement to the file and the cause.
+  **TWO DESIGN QUESTIONS FOR ME, not task failures:** whether the text-arm ruling blesses a second _refusal verdict_
+  driving the notice (it preserves the _estimate_ — those are different things), and that `apps/web` still
+  deep-imports walled affordability subpaths at four or five production sites, so criterion 2's literal reading is
+  unmet even though the estimate-path sites are routed to G2/E4/B8b.
+- 2026-07-28: **D1 delivered; two independent auditors dispatched. One design addition accepted, one deviation
+  accepted, and both were mine to have prevented.**
+  **THE DECLARED FIELD IS JUSTIFIED BY A FALSIFIABLE CLAIM, WHICH IS WHY IT SURVIVES THE DERIVED-OVER-DECLARED
+  RULING.** That ruling governs **recognition** of the classifier; this is a different question. **The wire is
+  provably lossy — two rungs whose budgets clamp to one ceiling mint an identical `{max_tokens}`** — so reading the
+  level back off what was sent would render a **false downgrade badge**. D1 **pinned that with a test rather than
+  asserting it**, which is what makes the field a necessity rather than a convenience. `promptInputTokens` is the
+  standing precedent for an admission-derived declaration; `params` was unavailable (`z.strictObject` rejects unknown
+  keys). Accepted.
+  **MY FILES LIST WAS STALE AND D1 WAS RIGHT TO EXCEED IT** — it predates C3 moving the classified path into
+  `model-call-execution.ts`, and **it named both ends of a thread and neither of its knots.** The additional edits are
+  all chain links, all disclosed, and none collides with B9 (`models/**`) or E1 (`apps/web/**`).
+  **A MONEY-PATH BEHAVIOUR CHANGE, DISCLOSED RATHER THAN BURIED:** `writeGenerationDimension` no longer skips the
+  completion row for a text generation reporting no usage. Required by totality — **without it an aborted partial
+  persists an answer the badge can never describe.** Routed to both auditors with the sharp question: does anything
+  downstream assume that row's absence? A reader that counts or folds rows is where it would surface.
+  **THE HANDOFF TO D2 PREVENTS A SILENT WRONG NUMBER, and only D1 could have seen it:** the classifier's charge
+  anchors to the run's first persisted content item, so **that item carries TWO `llm_completions` rows** — the
+  answer's with a level, the classifier's null. **D2's per-item read must TAKE the non-null row, not fold like the
+  reasoning-token read sums.** A fold over those two rows yields a number **no rung corresponds to**.
+  Known limitation accepted because it fails safe: a `smartModel` slot with a pinned **non-off** wire records no
+  level — unreachable from today's builder, and it fails toward a **missing badge, never a wrong rung**.
+  **IT ALSO CORRECTED AN ATTRIBUTION I HAD RELAYED:** the `smart-model-execution.ts` TS2322 that E1 called foreign was
+  **D1's own, and already fixed**. E1 was right that it was not E1's; I named C3 as owner, then corrected to D1 — and
+  D1 confirms it was its own and closed. And it disclosed running `pnpm ensure-stack` at task start, which
+  **regenerates the env files and voids any concurrent in-flight suite** — the exact hazard C2's auditor discovered,
+  now volunteered by the agent causing it rather than discovered by the agent losing a run.
+  Out-of-scope items it reported without touching: `seed-billing-history.ts` still skips the text completion row when
+  tokens are absent, so seeded dev history diverges from the rule it claims to mirror; `turn-definition.ts` carries
+  pre-existing `G2`/`G3` plan ids against Global Constraint 8; `turn-reasoning.ts` re-types `effort: 'off'` twice
+  against `REASONING_OFF`'s own stated rule.
+- 2026-07-28: **E1 audit B → FAIL: 2 CRITICAL + 5 Important + 1 Minor. Consolidated fix dispatched. Several findings
+  are MINE before they are E1's.**
+  **CRITICAL 1 — THE TRIAL AND GUEST FUNNEL IS DEAD.** `NO_ENDPOINT_FUNDING = {0n, 0n}` reaches the producer for every
+  trial and guest user, because `useSpendable` is `enabled: isAuthenticated`. §Affordability 8 fixes those tiers at a
+  **$0.01 effective balance** and the shared `getEffectiveBalanceNano` returns exactly that. Executed against the real
+  producer: **every row unavailable, both sets unsendable, even on the cheapest model** — the send is disabled for the
+  entire unauthenticated funnel **while the server admits those turns on quota.** "Refused a send the server would
+  allow", for a whole tier. **E1's own report 3 called `0n` "the F1 defect class reproduced exactly" while fixing the
+  loading window, then shipped it as the steady state for two tiers** — a defect identified and then re-introduced by
+  the same agent, in the same file, four cycles apart.
+  **CRITICAL 2 — MY CLOSURE ARGUMENT IS FALSE AND I RECORDED IT AS PROVEN.** I wrote that `admissible ⊆ affordable`
+  means the middle state "can only be a hold". **The two sets differ in TWO inputs — funding AND basis** — which
+  `turn-options.ts`'s own header states. At `heldNanoUsd: 0n`: a long history yields `admissible.refusal =
+'prompt_too_long'`; a low balance plus long history yields `insufficient_funds`. **Both render "Wait for the message
+  to finish" to a user with nothing running.** I accepted a subset relation as a closure proof without checking what
+  else varies between the two calls, and praised it in a report to the founder.
+  **IMPORTANT 3 — MY PAYER RULING RESTED ON A STATE THE SYSTEM CANNOT PRODUCE.** `{spendable:0, held:0,
+payer:'owner'}` cannot be served: the owner arm returns only when hold-blind headroom is positive, forcing
+  `held > 0`. The companion pin pairs `effectiveRemainingNanoUsd: 1e12` with served `spendableNanoUsd: 0` — **the same
+  server-side quantity**, so with real pairing the assertion inverts. **And the ruled branch is inert exactly where it
+  was needed** (`turnEstimateNanoUsd: undefined` keeps the owner for any positive headroom) **and wrong where it
+  fires** (the settle-then-release window makes the client resolve `self` where the server resolves `owner`). The
+  server already serves `payer` hold-blind, having applied §Group Funding 2. **I ruled a client-side re-derivation
+  into existence on evidence that could not occur.**
+  **IMPORTANT 4 — both auditors independently found `sendRefusal` has no rendering consumer**, so a hold-blocked send
+  shows a disabled button and **no explanation at all**. The test certifying the pair asserts two entries of the
+  shared copy map differ — **a property of the map, which cannot tell whether any surface renders either.**
+  **IMPORTANT 5 — the local verdict engine is NOT deleted for the TEXT arm.** Three pricing helpers still price text
+  turns and feed `useResolveBilling`, whose `denied` is OR'd into `hasBlockingError` — **the send gate is a
+  conjunction of two money verdicts, not `admissible`.** The 2026-07-27 narrowing justified survival for the **media**
+  builder only; twelve walled imports remain under `apps/web/src/hooks/`.
+  **IMPORTANT 6 — coverage 91.8/80.43 against the 95 gate, identical on two runs with different driving suites**, and
+  the uncovered lines are **every fail-closed guard in `priceableFromWire`** — the ones whose comments say a zero rate
+  "prices a turn as free". Eleven reports used un-instrumented subsets that cannot see the gate E1's own plan row names.
+  **WHAT BOTH AUDITORS AFFIRMED, so the fix brief does not read as a rout:** the row/menu migration is genuinely done
+  — one `Availability` per row, premium collapsed into a reason, de-selection checked **before** any refusal so a
+  newly-unavailable row cannot trap a selection, and the F1 loading window closed at the adapter with an inversion
+  proof. Auditor B's closing note is the fair summary: **"the two defects that matter most came from a fixture and a
+  closure argument, not from overclaiming"** — and one of those two was mine.
+- 2026-07-28: **D1 CLEAN — both auditors PASS with ZERO findings (18 of 29).** The only task this run to pass both
+  lenses on its first audit.
+  **THE DESIGN'S ONE LOAD-BEARING PREMISE WAS RECONSTRUCTED INDEPENDENTLY AND SURVIVED.** An auditor built the
+  two-rungs-one-ceiling case itself against the real planner and found **four distinct rungs minting an identical
+  `{max_tokens: 3000}` and an identical completion `maxTokens` of 3500** — and with a sub-floor cap, **all five
+  collapse onto `{max_tokens: 1024}`** via the protocol floor. The level is genuinely unrecoverable from what was
+  sent, so the declared field earns itself on evidence. **This is the rare case where a new declared field is a
+  necessity rather than a convenience, and it was proven rather than argued.**
+  **THE DISCLOSED MONEY-PATH BEHAVIOUR CHANGE TURNED OUT TO CLOSE A PRE-EXISTING HOLE.** Both auditors swept every
+  reader of `llm_completions` independently. A billed no-usage text partial previously **debited the wallet while
+  being invisible in every usage aggregate** — it fell out of the inner join, so the user's own dashboard
+  under-reported their spend and message count. The new row includes it. The fold at
+  `conversations/adapters/stores.ts` gains a zero, which cannot move a sum, and the client emits the field only when
+  `> 0`, so it is display-identical. **A change disclosed as a risk was, on inspection, a correction.**
+  **THE D2 TRAP IS CONFIRMED FROM THE MECHANISM, not from the report:** `anchorChargeKey` rule 3 puts a consumed
+  classifier's charge on the run's first persisted item, and `llm_completions.usageRecordId` is unique — so that item
+  carries **two** completion rows, one with a level and one null. **The existing sibling read is a FOLD, and copying
+  its shape is precisely the wrong number.** Routed to D2 with the mechanism, not just the warning.
+  **THE KNOWN LIMITATION IS NOT REACHABLE** — an auditor traced it out: the slot's params compose from two optional
+  keys and the only reasoning wire it can stamp is the hard-off one, gated on a flag the route sets solely from
+  `body.reasoningEffort === 'off'`. So the "records nothing" arm cannot fire from the product.
+  One reporting error caught, no code consequence: D1's coverage table named the wrong driving-suite set for one file
+  — the **number** is right (verified against the full api suite) and the **label** is wrong. Exactly what
+  §Known Breakage's "say which suites drove it" rule exists to surface.
+- 2026-07-28: **B9 fix dispatched — both auditors FAILed on the SAME Important, independently, and reached the same
+  fix.** The rule's stated reach (`apps/api`) exceeds its scanned reach: `SOURCE_GLOBS` feed only
+  `{slices,lib,middleware}/**` + `app.ts`, leaving **137 files** unscanned including `platform/dev/seed-billing-history.ts`,
+  which drives `runSettlement` with a `SettlementTx` and writes nano-USD ledger legs. Latent hole, not a breach —
+  every reaching file today is under `slices/`. **One auditor measured the fix rather than proposing it:** widening to
+  `apps/api/src/**/*.ts` grows the project 2046 → 2183 files with **all 13 rules still green.** Minor: a run task
+  identifier in a test name, in the same cycle that correctly stripped two elsewhere.
+  **FOUNDER INSTRUCTION 2026-07-28 recorded in the plan: dispatch NO new tasks.** Finish what is in flight to clean
+  audits, then pause, fully update plan and ledger, and bring open questions and doc changes. An **analyst** is
+  running on the price-owner relocation question — whether the boundary can become a PACKAGE boundary again, deleting
+  the arch rule, both allowlists, the ratchet and the laundering hole rather than maintaining them. Its output is
+  decision material for the founder, not a task.

@@ -1,10 +1,8 @@
 import { z } from 'zod';
-import { recordServiceEvidence, SERVICE_NAMES } from '@hushbox/db';
-import { errAsync, fromPromise } from '../../../lib/result/index.js';
+import { errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
 import { unavailableError, validationError } from '../../../lib/errors/index.js';
 import { timeoutPolicy } from '../../../lib/resilience/index.js';
 import { EMAIL_BATCH_MAX } from '../ports/index.js';
-import type { Database } from '@hushbox/db';
 import type { ResultAsync } from '../../../lib/result/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type {
@@ -24,14 +22,10 @@ const DEFAULT_FROM = 'HushBox <noreply@mail.hushbox.ai>';
 // caller (the dispatch job's own attempt loop), never this adapter.
 const DEFAULT_TIMEOUT_MS = 10_000;
 
-const sendResponseSchema = z.object({ id: z.string() });
 const batchResponseSchema = z.object({ data: z.array(z.object({ id: z.string() })) });
 
 export interface ResendEmailSenderConfig {
   readonly apiKey: string;
-  /** Evidence writes go through `recordServiceEvidence` (CI-only inside). */
-  readonly db: Database;
-  readonly isCI: boolean;
   readonly fetchImpl?: typeof fetch;
   readonly timeoutMs?: number;
 }
@@ -50,9 +44,9 @@ function serializeMessage(message: EmailMessage): Record<string, unknown> {
 
 /**
  * The real Resend adapter — plain HTTP fetch against the Resend API (no npm
- * SDK, deliberately, matching the legacy integration). After a successful
- * send it records a `resend` service-evidence row (a no-op outside CI), so
- * CI's `verify:evidence` step can prove the real seam was exercised.
+ * SDK, deliberately, matching the legacy integration). This adapter is
+ * constructed only in production: local dev and CI both get the mock sender,
+ * so no automated check can ever observe a real Resend call.
  *
  * Error values never carry the api key, recipient, or message content:
  * failures map to fixed operator-safe messages with the cause attached.
@@ -95,24 +89,11 @@ export function createResendEmailSender(config: ResendEmailSenderConfig): BatchE
       });
   }
 
-  function recordEvidence(messageId: string | undefined): ResultAsync<void, DomainError> {
-    return fromPromise(
-      recordServiceEvidence(
-        config.db,
-        config.isCI,
-        SERVICE_NAMES.RESEND,
-        messageId === undefined ? undefined : { messageId }
-      ),
-      (cause) => unavailableError('service-evidence write failed', cause)
-    ).map((): void => undefined);
-  }
-
   return {
     send(message: EmailMessage): ResultAsync<void, DomainError> {
-      return post(RESEND_API_URL, JSON.stringify(serializeMessage(message)), {}).andThen((data) => {
-        const parsed = sendResponseSchema.safeParse(data);
-        return recordEvidence(parsed.success ? parsed.data.id : undefined);
-      });
+      return post(RESEND_API_URL, JSON.stringify(serializeMessage(message)), {}).map(
+        (): void => undefined
+      );
     },
 
     sendBatch(
@@ -140,7 +121,7 @@ export function createResendEmailSender(config: ResendEmailSenderConfig): BatchE
           );
         }
         const ids = parsed.data.data.map((item) => item.id);
-        return recordEvidence(ids[0]).map((): BatchSendResult => ({ ids }));
+        return okAsync<BatchSendResult, DomainError>({ ids });
       });
     },
   };

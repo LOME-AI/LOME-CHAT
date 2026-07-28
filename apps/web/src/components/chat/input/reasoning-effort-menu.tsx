@@ -1,6 +1,5 @@
 import * as React from 'react';
-import { REASONING_EFFORT_LABELS, TEST_IDS } from '@hushbox/shared';
-import { turnEffortOptions } from '@hushbox/shared/affordability/estimate/effort-options';
+import { noticeText, REASONING_EFFORT_LABELS, REASONING_OFF, TEST_IDS } from '@hushbox/shared';
 import {
   cn,
   useIsMobile,
@@ -14,88 +13,56 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@hushbox/ui';
-import { useReasoningEffort, serverAcceptsChoice } from '@/hooks/chat/use-reasoning-effort';
-import type { ReasoningEffortSelection } from '@hushbox/shared';
-import type { EffortOption as SharedEffortOption } from '@hushbox/shared/affordability/estimate/effort-options';
-import type { EffortModel } from '@/hooks/chat/use-reasoning-effort';
+import { useReasoningEffort } from '@/hooks/chat/use-reasoning-effort';
+import type {
+  Availability,
+  DimensionAvailability,
+  ReasoningEffortSelection,
+} from '@hushbox/shared';
 
-type OptionState = 'enabled' | 'balance' | 'output-limit' | 'unsupported';
-
+/**
+ * The menu renders the producer's PRESENTED SET for the effort dimension —
+ * `affordable.turnDimensions` — and grades nothing itself.
+ *
+ * That set is the union of the selected models' rungs, each graded by the SAME
+ * query the send gate runs (AND over pinned siblings, inside OR over the
+ * arrangements a smart slot could become). The intersection clamp this replaced
+ * was wrong in both directions at once: it HID a rung only one sibling offers
+ * (per-model resolution falls downward, so the turn can honour it) and it
+ * ENABLED a rung both siblings name but neither can fund. Greyed-never-hidden,
+ * for every tier including trial.
+ */
 export interface EffortOption {
   readonly selection: ReasoningEffortSelection;
-  readonly state: OptionState;
-}
-
-/** Cause-specific disabled copy, exposed via tooltip AND `aria-describedby`. */
-export const EFFORT_DISABLED_REASONS: Readonly<Record<Exclude<OptionState, 'enabled'>, string>> = {
-  balance: "Doesn't fit your current balance",
-  'output-limit': "Exceeds the model's output limit",
-  unsupported: 'Not supported by every selected model',
-};
-
-interface EffortOptionStatesInput {
-  readonly models: readonly EffortModel[];
-  /** Affordable output tokens from the shared budget calc (0 when the balance funds nothing). */
-  readonly maxOutputTokens: number;
-  readonly estimatedInputTokens: number;
+  readonly availability: Availability;
 }
 
 /**
- * Feasibility of one shared choice: the answer headroom is
- * min(balance-affordable output, context headroom, the option's declared
- * completion cap) minus the option's resolved reasoning budget — every term
- * except the two client-measured ones rides the shared option itself. The
- * cause split drives the copy: a choice no physical ceiling can hold is
- * `output-limit`; one only the balance blocks is `balance`. A choice the
- * server's current validation would refuse is `unsupported` regardless of
- * headroom (see {@link serverAcceptsChoice}).
+ * Display order: Auto first (always selectable — it delegates the choice), then
+ * the canonical rungs strongest-first, then Min last. Order is presentation;
+ * MEMBERSHIP is the producer's.
  */
-function classifyOption(
-  models: readonly EffortModel[],
-  option: SharedEffortOption,
-  input: EffortOptionStatesInput,
-  contextHeadroom: number
-): OptionState {
-  if (!serverAcceptsChoice(models, option.choice)) return 'unsupported';
-  const physicalCeiling =
-    option.completionCapTokens === undefined
-      ? contextHeadroom
-      : Math.min(contextHeadroom, option.completionCapTokens);
-  const headroom =
-    Math.min(input.maxOutputTokens, physicalCeiling) - option.maxReasoningBudgetTokens;
-  if (headroom >= 1) return 'enabled';
-  return physicalCeiling - option.maxReasoningBudgetTokens < 1 ? 'output-limit' : 'balance';
-}
-
-/**
- * The menu's options in display order — Auto (first), the shared union
- * choice set strongest-level first, Min (the off row) last — each with its
- * live feasibility state. The choice SET is exactly `turnEffortOptions`
- * (union across the selection, Min included when any model can disable);
- * only the ordering is presentation. Auto is never disabled: the server
- * picks a fitting level or engages nothing.
- */
-export function effortOptionStates(input: EffortOptionStatesInput): EffortOption[] {
-  const { models } = input;
-  const contextHeadroom =
-    Math.min(...models.map((model) => model.contextLength)) - input.estimatedInputTokens;
-  const shared = turnEffortOptions(models);
-  const levelsDescending = shared.filter((option) => option.choice !== 'off').toReversed();
-  const min = shared.find((option) => option.choice === 'off');
-  const displayOrder = min === undefined ? levelsDescending : [...levelsDescending, min];
-  const options: EffortOption[] = [{ selection: 'auto', state: 'enabled' }];
-  for (const option of displayOrder) {
-    options.push({
-      selection: option.choice,
-      state: classifyOption(models, option, input, contextHeadroom),
-    });
-  }
-  return options;
+export function effortOptionsFrom(dimension?: DimensionAvailability): EffortOption[] {
+  const auto: EffortOption = { selection: 'auto', availability: { available: true } };
+  if (dimension === undefined) return [auto];
+  const rungs = dimension.options.filter((option) => option.optionId !== REASONING_OFF);
+  const min = dimension.options.find((option) => option.optionId === REASONING_OFF);
+  const ordered = rungs.toReversed();
+  const rows = min === undefined ? ordered : [...ordered, min];
+  return [
+    auto,
+    ...rows.map(
+      (option): EffortOption => ({
+        selection: option.optionId as ReasoningEffortSelection,
+        availability: option.availability,
+      })
+    ),
+  ];
 }
 
 export interface ReasoningEffortMenuProps {
-  maxOutputTokens: number;
-  estimatedInputTokens: number;
+  /** The produced effort dimension (`affordable.turnDimensions`), or undefined while it loads. */
+  effortDimension: DimensionAvailability | undefined;
 }
 
 interface MenuData {
@@ -104,7 +71,13 @@ interface MenuData {
 }
 
 function menuDataKey(data: MenuData): string {
-  const options = data.options.map((option) => `${option.selection}:${option.state}`).join('|');
+  const options = data.options
+    .map((option) =>
+      option.availability.available
+        ? `${option.selection}:ok`
+        : `${option.selection}:${option.availability.reason}`
+    )
+    .join('|');
   return `${options}@${data.effective}`;
 }
 
@@ -159,7 +132,7 @@ function EffortMenuItem({
   isMobile,
   reasonIdBase,
 }: Readonly<EffortMenuItemProps>): React.JSX.Element {
-  const disabled = option.state !== 'enabled';
+  const disabled = !option.availability.available;
   const word = REASONING_EFFORT_LABELS[option.selection];
   const reasonId = `${reasonIdBase}-${option.selection}`;
 
@@ -184,8 +157,12 @@ function EffortMenuItem({
     </DropdownMenuRadioItem>
   );
 
-  if (!disabled) return item;
-  const reason = EFFORT_DISABLED_REASONS[option.state];
+  // Narrowing on the union itself, so the reason is reachable without a
+  // defensive branch the type already rules out.
+  if (option.availability.available) return item;
+  // One home for money copy: the rung's reason renders the same sentence the
+  // send gate would give for that condition.
+  const reason = noticeText(option.availability.reason);
   return (
     <>
       <Tooltip>
@@ -262,7 +239,8 @@ function EffortChip({
             // Authoritative guard regardless of Radix's disabled semantics:
             // greyed options never commit a selection.
             const option = data.options.find((entry) => entry.selection === value);
-            if (option?.state === 'enabled') onSelect(value as ReasoningEffortSelection);
+            if (option?.availability.available === true)
+              onSelect(value as ReasoningEffortSelection);
           }}
         >
           {data.options.map((option) => (
@@ -290,8 +268,7 @@ function EffortChip({
  * grid-columns wrapper below.
  */
 export function ReasoningEffortMenu({
-  maxOutputTokens,
-  estimatedInputTokens,
+  effortDimension,
 }: Readonly<ReasoningEffortMenuProps>): React.JSX.Element {
   const { effective, models, setSelection } = useReasoningEffort();
   const isMobile = useIsMobile();
@@ -300,9 +277,7 @@ export function ReasoningEffortMenu({
   const visible = effective !== undefined && models !== undefined;
   // Greyed-never-hidden for EVERY tier (trial and guest included): infeasible
   // options render greyed with a reason, never filtered out.
-  const options = visible
-    ? effortOptionStates({ models, maxOutputTokens, estimatedInputTokens })
-    : [];
+  const options = visible ? effortOptionsFrom(effortDimension) : [];
 
   // `effective` is defined whenever `visible`; the 'auto' arm only feeds the
   // (never-rendered) current snapshot of hidden states.

@@ -267,6 +267,7 @@ export function createBillingStores(): BillingStores {
         outputTokens: input.outputTokens,
         reasoningTokens: input.reasoningTokens,
         cachedInputTokens: input.cachedInputTokens,
+        ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
       });
     },
 

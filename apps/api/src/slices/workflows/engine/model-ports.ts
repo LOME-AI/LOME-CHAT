@@ -1,4 +1,10 @@
-import { IMAGE_MIME_TYPES, isRunnableModelShape, mediaTag, textTag } from '@hushbox/shared';
+import {
+  IMAGE_MIME_TYPES,
+  isRunnableModelShape,
+  jsonTag,
+  mediaTag,
+  textTag,
+} from '@hushbox/shared';
 import { validationError } from '../../../lib/errors/index.js';
 import { err, ok } from '../../../lib/result/index.js';
 import type {
@@ -96,4 +102,23 @@ export function deriveModelPorts(
     in: [textTag()],
     out: output,
   }));
+}
+
+/**
+ * The ports a node actually declares: the model's derived ports, with its input
+ * port swapped for the registered schema the node names. It is the one
+ * derivation the compiler and the runtime both read, so a node that compiles
+ * against one input type cannot be handed another at execution.
+ *
+ * A model's own derived input is always text, which cannot express
+ * "text-or-envelope" — TypeTag v1 has no union — so the node names the schema it
+ * consumes and the port follows. Still exactly one port either way, so the
+ * single-input-port rule value nodes compile under is untouched.
+ */
+export function portsAccepting(
+  ports: NodePortDeclaration,
+  inputSchema: string | undefined
+): NodePortDeclaration {
+  if (inputSchema === undefined) return ports;
+  return { in: [jsonTag(inputSchema)], out: ports.out };
 }

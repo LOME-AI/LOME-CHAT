@@ -137,7 +137,7 @@ export function createAdminOpDeps(
   const env = c.env;
   const redis = c.var.redis;
   const dispatcherEnv: JobDispatcherEnv = env;
-  const emailSender = once((): BatchEmailSender => createEmailSenderFromEnv(env, db));
+  const emailSender = once((): BatchEmailSender => createEmailSenderFromEnv(env));
   // Enqueue-only registry for the dispatch job (the handler runs in the
   // dispatcher DO with its own registry); enqueueWithinTx consumes only the
   // registration's schema and lease metadata.

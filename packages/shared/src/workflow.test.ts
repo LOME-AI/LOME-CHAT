@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   DEADLINE_CLASS_MS,
   DEADLINE_CLASSES,
+  consumedProducerIds,
+  isTurnClassifierNode,
   Node,
   NODE_TYPES,
   PolicyHooks,
@@ -224,6 +226,115 @@ describe('smartModelClassifierDimensions', () => {
         smart({ candidates: TWO, classify: { model: true, effort: true } })
       )
     ).toEqual({ model: true, effort: true });
+  });
+});
+
+describe('isTurnClassifierNode', () => {
+  function call(id: string): Node {
+    return Node.parse({
+      ...base,
+      id,
+      type: 'modelCall',
+      model: 'cheap/model',
+      params: {},
+      in: { node: 'input', port: 'prompt' },
+    });
+  }
+
+  function decide(ins: readonly { node: string; port: string }[], reducer: string): Node {
+    return Node.parse({ ...base, id: 'decide', type: 'fanIn', reducer, ins });
+  }
+
+  const PROMPT = { node: 'input', port: 'prompt' };
+
+  it('derives the classifier from the decision reducer naming it on the answer port', () => {
+    const classify = call('classify');
+    const nodes = [classify, decide([PROMPT, { node: 'classify', port: 'out' }], 'decideTurn')];
+    expect(isTurnClassifierNode(classify, nodes)).toBe(true);
+  });
+
+  it('does not derive a sibling the decision reducer consumes at the prompt position', () => {
+    const sibling = call('answer0');
+    const nodes = [sibling, decide([{ node: 'answer0', port: 'out' }, PROMPT], 'decideTurn')];
+    expect(isTurnClassifierNode(sibling, nodes)).toBe(false);
+  });
+
+  it('does not derive a node named by a different reducer', () => {
+    const joined = call('answer0');
+    const nodes = [joined, decide([PROMPT, { node: 'answer0', port: 'out' }], 'joinTexts')];
+    expect(isTurnClassifierNode(joined, nodes)).toBe(false);
+  });
+
+  it('does not derive a node no decision reducer names', () => {
+    const answer = call('answer0');
+    const classify = call('classify');
+    const nodes = [
+      answer,
+      classify,
+      decide([PROMPT, { node: 'classify', port: 'out' }], 'decideTurn'),
+    ];
+    expect(isTurnClassifierNode(answer, nodes)).toBe(false);
+  });
+
+  it('never derives a non-modelCall node, however the graph names it', () => {
+    const smart = Node.parse({
+      ...base,
+      id: 'classify',
+      type: 'smartModel',
+      classifierModelId: 'cheap/model',
+      candidates: [{ id: 'a/one' }],
+      in: PROMPT,
+    });
+    const nodes = [smart, decide([PROMPT, { node: 'classify', port: 'out' }], 'decideTurn')];
+    expect(isTurnClassifierNode(smart, nodes)).toBe(false);
+  });
+});
+
+describe('consumedProducerIds', () => {
+  it('collects every node another node reads, and nothing else', () => {
+    const classify = Node.parse({
+      ...base,
+      id: 'classify',
+      type: 'modelCall',
+      model: 'cheap/model',
+      params: {},
+      in: { node: 'input', port: 'prompt' },
+    });
+    const answer = Node.parse({
+      ...base,
+      id: 'answer0',
+      type: 'modelCall',
+      model: 'big/model',
+      params: {},
+      in: { node: 'decide', port: 'out' },
+    });
+    const decide = Node.parse({
+      ...base,
+      id: 'decide',
+      type: 'fanIn',
+      reducer: 'decideTurn',
+      ins: [
+        { node: 'input', port: 'prompt' },
+        { node: 'classify', port: 'out' },
+      ],
+    });
+    expect(
+      [...consumedProducerIds([classify, answer, decide])].toSorted((left, right) =>
+        left.localeCompare(right)
+      )
+    ).toEqual(['classify', 'decide', 'input']);
+  });
+
+  it('collects a fanOut collection port', () => {
+    const spread = Node.parse({
+      ...base,
+      id: 'spread',
+      type: 'fanOut',
+      over: { node: 'source', port: 'out' },
+      body: 'body',
+      maxWidth: 3,
+    });
+    expect([...consumedProducerIds([spread])]).toEqual(['source']);
   });
 });
 

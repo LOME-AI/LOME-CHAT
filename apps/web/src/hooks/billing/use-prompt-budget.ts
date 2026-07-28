@@ -1,27 +1,16 @@
 import * as React from 'react';
 import {
-  SMART_MODEL_ID,
   buildTurnSystemPrompt,
   generateNotifications,
-  nanoUSD,
   promptCharacterCount,
-  resolveClientBilling,
   type CanonicalReasoningEffort,
   type Model,
   type BudgetError,
   type FundingSource,
   type MemberPrivilege,
-  type Pricing,
   type ReasoningEffortSelection,
-  type UserTier,
 } from '@hushbox/shared';
-import { MINIMUM_OUTPUT_TOKENS } from '@hushbox/shared/affordability/constants';
-import { turnEffortOptions } from '@hushbox/shared/affordability/estimate/effort-options';
-import { outputCharsPerTokenForTier } from '@hushbox/shared/affordability/estimate/pre-adapters';
-import { priceRequest } from '@hushbox/shared/affordability/estimate/price-request';
 import { planReasoning } from '@hushbox/shared/affordability/estimate/reasoning-plan';
-import { evaluateManifest } from '@hushbox/shared/affordability/estimate/reducers';
-import { smartModelMinimumRequiredNanoUsd } from '@hushbox/shared/affordability/estimate/smart-model-affordability';
 import {
   useBudgetCalculation,
   type BudgetModelPricing,
@@ -35,16 +24,17 @@ import {
   type UseMediaCostEstimateInput,
 } from '@/hooks/billing/use-media-cost-estimate';
 import { useResolveBilling } from '@/hooks/billing/use-resolve-billing';
-import { useSpendable } from '@/hooks/billing/use-spendable';
-import { useUserTierInfo } from '@/hooks/billing/use-user-tier-info';
 import { useModelStore } from '@/stores/model';
 import { useModels } from '@/hooks/models/models';
 import { useSession, useAuthStore } from '@/lib/auth';
 import { useWebSearch } from '@/hooks/chat/use-web-search';
+import { useTurnOptions } from '@/hooks/billing/use-turn-options.js';
 import type {
-  SmartModelPoolCandidate,
-  SmartModelStorageContext,
-} from '@hushbox/shared/affordability/estimate/smart-model-affordability';
+  DimensionAvailability,
+  NoticeReason,
+  PromptBasis,
+  TurnOptions,
+} from '@hushbox/shared';
 
 interface PromptBudgetInput {
   value: string;
@@ -75,6 +65,16 @@ export interface PromptBudgetResult {
   estimatedCostNanoUsd: bigint;
   isOverCapacity: boolean;
   hasBlockingError: boolean;
+  /**
+   * Why the send is refused, as a TYPED reason, or `undefined` when it may
+   * start. The send gate reads `admissible` — the hold-aware set — while the
+   * picker greys from `affordable`; THE PAIR derives which reason applies
+   * (BILLING §Data Structures): a selection outside `affordable` is a money
+   * problem, one inside `affordable` but outside `admissible` is a hold
+   * problem. Nothing sets this flag — it is which set the selection fell out
+   * of, so the block and its explanation cannot drift apart.
+   */
+  sendRefusal: NoticeReason | undefined;
   hasContent: boolean;
   /**
    * Affordable output tokens and estimated input tokens from the shared
@@ -83,6 +83,12 @@ export interface PromptBudgetResult {
    */
   maxOutputTokens: number;
   estimatedInputTokens: number;
+  /**
+   * The produced effort dimension off `affordable` — the menu's presented set.
+   * It rides the greying set, not the hold-aware one, because a hold blocks the
+   * SEND and never greys an option (BILLING §Notices 9).
+   */
+  effortDimension: DimensionAvailability | undefined;
 }
 
 function resolveGroupBudgetArgument(
@@ -148,29 +154,11 @@ interface GroupBillingContext {
 }
 
 /**
- * Owner-funded means owner-priced (BILLING §Group Funding 1): the tier that
- * sizes every money figure is the PAYER's, and it is SERVED with the funding
- * snapshot for the conversation — never re-derived client-side, so the client
- * cannot disagree with the wallet admission will actually gate. Trial and guest
- * hold no wallet and have no endpoint, so their own tier stands.
- */
-function payerTierOf(
-  served: { readonly tier: UserTier } | undefined,
-  callerTier: UserTier
-): UserTier {
-  return served?.tier ?? callerTier;
-}
-
-/**
  * The conversation scope the served funding read is keyed by: a solo composer
  * (or a picker opened outside a conversation) asks for its own numbers.
  */
 function conversationScope(conversationId: string | null | undefined): string | null {
   return conversationId ?? null;
-}
-
-function groupScope(group: ModelFloorGroupContext | undefined): string | null {
-  return conversationScope(group?.conversationId);
 }
 
 /**
@@ -250,14 +238,79 @@ interface PromptBudgetDisplayInputs {
   isGroupBudgetPending: boolean;
   modelContextLength: number;
   inputValue: string;
+  /** The produced pair. `undefined` while its inputs load. */
+  turnOptions: TurnOptions | undefined;
 }
 
 interface PromptBudgetDisplayResult {
   isOverCapacity: boolean;
   hasBlockingError: boolean;
+  /**
+   * Why the send is refused, as a TYPED reason, or `undefined` when it may
+   * start. The send gate reads `admissible` — the hold-aware set — while the
+   * picker greys from `affordable`; THE PAIR derives which reason applies
+   * (BILLING §Data Structures): a selection outside `affordable` is a money
+   * problem, one inside `affordable` but outside `admissible` is a hold
+   * problem. Nothing sets this flag — it is which set the selection fell out
+   * of, so the block and its explanation cannot drift apart.
+   */
+  sendRefusal: NoticeReason | undefined;
   hasContent: boolean;
   capacityCurrentUsage: number;
   capacityMaxCapacity: number;
+}
+
+/**
+ * The turn's prompt basis: COUNTS ONLY, which is what keeps content out of the
+ * money layer. Custom instructions are already inside the built system prompt,
+ * so they are counted there rather than twice.
+ */
+function promptBasisOf(systemPrompt: string, historyChars: number, value: string): PromptBasis {
+  return {
+    systemChars: systemPrompt.length,
+    instructionChars: 0,
+    historyChars,
+    inputChars: value.length,
+    attachmentBytes: 0,
+  };
+}
+
+/**
+ * Read-only access refuses every paid action outright, ahead of any money
+ * question: no balance and no waiting changes it, so it replaces the funding
+ * verdict rather than joining it.
+ */
+function readOnlyOverride(
+  isReadOnly: boolean,
+  fundingSource: FundingSource | 'denied',
+  sendRefusal: NoticeReason | undefined
+): { fundingSource: FundingSource | 'denied'; sendRefusal: NoticeReason | undefined } {
+  if (!isReadOnly) return { fundingSource, sendRefusal };
+  return { fundingSource: 'denied', sendRefusal: 'conversation_read_only' };
+}
+
+/**
+ * The reason a send is refused, taken from the REFUSAL the producer gave —
+ * never inferred from the difference between the two sets.
+ *
+ * `admissible` and `affordable` differ in TWO inputs, funding AND prompt basis
+ * (see `turn-options.ts`), so "inside affordable, outside admissible" does not
+ * imply a hold: a long history alone produces `prompt_too_long` there. Reading
+ * the gap as a hold told a user with nothing running to wait for a reply that
+ * did not exist, when their real action was to shorten the message.
+ *
+ * A hold is a narrower claim: the turn is refused for FUNDING, and the same
+ * funding hold-blind would have sent. That is the only shape where waiting is
+ * the action and paying is not (BILLING §Notices 9).
+ */
+function sendRefusalOf(options: TurnOptions | undefined): NoticeReason | undefined {
+  if (options === undefined) return undefined;
+  if (options.admissible.sendable) return undefined;
+  const refusal = options.admissible.refusal;
+  if (refusal === 'insufficient_funds' && options.affordable.sendable) {
+    return 'funds_held_by_run';
+  }
+  return refusal;
 }
 
 function computePromptBudgetDisplay(inputs: PromptBudgetDisplayInputs): PromptBudgetDisplayResult {
@@ -265,7 +318,9 @@ function computePromptBudgetDisplay(inputs: PromptBudgetDisplayInputs): PromptBu
   const isDenied = inputs.fundingSource === 'denied';
   const isBillingLoading =
     inputs.isBalanceLoading || (inputs.isGroupMember && inputs.isGroupBudgetPending);
-  const hasBlockingError = isDenied || isOverCapacity || isBillingLoading;
+  const sendRefusal = sendRefusalOf(inputs.turnOptions);
+  const hasBlockingError =
+    isDenied || isOverCapacity || isBillingLoading || sendRefusal !== undefined;
   const hasContent = inputs.inputValue.trim().length > 0;
 
   const hasContext = inputs.modelContextLength > 0;
@@ -275,6 +330,7 @@ function computePromptBudgetDisplay(inputs: PromptBudgetDisplayInputs): PromptBu
   return {
     isOverCapacity,
     hasBlockingError,
+    sendRefusal,
     hasContent,
     capacityCurrentUsage,
     capacityMaxCapacity,
@@ -328,91 +384,6 @@ function buildModelTokenPricing(
 }
 
 /**
- * The priceable text pool the Smart Model affordability gate reasons over — the
- * real per-token text models, never the synthetic Smart Model row (which carries
- * the catalog's headline-min pricing). Media/audio rows carry no per-token rate,
- * so requiring both input and output rates naturally selects text.
- */
-function smartModelPoolFromCatalog(modelCatalog: readonly Model[]): SmartModelPoolCandidate[] {
-  return modelCatalog.flatMap((model): SmartModelPoolCandidate[] => {
-    if (model.isSmartModel === true) return [];
-    const { inputPerToken, outputPerToken } = model.pricing;
-    if (inputPerToken === undefined || outputPerToken === undefined) return [];
-    const pricing: Pricing = {
-      inputPerToken: nanoUSD(BigInt(inputPerToken)),
-      outputPerToken: nanoUSD(BigInt(outputPerToken)),
-    };
-    return [
-      {
-        id: model.id,
-        description: model.description,
-        pricing,
-        contextLength: model.contextLength,
-        // The provider completion ceiling bounds every candidate's answer cap;
-        // dropping it here under-denies (a model that cannot emit a minimum
-        // answer would price the pool floor).
-        ...(model.maxOutputTokens === undefined ? {} : { maxOutputTokens: model.maxOutputTokens }),
-      },
-    ];
-  });
-}
-
-/**
- * The turn's minimum cost in exact nano-USD. Media modalities take the
- * per-modality media estimate; a text turn takes the token-derived minimum,
- * EXCEPT Smart Model, which prices through the shared affordability gate
- * (reserve + cheapest floor) so the client refuses exactly the sends the
- * server refuses. Extracted so the hook stays under the complexity budget.
- */
-function resolveEstimatedCostNanoUsd(args: {
-  activeModality: 'text' | 'image' | 'video' | 'audio';
-  selectedModels: readonly { id: string }[];
-  modelCatalog: readonly Model[] | undefined;
-  estimatedInputTokens: number;
-  tokenMinimumCostNanoUsd: bigint;
-  mediaNanoUsd: bigint;
-  storage: SmartModelStorageContext;
-}): bigint {
-  if (args.activeModality !== 'text') return args.mediaNanoUsd;
-  const smart = smartModelMinimumNanoUsd(
-    args.selectedModels,
-    args.modelCatalog,
-    args.estimatedInputTokens,
-    args.storage
-  );
-  return smart ?? args.tokenMinimumCostNanoUsd;
-}
-
-/**
- * Smart Model's minimum-required cost in exact nano-USD, priced through the
- * ONE shared affordability gate — the classifier worst-case reserve plus the
- * cheapest candidate's realistic floor, the exact threshold below which the
- * server refuses the send. Returns undefined when Smart Model is not selected or
- * no priceable text pool exists, so the caller falls back to the token cost. This
- * replaces pricing Smart Model at the catalog's balance-tracking headline-min,
- * which let a $0 free-tier session slip past the client while the server 402'd.
- */
-function smartModelMinimumNanoUsd(
-  selectedModels: readonly { id: string }[],
-  modelCatalog: readonly Model[] | undefined,
-  estimatedInputTokens: number,
-  storage: SmartModelStorageContext
-): bigint | undefined {
-  if (!selectedModels.some((model) => model.id === SMART_MODEL_ID)) return undefined;
-  if (modelCatalog === undefined) return undefined;
-  // The SAME storage-inclusive per-candidate threshold the server admits on, so
-  // the client denies exactly the sends the server refuses (the biconditional):
-  // the effective balance below which no candidate can fund a minimum answer.
-  const minimum = smartModelMinimumRequiredNanoUsd(
-    smartModelPoolFromCatalog(modelCatalog),
-    estimatedInputTokens,
-    storage
-  );
-  if (minimum === null) return undefined;
-  return minimum;
-}
-
-/**
  * Build the modality-specific input shape that {@link useMediaCostEstimate}
  * accepts. Returns no media-rate keys for `text`, in which case the cost
  * estimate is 0 and the caller falls back to the token-derived cost.
@@ -458,13 +429,6 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
   const modelContextLength = Math.min(...modelsPricing.map((m) => m.contextLength));
   const isAuthenticated = !isSessionPending && Boolean(session?.user);
   const customInstructions = useAuthStore((s) => s.customInstructions);
-  // The payer tier drives the output-storage ratio the Smart Model per-candidate
-  // caps price against — the SAME storage the server admission holds, so the
-  // client and server affordability verdicts agree.
-  const tierInfo = useUserTierInfo(isAuthenticated);
-  // The funding snapshot for THIS conversation: its tier is the payer's.
-  const { data: spendableData } = useSpendable(conversationScope(input.conversationId));
-
   const isGroupMember = resolveIsGroupMember(input.conversationId, input.currentUserPrivilege);
 
   const { data: groupBudgetData, isPending: isGroupBudgetPending } = useConversationBudgets(
@@ -504,6 +468,15 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
 
   const groupContext = useGroupBillingContext(isGroupMember, groupBudgetData);
 
+  // The send gate's own source. `admissible` is evaluated against the COMPOSED
+  // basis and the hold-aware figure — the question "can this turn start right
+  // now" — while the picker's `affordable` is neither. One call yields both.
+  const turnOptions = useTurnOptions({
+    basis: promptBasisOf(systemPrompt, input.historyCharacters, input.value),
+    isAuthenticated,
+    conversationId: conversationScope(input.conversationId),
+  });
+
   // 2.5. Media cost — for image/video/audio modalities, the token-based budget
   // result is irrelevant (token prices are 0). Use the same per-modality
   // helpers the backend uses for reservation, so the displayed cost matches
@@ -526,22 +499,10 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
 
   // 3. Resolve billing: who pays or why denied
   const isPremiumModel = selectedModels.some((sm) => modelsData?.premiumIds.has(sm.id) ?? false);
-  const sizingTier = payerTierOf(spendableData, tierInfo.tier);
-  // Smart Model prices through the shared affordability gate (reserve + cheapest
-  // floor), never the catalog's headline-min — so the client refuses exactly the
-  // sends the server refuses. A non-Smart text turn keeps the token-derived cost.
-  const estimatedCostNanoUsd = resolveEstimatedCostNanoUsd({
-    activeModality,
-    selectedModels,
-    modelCatalog: modelsData?.models,
-    estimatedInputTokens: budgetResult.estimatedInputTokens,
-    tokenMinimumCostNanoUsd: budgetResult.estimatedMinimumCostNanoUsd,
-    mediaNanoUsd: mediaCost.estimatedNanoUsd,
-    storage: {
-      outputCharsPerToken: outputCharsPerTokenForTier(sizingTier),
-      inputChars: promptChars,
-    },
-  });
+  // A TEXT turn contributes no money estimate to the funding decision:
+  // `admissible` is its whole money verdict. Only a per-unit media generation
+  // still needs one, and it keeps its own path until G2/E4 collapse it.
+  const estimatedCostNanoUsd = activeModality === 'text' ? 0n : mediaCost.estimatedNanoUsd;
 
   const billingResult = useResolveBilling(
     buildBillingResolverInput({
@@ -582,12 +543,14 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
     isGroupBudgetPending,
     modelContextLength,
     inputValue: input.value,
+    turnOptions: turnOptions.options,
   });
 
   const isReadOnly = input.currentUserPrivilege === 'read';
+  const gated = readOnlyOverride(isReadOnly, billingResult.fundingSource, display.sendRefusal);
 
   return {
-    fundingSource: isReadOnly ? 'denied' : billingResult.fundingSource,
+    fundingSource: gated.fundingSource,
     notifications,
     capacityPercent: budgetResult.capacityPercent,
     capacityCurrentUsage: display.capacityCurrentUsage,
@@ -595,143 +558,12 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
     estimatedCostNanoUsd,
     isOverCapacity: display.isOverCapacity,
     hasBlockingError: display.hasBlockingError || isReadOnly,
+    sendRefusal: gated.sendRefusal,
     hasContent: display.hasContent,
     maxOutputTokens: budgetResult.maxOutputTokens,
     estimatedInputTokens: budgetResult.estimatedInputTokens,
+    effortDimension: turnOptions.options?.affordable.turnDimensions.find(
+      (dimension) => dimension.dimensionId === 'effort'
+    ),
   };
-}
-
-/** Group funding context for the floor — the conversation the picker was opened from. */
-export interface ModelFloorGroupContext {
-  readonly conversationId: string;
-  readonly currentUserPrivilege: MemberPrivilege;
-}
-
-export interface UseModelFloorInput {
-  readonly isAuthenticated: boolean;
-  /** Present when the picker belongs to a group conversation the caller is in. */
-  readonly group?: ModelFloorGroupContext | undefined;
-}
-
-export interface ModelFloorResult {
-  /** True while funding inputs load; `isBelowFloor` already suppresses then. */
-  readonly isPending: boolean;
-  /** Whether the model's minimum-viable turn is unaffordable — the picker greys on true. */
-  readonly isBelowFloor: (model: Model) => boolean;
-}
-
-/**
- * A model's minimum-viable-answer floor in nano-USD at its CHEAPEST
- * configuration: the shared single-model manifest at zero prompt input,
- * evaluated at the minimum answer plus the cheapest resolvable reasoning
- * budget (0 when reasoning can disable or is absent; the lowest offered
- * rung when reasoning is mandatory — `turnEffortOptions` ascending order
- * makes its first entry exactly that cheapest configuration). Undefined for
- * rows without per-token rates (media rows: no token floor) or a catalog
- * still loading — never grey on missing data.
- */
-function modelFloorNanoUsd(
-  model: Model,
-  sizingTier: UserTier,
-  modelCatalog: readonly Model[] | undefined
-): bigint | undefined {
-  const outputCharsPerToken = outputCharsPerTokenForTier(sizingTier);
-  if (model.isSmartModel === true) {
-    if (modelCatalog === undefined) return undefined;
-    const minimum = smartModelMinimumRequiredNanoUsd(smartModelPoolFromCatalog(modelCatalog), 0, {
-      outputCharsPerToken,
-      inputChars: 0,
-    });
-    return minimum ?? undefined;
-  }
-  const { inputPerToken, outputPerToken } = model.pricing;
-  if (inputPerToken === undefined || outputPerToken === undefined) return undefined;
-  const manifest = priceRequest({
-    models: [
-      { pricing: { inputPerToken: BigInt(inputPerToken), outputPerToken: BigInt(outputPerToken) } },
-    ],
-    inputTokens: 0n,
-    inputChars: 0,
-    outputCharsPerToken,
-  });
-  /* v8 ignore next 2 -- unreachable: bigint rates and zero token/char inputs are always priceable */
-  if (!manifest.ok) return undefined;
-  const cheapestChoice = turnEffortOptions([model])[0];
-  const reasoningBudgetTokens = cheapestChoice?.maxReasoningBudgetTokens ?? 0;
-  return evaluateManifest(manifest.value, BigInt(MINIMUM_OUTPUT_TOKENS + reasoningBudgetTokens), {
-    scope: 'all-in',
-  });
-}
-
-/**
- * The composer's canSend floor, packaged per model for the picker
- * (BILLING §Affordability 4): a model greys when its minimum-viable turn is
- * unaffordable under the SAME funding verdict the composer renders —
- * `resolveClientBilling` over the served spendable / free allowance / fixed
- * trial arm, with the group headroom dimension when the picker belongs to a
- * group conversation (a group-blind floor would grey models the owner's
- * budget funds). The premium lock is deliberately NOT part of the floor
- * (`isPremiumModel: false`) — it is its own separate picker gate.
- */
-export function useModelFloor(input: UseModelFloorInput): ModelFloorResult {
-  const tierInfo = useUserTierInfo(input.isAuthenticated);
-  // Two reads, two wallets, two jobs. The conversation-scoped snapshot names the
-  // PAYER, so it sizes the turn (§Group Funding 1). The argument-free snapshot is
-  // the CALLER's own wallet, which is what `resolveClientBilling` compares once
-  // the group headroom fails to cover the turn and the member falls through to
-  // personal funds — feeding it the payer-scoped figure would grey models the
-  // member can self-fund. The composer path splits them the same way:
-  // `usePromptBudget` takes the scoped read for sizing and delegates the compare
-  // to `useResolveBilling`, which takes the argument-free one.
-  const { data: payerSpendableData, isPending: isSpendablePending } = useSpendable(
-    groupScope(input.group)
-  );
-  const { data: ownSpendableData, isPending: isOwnSpendablePending } = useSpendable();
-  const isGroupMember = resolveIsGroupMember(
-    input.group?.conversationId,
-    input.group?.currentUserPrivilege
-  );
-  const { data: groupBudgetData, isPending: isGroupBudgetPending } = useConversationBudgets(
-    resolveGroupBudgetArgument(isGroupMember, input.group?.conversationId)
-  );
-  const groupContext = useGroupBillingContext(isGroupMember, groupBudgetData);
-  const { data: modelsData } = useModels();
-
-  const isPending =
-    (input.isAuthenticated && (isSpendablePending || isOwnSpendablePending)) ||
-    (isGroupMember && isGroupBudgetPending);
-  const spendableNanoUsd = ownSpendableData ? BigInt(ownSpendableData.spendableNanoUsd) : 0n;
-  const { tier, purchasedBalanceNanoUsd, freeAllowanceNanoUsd } = tierInfo;
-  const sizingTier = payerTierOf(payerSpendableData, tier);
-  const modelCatalog = modelsData?.models;
-
-  const isBelowFloor = React.useCallback(
-    (model: Model): boolean => {
-      if (isPending) return false;
-      const floorNanoUsd = modelFloorNanoUsd(model, sizingTier, modelCatalog);
-      if (floorNanoUsd === undefined) return false;
-      const decision = resolveClientBilling({
-        tier,
-        purchasedBalanceNanoUsd,
-        spendableNanoUsd,
-        freeAllowanceNanoUsd,
-        isPremiumModel: false,
-        estimatedMinimumCostNanoUsd: floorNanoUsd,
-        ...(groupContext !== undefined && { group: groupContext }),
-      });
-      return decision.fundingSource === 'denied';
-    },
-    [
-      isPending,
-      sizingTier,
-      modelCatalog,
-      tier,
-      purchasedBalanceNanoUsd,
-      spendableNanoUsd,
-      freeAllowanceNanoUsd,
-      groupContext,
-    ]
-  );
-
-  return { isPending, isBelowFloor };
 }

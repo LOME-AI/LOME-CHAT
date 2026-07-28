@@ -76,25 +76,28 @@ interface TierFunds {
    * so a group member's owner-funded turn sizes exactly as the owner's would.
    */
   tier: UserTier;
-  /** The payer's served spendable (`GET /billing/spendable`) — hold-aware. */
+  /**
+   * The payer's served spendable (`GET /billing/spendable`) — hold-aware, and
+   * the whole money gate for every authenticated tier: a paid payer's
+   * cushioned wallet spendable, a free payer's day-keyed allowance remaining.
+   */
   spendableNanoUsd: bigint;
-  /** Served daily free-allowance remaining (only a self-funding free payer's). */
-  freeAllowanceNanoUsd: bigint;
 }
 
 /**
- * The effective balance the affordability solve gates against. Authenticated
- * tiers use SERVED numbers only: paid gates on the served spendable (the
- * cushion is baked in exactly once server-side — re-adding it here is the
- * double-cushion bug), free on the served daily-allowance remaining.
- * Trial/guest have no endpoint, so the shared fixed-1¢ arm stays client-side.
+ * The effective balance the affordability solve gates against.
+ *
+ * Every authenticated tier reads ONE served number, with no branch between
+ * paid and free: which wallet funds the turn was decided server-side and is
+ * already baked into the figure, so a client branch here could only
+ * reintroduce a second funding authority. The branch that remains is the
+ * AUTHENTICATION boundary, not a tier boundary — trial and guest are refused
+ * by the endpoint's route class by design, so their fixed per-message ceiling
+ * is the one arm that stays client-side.
  */
 function effectiveBalanceFor(funds: TierFunds): bigint {
   if (funds.tier === 'trial' || funds.tier === 'guest') {
     return getEffectiveBalanceNano(funds.tier, 0n, 0n);
-  }
-  if (funds.tier === 'free') {
-    return funds.freeAllowanceNanoUsd;
   }
   return funds.spendableNanoUsd;
 }
@@ -199,7 +202,6 @@ export function useBudgetCalculation(
   const isBalanceLoading = input.isAuthenticated && (!isBalanceStable || isSpendablePending);
 
   const spendableNanoUsd = spendableData ? BigInt(spendableData.spendableNanoUsd) : 0n;
-  const freeAllowanceNanoUsd = tierInfo.freeAllowanceNanoUsd;
   // Trial and guest hold no wallet and have no endpoint, so their tier comes
   // from the client-side arm; every served snapshot names the payer's tier.
   const payerTier = spendableData?.tier ?? tierInfo.tier;
@@ -209,9 +211,8 @@ export function useBudgetCalculation(
       computeBudget(input, {
         tier: payerTier,
         spendableNanoUsd,
-        freeAllowanceNanoUsd,
       }),
-    [input, payerTier, spendableNanoUsd, freeAllowanceNanoUsd]
+    [input, payerTier, spendableNanoUsd]
   );
 
   const [debouncedResult, setDebouncedResult] =
@@ -222,7 +223,7 @@ export function useBudgetCalculation(
   // object with identical values on every render (access-revoked flows
   // repeatedly invalidate it), and a reference compare would setState every
   // render → "Maximum update depth exceeded".
-  const tierKey = `${payerTier}:${spendableNanoUsd.toString()}:${freeAllowanceNanoUsd.toString()}`;
+  const tierKey = `${payerTier}:${spendableNanoUsd.toString()}`;
   const [previousTierKey, setPreviousTierKey] = React.useState(tierKey);
   if (previousTierKey !== tierKey) {
     setPreviousTierKey(tierKey);

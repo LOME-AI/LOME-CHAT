@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { parseNanoUSD } from '@hushbox/shared';
+import { tierCanAccessPremium } from '@hushbox/shared';
 import { useSession } from '@/lib/auth';
 import { useModelStore } from '@/stores/model';
-import { useBalance } from '@/hooks/billing/billing.js';
+import { useSpendable } from '@/hooks/billing/use-spendable.js';
 import { useModels } from '@/hooks/models/models.js';
 import type { Model, ChatModality } from '@hushbox/shared';
 import type { SelectedModelEntry } from '@/stores/model';
@@ -57,7 +57,7 @@ function resolveDefault(params: ResolveParams): SelectedModelEntry[] | undefined
  */
 export function useResolveDefaultModel(modality: ChatModality): void {
   const { data: session, isPending: isSessionPending } = useSession();
-  const { data: balanceData } = useBalance();
+  const { data: spendableData } = useSpendable(null);
   const { data: modelsData } = useModels();
   const currentSelection = useModelStore((state) => state.selections[modality]);
   const setSelectedModels = useModelStore((state) => state.setSelectedModels);
@@ -65,10 +65,13 @@ export function useResolveDefaultModel(modality: ChatModality): void {
   React.useEffect(() => {
     if (isSessionPending || !modelsData) return;
     const isAuthenticated = Boolean(session?.user);
-    if (isAuthenticated && !balanceData) return;
+    if (isAuthenticated && spendableData === undefined) return;
 
-    const purchasedNano = balanceData ? parseNanoUSD(balanceData.purchased.balanceNanoUsd) : 0n;
-    const canAccessPremium = isAuthenticated && purchasedNano > 0n;
+    // The PAYER's served tier decides premium access — never a balance, which
+    // is not an affordability input (BILLING §Affordability 4). Choosing a
+    // default from a second derivation of the same fact is how they drift.
+    const canAccessPremium =
+      spendableData !== undefined && tierCanAccessPremium(spendableData.tier);
 
     const next = resolveDefault({
       modality,
@@ -82,7 +85,7 @@ export function useResolveDefaultModel(modality: ChatModality): void {
     modality,
     session?.user,
     isSessionPending,
-    balanceData,
+    spendableData,
     modelsData,
     currentSelection,
     setSelectedModels,

@@ -1,20 +1,10 @@
 /**
- * Self-host onnxruntime-web's WASM runtime same-origin.
- *
- * The on-device Kokoro TTS engine (@huggingface/transformers, via kokoro-js)
- * loads onnxruntime-web's `.wasm`/`.mjs` runtime. Left to library defaults it
- * fetches those from a third-party CDN (jsdelivr), which the production CSP
- * blocks. `tts.worker.ts` instead pins `env.backends.onnx.wasm.wasmPaths` to
- * the shared same-origin `TTS_ORT_WASM_PATH`; this plugin emits the matching
- * runtime files there so the path resolves, in dev (middleware) and in the
- * built dist (Rollup asset). The files are read from the installed package, so
- * the self-hosted copies always match the installed transformers version.
- *
- * Wired from `apps/web/vite.config.ts` and `apps/marketing/astro.config.mjs`
- * (one implementation, both surfaces).
+ * The build-config seam: values whose correctness depends on being identical
+ * across build surfaces, written once here and imported rather than restated
+ * per app.
  */
 import { createRequire } from 'node:module';
-import { createReadStream, readdirSync, readFileSync } from 'node:fs';
+import { createReadStream, existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,7 +36,7 @@ export const ORT_DIR = TTS_ORT_WASM_PATH.replaceAll(/^\/+|\/+$/gu, '');
  * statically emits its own ~21 MB copy of the wasm — one per app build.
  *
  * Its consumer contract is "self-host the .mjs/.wasm and set `wasmPaths`",
- * which `ortAssetsPlugin` above and `tts.worker.ts` already satisfy, so the
+ * which `ortAssetsPlugin` below and `tts.worker.ts` already satisfy, so the
  * copies are pure waste. Added by microsoft/onnxruntime PR #24014; it is
  * documented nowhere else, including onnxruntime's own docs, so it reads as
  * mystery config without this note. Fails safe: if the condition ever stops
@@ -78,13 +68,55 @@ export const ORT_EXTERN_WASM_CONDITION = 'onnxruntime-web-use-extern-wasm';
  * `es` emits the worker unwrapped, so `new.target` survives. The TTS worker is
  * the only `new Worker` in the repo and is already constructed with
  * `{ type: 'module' }`, so nothing here depends on the classic-worker format.
- * `verify-web-bundle` guards the built output against the rewrite returning.
+ * `verify-bundle` guards the built output against the rewrite returning.
  *
  * Lives beside the ORT constants because this is the build-config seam both
  * `apps/web/vite.config.ts` and `apps/marketing/astro.config.mjs` already
  * import from; the format must never be spelled out per-app.
  */
 export const WORKER_BUILD_OPTIONS = { format: 'es' } as const;
+
+/**
+ * Absolute path to the TTS worker's source, for use as an
+ * `optimizeDeps.entries` scan entry in dev.
+ *
+ * Vite's dependency scanner never crosses a
+ * `new Worker(new URL(…, import.meta.url))` edge: the plugin that understands
+ * that pattern is registered only in the main pipeline, not in the scanner's
+ * reduced plugin set. Dynamic imports are followed; worker entry points are
+ * not. So kokoro-js — imported only inside the TTS worker — is invisible at
+ * startup and gets discovered on the first worker fetch. Late discovery
+ * re-chunks the whole prebundle, and any prebundle hash change forces a
+ * full-page reload, which costs the user their first click on Listen / read
+ * aloud.
+ *
+ * Naming the worker's source as a scan entry makes the scanner walk it at
+ * startup. The path is named rather than the package, so nothing here can
+ * drift against `packages/ui`'s dependency list and every future worker-only
+ * dependency is covered by the same entry.
+ */
+export function resolveTtsWorkerSource(
+  workerPath: string = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../packages/ui/src/components/accessibility/lib/tts.worker.ts'
+  )
+): string {
+  if (!existsSync(workerPath)) {
+    throw new Error(
+      `TTS worker source not found at ${workerPath}. The dev dependency scanner ` +
+        `cannot reach kokoro-js without it, so the first TTS click would trigger a ` +
+        `full-page reload; update the path if the worker moved.`
+    );
+  }
+  return workerPath;
+}
+
+/**
+ * Resolved at config load so a moved or renamed worker fails the dev server
+ * loudly instead of silently restoring the first-click reload. This assert is
+ * the regression guard for that behaviour.
+ */
+export const TTS_WORKER_SCAN_ENTRY = resolveTtsWorkerSource();
 
 /**
  * Locate the installed `@huggingface/transformers` dist directory (reached

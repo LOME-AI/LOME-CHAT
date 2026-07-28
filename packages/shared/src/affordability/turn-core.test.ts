@@ -7,6 +7,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { MINIMUM_OUTPUT_TOKENS } from './constants.js';
+import { modelId } from './model-id.js';
+import type { ModelId } from './model-id.js';
 import { nanoUSD } from './nano-usd.js';
 import { evaluateTurn } from './turn-core.js';
 import { EMPTY_PROMPT_BASIS } from './turn-types.js';
@@ -25,17 +27,18 @@ interface ModelShape {
 
 function modelOf(shape: ModelShape): PriceableModel {
   return {
-    modelId: shape.modelId,
+    modelId: modelId(shape.modelId),
     inputRateNanoUsd: nanoUSD(shape.inputRate),
     outputRateNanoUsd: nanoUSD(shape.outputRate),
     contextLength: shape.contextLength,
     providerCap: shape.providerCap,
+    releasedAtMs: 0,
     reasoning: shape.reasoning,
   };
 }
 
 const CHEAP = modelOf({
-  modelId: 'vendor/cheap',
+  modelId: modelId('vendor/cheap'),
   inputRate: 100n,
   outputRate: 200n,
   contextLength: 100_000,
@@ -45,26 +48,29 @@ const CHEAP = modelOf({
   },
 });
 const PLAIN = modelOf({
-  modelId: 'vendor/plain',
+  modelId: modelId('vendor/plain'),
   inputRate: 1000n,
   outputRate: 2000n,
   contextLength: 100_000,
   providerCap: 8000,
 });
 const TIGHT = modelOf({
-  modelId: 'vendor/tight',
+  modelId: modelId('vendor/tight'),
   inputRate: 1000n,
   outputRate: 2000n,
   contextLength: 4000,
   providerCap: 4000,
 });
 const PRICEY = modelOf({
-  modelId: 'vendor/pricey',
+  modelId: modelId('vendor/pricey'),
   inputRate: 50_000n,
   outputRate: 100_000n,
   contextLength: 100_000,
   providerCap: 32_000,
 });
+
+/** A fixed instant: premium classification takes its clock as an argument. */
+const NOW_MS = 1_800_000_000_000;
 
 const BASIS: PromptBasis = {
   systemChars: 400,
@@ -76,7 +82,10 @@ const BASIS: PromptBasis = {
 
 function selectionOf(models: readonly string[], overrides: Partial<Selection> = {}): Selection {
   return {
-    answerSources: { models: models as [string, ...string[]], smartSlot: false },
+    answerSources: {
+      models: models.map((id) => modelId(id)) as [ModelId, ...ModelId[]],
+      smartSlot: false,
+    },
     modality: 'text',
     pinned: {},
     webSearch: false,
@@ -91,6 +100,7 @@ function inputOf(overrides: Partial<CoreInput> = {}): CoreInput {
     selection: selectionOf(['vendor/plain']),
     catalog: [PLAIN],
     tier: 'paid',
+    nowMs: NOW_MS,
     ...overrides,
   };
 }
@@ -206,7 +216,7 @@ describe('the classifier reserve', () => {
 
   it('breaks a rate tie on the identifier, so catalog order cannot move the reserve', () => {
     const first = modelOf({
-      modelId: 'vendor/aaa',
+      modelId: modelId('vendor/aaa'),
       inputRate: 100n,
       outputRate: 200n,
       contextLength: 100_000,
@@ -219,7 +229,7 @@ describe('the classifier reserve', () => {
     // identifier can decide, and the reserve prices the input leg at 1 nano
     // rather than 199 whichever order the catalog arrives in.
     const second = modelOf({
-      modelId: 'vendor/zzz',
+      modelId: modelId('vendor/zzz'),
       inputRate: 1n,
       outputRate: 299n,
       contextLength: 100_000,
@@ -245,6 +255,52 @@ describe('the classifier reserve', () => {
       ).lineItems;
       expect(items.map((item) => item.label)).not.toContain('classifier-storage');
     }
+  });
+
+  /**
+   * The reserve prices the list the classifier prompt will CARRY, which is the
+   * classifier-selectable pool when a smart slot is open and nothing at all
+   * otherwise. Pricing a different list than the executor prompts leaves the
+   * error's sign undecided, and an unsigned error is not an upper bound however
+   * large it happens to be.
+   */
+  const extraModels = (count: number): PriceableModel[] =>
+    Array.from({ length: count }, (_, index) =>
+      modelOf({
+        // Dearer than CHEAP on both legs, so the cheapest engine cannot move.
+        modelId: `vendor/extra-${String(index)}`,
+        inputRate: 5000n,
+        outputRate: 9000n,
+        contextLength: 100_000,
+        providerCap: 32_000,
+      })
+    );
+
+  const reserveNano = (result: CoreResult): bigint | undefined =>
+    result.lineItems.find((item) => item.label === 'classifier-tokens')?.fixedNano;
+
+  it('prices no model list on a turn whose only open dimension is effort', () => {
+    const reserveWith = (extras: readonly PriceableModel[]): bigint | undefined =>
+      reserveNano(
+        evaluateTurn(
+          inputOf({ catalog: [CHEAP, ...extras], selection: selectionOf(['vendor/cheap']) })
+        )
+      );
+    const bare = reserveWith([]);
+    expect(bare).toBeDefined();
+    // No smart slot, so the classifier prompt lists no models at all: catalog
+    // size cannot move the reserve.
+    expect(reserveWith(extraModels(40))).toBe(bare);
+  });
+
+  it('prices the classifier-selectable pool, not the catalog, when a slot is open', () => {
+    const reserveWith = (extras: readonly PriceableModel[]): bigint | undefined =>
+      reserveNano(evaluateTurn(inputOf({ catalog: [CHEAP, ...extras], selection: SLOT_ONLY })));
+    const bare = reserveWith([]);
+    expect(bare).toBeDefined();
+    // The pool grows with the catalog here, so the prompt genuinely gets longer
+    // and the reserve must follow it.
+    expect(reserveWith(extraModels(40))).toBeGreaterThan(bare ?? 0n);
   });
 });
 
@@ -345,24 +401,25 @@ describe('the smart slot`s MAX enters the shared token solve', () => {
   //
   // Every model id below is the same length and the same three ids appear in both
   // catalogs, and `vendor/eng1` is the cheapest combined rate in both — so the
-  // classifier reserve (priced from the ids, on the cheapest engine) is identical
-  // across the two evaluations and the difference is the candidate rates alone.
+  // classifier reserve (priced from the prompted pool's ids, on the cheapest
+  // engine) is identical across the two evaluations and the difference is the
+  // candidate rates alone.
   const ENGINE = modelOf({
-    modelId: 'vendor/eng1',
+    modelId: modelId('vendor/eng1'),
     inputRate: 100n,
     outputRate: 200n,
     contextLength: 100_000,
     providerCap: 32_000,
   });
   const MID = modelOf({
-    modelId: 'vendor/mid1',
+    modelId: modelId('vendor/mid1'),
     inputRate: 1000n,
     outputRate: 2000n,
     contextLength: 100_000,
     providerCap: 32_000,
   });
   const DEAR = modelOf({
-    modelId: 'vendor/dear',
+    modelId: modelId('vendor/dear'),
     inputRate: 4000n,
     outputRate: 8000n,
     contextLength: 100_000,
@@ -370,7 +427,7 @@ describe('the smart slot`s MAX enters the shared token solve', () => {
   });
   /** Same id as {@link DEAR}, at {@link MID}'s rates: the control catalog. */
   const DEAR_AS_MID = modelOf({
-    modelId: 'vendor/dear',
+    modelId: modelId('vendor/dear'),
     inputRate: 1000n,
     outputRate: 2000n,
     contextLength: 100_000,
@@ -388,7 +445,7 @@ describe('the smart slot`s MAX enters the shared token solve', () => {
         fundingNanoUsd: FUNDING,
         catalog,
         selection: {
-          answerSources: { models: ['vendor/eng1'], smartSlot: true },
+          answerSources: { models: [modelId('vendor/eng1')], smartSlot: true },
           modality: 'text',
           pinned: {},
           webSearch: false,
@@ -437,7 +494,7 @@ describe('reasons, in the precedence the specification fixes', () => {
 
   it("reports a model's own output cap when neither money nor prompt binds", () => {
     const capped = modelOf({
-      modelId: 'vendor/capped',
+      modelId: modelId('vendor/capped'),
       inputRate: 100n,
       outputRate: 200n,
       contextLength: 100_000,
@@ -541,7 +598,7 @@ describe('the two kinds of row', () => {
     const pinned = result.optionSet.all.find((entry) => entry.modelId === 'vendor/cheap');
     expect(pinned).toEqual({
       kind: 'pinned',
-      modelId: 'vendor/cheap',
+      modelId: modelId('vendor/cheap'),
       availability: { available: true },
       ceilingTokens: expect.any(Number),
     });
@@ -614,7 +671,7 @@ describe('turn-level dimensions', () => {
 describe('the turn-level menu is the send gate, one rung at a time', () => {
   /** Cap 64,000: High's 32,768-token budget fits beside a minimum answer. */
   const WIDE = modelOf({
-    modelId: 'v/wide',
+    modelId: modelId('v/wide'),
     inputRate: 60n,
     outputRate: 150n,
     contextLength: 200_000,
@@ -623,7 +680,7 @@ describe('the turn-level menu is the send gate, one rung at a time', () => {
   });
   /** Cap 9,000: Low's 4,096 fits beside an answer, Mid and High clamp to 9,000 and cannot. */
   const NARROW = modelOf({
-    modelId: 'v/narrow',
+    modelId: modelId('v/narrow'),
     inputRate: 60n,
     outputRate: 150n,
     contextLength: 200_000,
@@ -857,7 +914,7 @@ describe('the smart slot', () => {
         fundingNanoUsd: 20_000_000n,
         catalog: [CHEAP, PLAIN, PRICEY],
         selection: {
-          answerSources: { models: ['vendor/cheap'], smartSlot: true },
+          answerSources: { models: [modelId('vendor/cheap')], smartSlot: true },
           modality: 'text',
           pinned: {},
           webSearch: false,
@@ -881,7 +938,7 @@ describe('the hold covers every presented candidate`s arrangement', () => {
   // overhead from the model ids, so their character counts are load-bearing on
   // every amount pinned in this block.
   const SLOT_PIN = modelOf({
-    modelId: 'v/pin',
+    modelId: modelId('v/pin'),
     inputRate: 60n,
     outputRate: 150n,
     contextLength: 200_000,
@@ -889,14 +946,14 @@ describe('the hold covers every presented candidate`s arrangement', () => {
     reasoning: { supportedEfforts: ['high', 'medium', 'low'] },
   });
   const SLOT_CHEAP = modelOf({
-    modelId: 'v/cheap',
+    modelId: modelId('v/cheap'),
     inputRate: 5n,
     outputRate: 10n,
     contextLength: 128_000,
     providerCap: 65_000,
   });
   const SLOT_DEAR = modelOf({
-    modelId: 'v/dear',
+    modelId: modelId('v/dear'),
     inputRate: 20_000n,
     outputRate: 90_000n,
     contextLength: 64_000,
@@ -914,7 +971,7 @@ describe('the hold covers every presented candidate`s arrangement', () => {
 
   function smartSlotBeside(pin: 'high' | undefined): Selection {
     return {
-      answerSources: { models: ['v/pin'], smartSlot: true },
+      answerSources: { models: [modelId('v/pin')], smartSlot: true },
       modality: 'text',
       pinned: pin === undefined ? {} : { effort: pin },
       webSearch: false,
@@ -947,8 +1004,9 @@ describe('the hold covers every presented candidate`s arrangement', () => {
    * neither recomputed. `fixedCosts` differ by exactly that reserve, so equalising
    * `funding − reserve` gives both solves the same shared token count, and the
    * resolved total minus its own reserve is the arrangement's sibling cost.
-   * A classifier reserve is a function of the catalog and the tier alone, never of
-   * the funding, so reading it off a first pricing pass cannot bias the second.
+   * A classifier reserve carries no funding term at all — it is priced from the
+   * tier and the pool the classifier prompt would name — so reading it off a first
+   * pricing pass cannot bias the second.
    */
   function arrangementTotal(
     candidateId: string,
@@ -956,7 +1014,7 @@ describe('the hold covers every presented candidate`s arrangement', () => {
     pin: 'high' | undefined
   ): bigint | undefined {
     const selection: Selection = {
-      answerSources: { models: ['v/pin', candidateId], smartSlot: false },
+      answerSources: { models: [modelId('v/pin'), modelId(candidateId)], smartSlot: false },
       modality: 'text',
       pinned: pin === undefined ? {} : { effort: pin },
       webSearch: false,
@@ -1047,7 +1105,7 @@ describe('an explicit effort pin on a model with no rung to run', () => {
    * an honest verdict, not a resolution failure.
    */
   const MANDATORY_SINGLE = modelOf({
-    modelId: 'vendor/mandatory-single',
+    modelId: modelId('vendor/mandatory-single'),
     inputRate: 100n,
     outputRate: 200n,
     contextLength: 100_000,
@@ -1057,7 +1115,7 @@ describe('an explicit effort pin on a model with no rung to run', () => {
 
   /** The same shape with room for that budget plus a minimum answer. */
   const MANDATORY_SINGLE_WIDE = modelOf({
-    modelId: 'vendor/mandatory-single-wide',
+    modelId: modelId('vendor/mandatory-single-wide'),
     inputRate: 100n,
     outputRate: 200n,
     contextLength: 200_000,
@@ -1104,7 +1162,10 @@ describe('an explicit effort pin on a model with no rung to run', () => {
     // 4), so a sibling that cannot reason resolves to no reasoning rather than
     // vetoing every rung the reasoning sibling offers. Both directions are
     // asserted against the SAME call's menu, so neither side can drift.
-    const heterogeneous = { models: ['vendor/cheap', 'vendor/plain'], catalog: [CHEAP, PLAIN] };
+    const heterogeneous = {
+      models: [modelId('vendor/cheap'), modelId('vendor/plain')],
+      catalog: [CHEAP, PLAIN],
+    };
     const menu = evaluateTurn(
       inputOf({
         catalog: heterogeneous.catalog,
@@ -1146,7 +1207,7 @@ describe('eligibility is graded on the resolved cheapest corner', () => {
   it('excludes a mandatory-reasoning model whose ceiling fits only the answer', () => {
     // providerCap 2,000: B(low) clamps to 2,000, so B + 1,000 cannot fit.
     const mandatory = modelOf({
-      modelId: 'vendor/mandatory',
+      modelId: modelId('vendor/mandatory'),
       inputRate: 100n,
       outputRate: 200n,
       contextLength: 100_000,
@@ -1162,7 +1223,7 @@ describe('eligibility is graded on the resolved cheapest corner', () => {
     expect(result.optionSet.sendable).toBe(false);
     // The same ceiling admits a model that can switch reasoning off.
     const disableable = modelOf({
-      modelId: 'vendor/disableable',
+      modelId: modelId('vendor/disableable'),
       inputRate: 100n,
       outputRate: 200n,
       contextLength: 100_000,

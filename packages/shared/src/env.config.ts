@@ -476,6 +476,22 @@ export const envConfig = {
     [Mode.Production]: secret('LINEAR_API_KEY_READ'),
   },
 
+  // FCM credentials for the CI-only live send test, deliberately SEPARATE from
+  // the production FCM_PROJECT_ID / FCM_SERVICE_ACCOUNT_JSON so the production
+  // credential is never something CI reads. The service account behind these
+  // holds exactly `cloudmessaging.messages.create`, and the test it feeds sends
+  // `validate_only`, so nothing reaches a device. CiVitest only: no Development
+  // entry (local dev never calls Google), and production has its own vars.
+  FCM_PROJECT_ID_CI: {
+    to: [Destination.Backend],
+    [Mode.CiVitest]: secret('FCM_PROJECT_ID_CI'),
+  },
+
+  FCM_SERVICE_ACCOUNT_JSON_CI: {
+    to: [Destination.Backend],
+    [Mode.CiVitest]: secret('FCM_SERVICE_ACCOUNT_JSON_CI'),
+  },
+
   HELCIM_WEBHOOK_VERIFIER: {
     to: [Destination.Backend],
     [Mode.Development]: 'bW9jay13ZWJob29rLXZlcmlmaWVyLXNlY3JldC0zMmI=', // Mock verifier for local webhook testing
@@ -701,6 +717,8 @@ export const backendEnvSchema = z.object({
   LINEAR_API_KEY_READ: z.string().min(1).optional(),
   FCM_PROJECT_ID: z.string().optional(),
   FCM_SERVICE_ACCOUNT_JSON: z.string().optional(),
+  FCM_PROJECT_ID_CI: z.string().min(1).optional(),
+  FCM_SERVICE_ACCOUNT_JSON_CI: z.string().min(1).optional(),
   // Web Push VAPID keys. Optional in the schema because dev/CI satisfy them
   // from envConfig's committed throwaway keypair and the real webpush sender is
   // only constructed in production (dev/CI push goes to the mock); the

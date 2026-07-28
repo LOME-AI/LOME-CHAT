@@ -17,8 +17,8 @@ vi.mock('@/lib/auth', () => ({
   useSession: vi.fn(),
 }));
 
-vi.mock('@/hooks/billing/billing.js', () => ({
-  useBalance: vi.fn(),
+vi.mock('@/hooks/billing/use-spendable.js', () => ({
+  useSpendable: vi.fn(),
 }));
 
 vi.mock('@/hooks/models/models.js', () => ({
@@ -27,11 +27,11 @@ vi.mock('@/hooks/models/models.js', () => ({
 }));
 
 import { useSession } from '@/lib/auth';
-import { useBalance } from '@/hooks/billing/billing.js';
+import { useSpendable } from '@/hooks/billing/use-spendable.js';
 import { useModels, getAccessibleModelIds } from '@/hooks/models/models.js';
 
 const mockedUseSession = vi.mocked(useSession);
-const mockedUseBalance = vi.mocked(useBalance);
+const mockedUseSpendable = vi.mocked(useSpendable);
 const mockedUseModels = vi.mocked(useModels);
 const mockedGetAccessibleModelIds = vi.mocked(getAccessibleModelIds);
 
@@ -66,7 +66,9 @@ describe('useModelValidation — infinite update loop guard', () => {
     mockedUseSession.mockReturnValue({ data: null, isPending: false } as ReturnType<
       typeof useSession
     >);
-    mockedUseBalance.mockReturnValue({ data: undefined } as ReturnType<typeof useBalance>);
+    mockedUseSpendable.mockReturnValue({
+      data: { spendableNanoUsd: '0', heldNanoUsd: '0', tier: 'free', payer: 'self' },
+    } as never);
   });
 
   afterEach(() => {
@@ -103,12 +105,13 @@ describe('useModelValidation — infinite update loop guard', () => {
     // React's update-depth limit and throw before the assertion even runs.
     expect(setterSpy.mock.calls.length).toBeLessThanOrEqual(4);
 
-    // The text selection must end up either as a non-premium model the user can
-    // access (none exist here, so the only safe answer is) leaving the stale
-    // entry alone or replacing with an accessible default. Either way the loop
-    // must terminate.
-    const finalText = useModelStore.getState().selections.text;
-    expect(finalText.length).toBeGreaterThanOrEqual(0);
+    // Stronger than "it terminates": the loop's engine was dropping a premium
+    // selection and substituting a premium fallback. Premium entries are no
+    // longer dropped at all, so the text selection is left exactly as it was
+    // and there is no cycle to bound.
+    expect(useModelStore.getState().selections.text).toEqual([
+      { id: 'stale-removed', name: 'Stale' },
+    ]);
   });
 
   it('terminates when a stale text selection is replaced by an accessible non-premium model', () => {

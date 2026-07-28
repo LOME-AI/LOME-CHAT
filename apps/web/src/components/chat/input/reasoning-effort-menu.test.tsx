@@ -3,7 +3,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SMART_MODEL_ID, TEST_IDS } from '@hushbox/shared';
-import { turnEffortOptions } from '@hushbox/shared/affordability/estimate/effort-options';
 import { createModelStoreStub, type ModelStoreStub } from '@/test-utils/model-store-mock';
 import { useReasoningEffortStore } from '@/stores/reasoning-effort';
 import type { EffortModel } from '@/hooks/chat/use-reasoning-effort';
@@ -39,21 +38,30 @@ vi.mock('@/stores/model', async (importOriginal) => {
 
 import {
   ReasoningEffortMenu,
-  effortOptionStates,
-  EFFORT_DISABLED_REASONS,
+  effortOptionsFrom,
 } from '@/components/chat/input/reasoning-effort-menu';
+import { noticeText } from '@hushbox/shared';
+import type { Availability, DimensionAvailability } from '@hushbox/shared';
+
+/** A produced effort dimension, exactly as `affordable.turnDimensions` carries it. */
+function dim(rows: [string, string, boolean][]): DimensionAvailability {
+  const options = rows.map(([optionId, label, available]) => ({
+    optionId: optionId,
+    label,
+    availability: (available
+      ? { available: true }
+      : { available: false, reason: 'model_output_cap_too_low' }) satisfies Availability,
+  }));
+  const [first, ...rest] = options;
+  if (first === undefined) throw new Error('a dimension always presents at least one option');
+  return { dimensionId: 'effort', options: [first, ...rest] };
+}
 
 /** Effort-native model: high/medium/low ladder, generous context. */
 const effortModel: EffortModel = {
   id: 'test-model',
   contextLength: 200_000,
   reasoning: { supportedEfforts: ['high', 'medium', 'low'] },
-};
-
-const mandatoryModel: EffortModel = {
-  id: 'test-model',
-  contextLength: 200_000,
-  reasoning: { supportedEfforts: ['high', 'medium', 'low'], mandatory: true },
 };
 
 const plainModel: EffortModel = { id: 'test-model', contextLength: 8192 };
@@ -65,25 +73,20 @@ const budgetNativeModel: EffortModel = {
   reasoning: {},
 };
 
-/** Degenerate 1-choice model: no offered rungs, but reasoning can disable. */
-const minOnlyModel: EffortModel = {
-  id: 'test-model',
-  contextLength: 200_000,
-  reasoning: { supportedEfforts: [] },
-};
-
 interface RenderMenuOptions {
-  maxOutputTokens?: number;
-  estimatedInputTokens?: number;
+  /** The produced dimension; defaults to a fully-available three-rung ladder. */
+  dimension?: DimensionAvailability;
 }
 
+const DEFAULT_DIMENSION = dim([
+  ['off', 'Min', true],
+  ['low', 'Low', true],
+  ['medium', 'Mid', true],
+  ['high', 'High', true],
+]);
+
 function renderMenu(options: RenderMenuOptions = {}): ReturnType<typeof render> {
-  return render(
-    <ReasoningEffortMenu
-      maxOutputTokens={options.maxOutputTokens ?? 100_000}
-      estimatedInputTokens={options.estimatedInputTokens ?? 100}
-    />
-  );
+  return render(<ReasoningEffortMenu effortDimension={options.dimension ?? DEFAULT_DIMENSION} />);
 }
 
 function setCatalog(models: EffortModel[]): void {
@@ -94,145 +97,68 @@ async function openMenu(user: ReturnType<typeof userEvent.setup>): Promise<void>
   await user.click(screen.getByTestId(TEST_IDS.effortChip));
 }
 
-describe('effortOptionStates', () => {
-  it('marks every offered level enabled when balance and context both fit', () => {
-    const states = effortOptionStates({
-      models: [effortModel],
-      maxOutputTokens: 100_000,
-      estimatedInputTokens: 100,
-    });
-    expect(states).toEqual([
-      { selection: 'auto', state: 'enabled' },
-      { selection: 'high', state: 'enabled' },
-      { selection: 'medium', state: 'enabled' },
-      { selection: 'low', state: 'enabled' },
-      { selection: 'off', state: 'enabled' },
+describe("effortOptionsFrom — the producer's presented set, ordered", () => {
+  it('renders the UNION, marking a rung only one sibling offers rather than hiding it', () => {
+    // The intersection clamp this replaced was wrong in BOTH directions on one
+    // selection. Sibling A offers {low, high}; sibling B adds {medium}.
+    //   intersection = {low, high} → `medium` VANISHES from the menu, even
+    //     though per-model resolution falls downward so the turn can honour it.
+    //   producer     = {off, low, medium, high}, each graded by the same query
+    //     the send gate runs — so `high` can be PRESENT AND GREYED when neither
+    //     sibling can fund it, which the intersection would have enabled.
+    const dimension = dim([
+      ['off', 'Min', true],
+      ['low', 'Low', true],
+      ['medium', 'Mid', false],
+      ['high', 'High', false],
     ]);
-  });
 
-  it('marks a level the balance cannot fund as balance-infeasible', () => {
-    // high's budget tier is 32k tokens; 20k affordable output cannot cover it.
-    const states = effortOptionStates({
-      models: [effortModel],
-      maxOutputTokens: 20_000,
-      estimatedInputTokens: 100,
-    });
-    expect(states).toContainEqual({ selection: 'high', state: 'balance' });
-    expect(states).toContainEqual({ selection: 'low', state: 'enabled' });
-  });
+    const options = effortOptionsFrom(dimension);
 
-  it('marks a level the model context cannot hold as output-limit-infeasible', () => {
-    // context 10k − 9.9k input leaves 100 tokens of context headroom: below
-    // even the min budget tier, while the balance itself is ample.
-    const smallContext: EffortModel = { ...effortModel, contextLength: 10_000 };
-    const states = effortOptionStates({
-      models: [smallContext],
-      maxOutputTokens: 1_000_000,
-      estimatedInputTokens: 9900,
+    // Membership is the producer's: the union-only rung is present.
+    expect(options.map((option) => option.selection)).toEqual([
+      'auto',
+      'high',
+      'medium',
+      'low',
+      'off',
+    ]);
+    // And it is MARKED, not hidden — greyed-never-hidden, every tier.
+    expect(options.find((option) => option.selection === 'medium')?.availability).toEqual({
+      available: false,
+      reason: 'model_output_cap_too_low',
     });
-    expect(states).toContainEqual({ selection: 'high', state: 'output-limit' });
-  });
-
-  it('omits None when a selected model has mandatory reasoning', () => {
-    const states = effortOptionStates({
-      models: [mandatoryModel],
-      maxOutputTokens: 100_000,
-      estimatedInputTokens: 100,
-    });
-    expect(states.some((option) => option.selection === 'off')).toBe(false);
-  });
-
-  it('disables None when no output headroom remains at all', () => {
-    const states = effortOptionStates({
-      models: [effortModel],
-      maxOutputTokens: 0,
-      estimatedInputTokens: 100,
-    });
-    expect(states).toContainEqual({ selection: 'off', state: 'balance' });
-  });
-
-  it('marks None output-limit-infeasible when the context itself is exhausted', () => {
-    const tinyContext: EffortModel = { ...effortModel, contextLength: 100 };
-    const states = effortOptionStates({
-      models: [tinyContext],
-      maxOutputTokens: 1_000_000,
-      estimatedInputTokens: 200,
-    });
-    expect(states).toContainEqual({ selection: 'off', state: 'output-limit' });
-  });
-
-  it.each([
-    ['single ladder', [effortModel]],
-    ['heterogeneous selection', [effortModel, budgetNativeModel]],
-    ['mandatory sibling', [effortModel, mandatoryModel]],
-    ['one real choice', [minOnlyModel]],
-  ])('offers exactly the shared choice set for a %s', (_case, models) => {
-    const states = effortOptionStates({
-      models,
-      maxOutputTokens: 100_000,
-      estimatedInputTokens: 100,
-    });
-    expect(new Set(states.slice(1).map((option) => option.selection))).toEqual(
-      new Set(turnEffortOptions(models).map((option) => option.choice))
+    // A rung both siblings name but neither can fund stays refused.
+    expect(options.find((option) => option.selection === 'high')?.availability.available).toBe(
+      false
     );
-    expect(states[0]?.selection).toBe('auto');
   });
 
-  it('offers the union of heterogeneous ladders, greying levels not every model offers', () => {
-    const states = effortOptionStates({
-      models: [effortModel, budgetNativeModel],
-      maxOutputTokens: 100_000,
-      estimatedInputTokens: 100,
-    });
-    expect(states).toEqual([
-      { selection: 'auto', state: 'enabled' },
-      { selection: 'max', state: 'unsupported' },
-      { selection: 'high', state: 'enabled' },
-      { selection: 'medium', state: 'enabled' },
-      { selection: 'low', state: 'enabled' },
-      { selection: 'lite', state: 'unsupported' },
-      { selection: 'off', state: 'enabled' },
-    ]);
+  it('orders Auto first, rungs strongest-first, Min last — order is presentation only', () => {
+    const options = effortOptionsFrom(
+      dim([
+        ['off', 'Min', true],
+        ['low', 'Low', true],
+        ['high', 'High', true],
+      ])
+    );
+
+    expect(options.map((option) => option.selection)).toEqual(['auto', 'high', 'low', 'off']);
   });
 
-  it('keeps auto enabled for a model with exactly one real choice', () => {
-    const states = effortOptionStates({
-      models: [minOnlyModel],
-      maxOutputTokens: 100_000,
-      estimatedInputTokens: 100,
-    });
-    expect(states).toEqual([
-      { selection: 'auto', state: 'enabled' },
-      { selection: 'off', state: 'enabled' },
-    ]);
+  it('keeps Auto selectable with no dimension at all — it delegates the choice', () => {
+    expect(effortOptionsFrom()).toEqual([{ selection: 'auto', availability: { available: true } }]);
   });
 
-  it('keeps auto enabled when the balance funds no level at all', () => {
-    const states = effortOptionStates({
-      models: [effortModel],
-      maxOutputTokens: 0,
-      estimatedInputTokens: 100,
-    });
-    expect(states[0]).toEqual({ selection: 'auto', state: 'enabled' });
-    for (const option of states.slice(1)) {
-      expect(option.state).toBe('balance');
-    }
-  });
+  it('omits Min when no selected model can disable reasoning', () => {
+    const options = effortOptionsFrom(
+      dim([
+        ['low', 'Low', true],
+        ['high', 'High', true],
+      ])
+    );
 
-  it('bounds every level by the tightest declared provider completion cap, Min exempt (B = 0)', () => {
-    const cappedModel: EffortModel = { ...effortModel, maxOutputTokens: 2000 };
-    const states = effortOptionStates({
-      models: [cappedModel],
-      maxOutputTokens: 1_000_000,
-      estimatedInputTokens: 100,
-    });
-    expect(states).toEqual([
-      { selection: 'auto', state: 'enabled' },
-      { selection: 'high', state: 'output-limit' },
-      { selection: 'medium', state: 'output-limit' },
-      { selection: 'low', state: 'output-limit' },
-      { selection: 'off', state: 'enabled' },
-    ]);
+    expect(options.map((option) => option.selection)).toEqual(['auto', 'high', 'low']);
   });
 });
 
@@ -354,31 +280,34 @@ describe('ReasoningEffortMenu', () => {
     expect(screen.queryByRole('menuitemradio', { name: 'Low' })).not.toBeInTheDocument();
   });
 
-  it('greys an unaffordable level with the balance reason exposed via aria-describedby', async () => {
+  it('greys a refused level with the SHARED reason exposed via aria-describedby', async () => {
     const user = userEvent.setup();
-    renderMenu({ maxOutputTokens: 20_000 });
+    renderMenu({
+      dimension: dim([
+        ['off', 'Min', true],
+        ['low', 'Low', true],
+        ['high', 'High', false],
+      ]),
+    });
     await openMenu(user);
     const high = screen.getByRole('menuitemradio', { name: 'High' });
     expect(high).toHaveAttribute('aria-disabled', 'true');
     const describedBy = high.getAttribute('aria-describedby');
     expect(describedBy).not.toBeNull();
     const reason = document.querySelector(`[id="${describedBy ?? ''}"]`);
-    expect(reason?.textContent).toBe(EFFORT_DISABLED_REASONS.balance);
-  });
-
-  it('uses the output-limit reason when the model context cannot hold the level', async () => {
-    setCatalog([{ ...effortModel, contextLength: 10_000 }]);
-    const user = userEvent.setup();
-    renderMenu({ maxOutputTokens: 1_000_000, estimatedInputTokens: 9900 });
-    await openMenu(user);
-    const high = screen.getByRole('menuitemradio', { name: 'High' });
-    const reason = document.querySelector(`[id="${high.getAttribute('aria-describedby') ?? ''}"]`);
-    expect(reason?.textContent).toBe(EFFORT_DISABLED_REASONS['output-limit']);
+    // The one home for money copy — not a sentence this component authors.
+    expect(reason?.textContent).toBe(noticeText('model_output_cap_too_low'));
   });
 
   it('ignores activation of a greyed level', async () => {
     const user = userEvent.setup();
-    renderMenu({ maxOutputTokens: 20_000 });
+    renderMenu({
+      dimension: dim([
+        ['off', 'Min', true],
+        ['low', 'Low', true],
+        ['high', 'High', false],
+      ]),
+    });
     await openMenu(user);
     await user.click(screen.getByRole('menuitemradio', { name: 'High' }));
     expect(useReasoningEffortStore.getState().preferredReasoningEffort).toBe('auto');
@@ -386,7 +315,13 @@ describe('ReasoningEffortMenu', () => {
 
   it('renders greyed levels perceivable, never hidden', async () => {
     const user = userEvent.setup();
-    renderMenu({ maxOutputTokens: 20_000 });
+    renderMenu({
+      dimension: dim([
+        ['off', 'Min', true],
+        ['low', 'Low', true],
+        ['high', 'High', false],
+      ]),
+    });
     await openMenu(user);
     const high = screen.getByRole('menuitemradio', { name: 'High' });
     expect(high.className).toContain('opacity-60');
@@ -397,7 +332,13 @@ describe('ReasoningEffortMenu', () => {
   // trial and guest users see the same greyed-never-hidden ladder.
   it('marks an infeasible level aria-disabled while a feasible one stays enabled', async () => {
     const user = userEvent.setup();
-    renderMenu({ maxOutputTokens: 20_000 });
+    renderMenu({
+      dimension: dim([
+        ['off', 'Min', true],
+        ['low', 'Low', true],
+        ['high', 'High', false],
+      ]),
+    });
     await openMenu(user);
     const high = screen.getByRole('menuitemradio', { name: 'High' });
     expect(high).toHaveAttribute('aria-disabled', 'true');
@@ -418,7 +359,16 @@ describe('ReasoningEffortMenu', () => {
     });
     setCatalog([effortModel, budgetNativeModel]);
     const user = userEvent.setup();
-    renderMenu();
+    renderMenu({
+      dimension: dim([
+        ['off', 'Min', true],
+        ['lite', 'Lite', true],
+        ['low', 'Low', true],
+        ['medium', 'Mid', true],
+        ['high', 'High', true],
+        ['max', 'Max', false],
+      ]),
+    });
     await openMenu(user);
     const items = screen.getAllByRole('menuitemradio');
     expect(items.map((item) => item.textContent)).toEqual([
@@ -433,13 +383,13 @@ describe('ReasoningEffortMenu', () => {
     const max = screen.getByRole('menuitemradio', { name: 'Max' });
     expect(max).toHaveAttribute('aria-disabled', 'true');
     const reason = document.querySelector(`[id="${max.getAttribute('aria-describedby') ?? ''}"]`);
-    expect(reason?.textContent).toBe(EFFORT_DISABLED_REASONS.unsupported);
+    expect(reason?.textContent).toBe(noticeText('model_output_cap_too_low'));
   });
 
   it('keeps Auto selectable when every level is greyed', async () => {
     useReasoningEffortStore.setState({ preferredReasoningEffort: 'low' });
     const user = userEvent.setup();
-    renderMenu({ maxOutputTokens: 0 });
+    renderMenu();
     await openMenu(user);
     expect(screen.getByRole('menuitemradio', { name: 'Auto' })).not.toHaveAttribute(
       'aria-disabled'
@@ -484,7 +434,7 @@ describe('ReasoningEffortMenu', () => {
     const view = renderMenu();
     expect(screen.getByTestId(TEST_IDS.effortChip)).toBeInTheDocument();
     setCatalog([plainModel]);
-    view.rerender(<ReasoningEffortMenu maxOutputTokens={100_000} estimatedInputTokens={100} />);
+    view.rerender(<ReasoningEffortMenu effortDimension={DEFAULT_DIMENSION} />);
     const wrapper = view.container.firstElementChild as HTMLElement;
     expect(wrapper.className).toContain('grid-cols-[0fr]');
     // Stale chip still slides out: present but inert (aria-hidden ancestor).
@@ -497,7 +447,7 @@ describe('ReasoningEffortMenu', () => {
   it('ignores bubbled transitionend events from inner content during the collapse', () => {
     const view = renderMenu();
     setCatalog([plainModel]);
-    view.rerender(<ReasoningEffortMenu maxOutputTokens={100_000} estimatedInputTokens={100} />);
+    view.rerender(<ReasoningEffortMenu effortDimension={DEFAULT_DIMENSION} />);
     const wrapper = view.container.firstElementChild as HTMLElement;
     const inner = wrapper.firstElementChild as HTMLElement;
     // A child transition (e.g. a hover color) bubbling up must not end the
@@ -514,5 +464,44 @@ describe('ReasoningEffortMenu', () => {
     fireEvent.transitionEnd(wrapper);
     expect(screen.getByTestId(TEST_IDS.effortChip)).toBeInTheDocument();
     expect(wrapper.className).toContain('grid-cols-[1fr]');
+  });
+});
+
+describe('single-choice model — Auto stays selectable (§Reasoning Effort 10c)', () => {
+  /**
+   * A model offering exactly ONE distinct resolved rung buys no classifier
+   * call: the choice is deterministic. Auto must remain selectable anyway —
+   * it means "let the turn decide", and with one option that decision is
+   * simply made without a call. Disabling Auto here would tell the user their
+   * persisted preference is invalid on a model that honours it perfectly.
+   */
+  it('renders Auto enabled beside the single rung', () => {
+    const options = effortOptionsFrom(dim([['high', 'High', true]]));
+
+    expect(options).toEqual([
+      { selection: 'auto', availability: { available: true } },
+      { selection: 'high', availability: { available: true } },
+    ]);
+  });
+
+  it('keeps Auto enabled even when the one rung is refused', () => {
+    // Auto is never graded by the producer — it is not an option in the
+    // dimension, it is the absence of a pin. So it survives a rung that does not.
+    const options = effortOptionsFrom(dim([['high', 'High', false]]));
+
+    expect(options[0]).toEqual({ selection: 'auto', availability: { available: true } });
+    expect(options[1]?.availability.available).toBe(false);
+  });
+
+  it('renders Auto selectable in the menu with a single-rung ladder', async () => {
+    const user = userEvent.setup();
+    renderMenu({ dimension: dim([['high', 'High', true]]) });
+    await openMenu(user);
+
+    const items = screen.getAllByRole('menuitemradio');
+    expect(items.map((item) => item.textContent)).toEqual(['Auto', 'High']);
+    expect(screen.getByRole('menuitemradio', { name: 'Auto' })).not.toHaveAttribute(
+      'aria-disabled'
+    );
   });
 });

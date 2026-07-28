@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { CANONICAL_REASONING_EFFORTS } from '../reasoning-effort.js';
+import { modelId } from '../model-id.js';
 import { nanoUSD } from '../nano-usd.js';
 import { EFFORT_DIMENSION, EFFORT_OPTION_IDS } from './effort.js';
 import {
@@ -21,11 +23,12 @@ import type { DimensionSpec, DimensionSupport } from './types.js';
 
 function modelFor(overrides: Partial<PriceableModel> = {}): PriceableModel {
   return {
-    modelId: 'vendor/model',
+    modelId: modelId('vendor/model'),
     inputRateNanoUsd: nanoUSD(1000n),
     outputRateNanoUsd: nanoUSD(2000n),
     contextLength: 200_000,
     providerCap: 64_000,
+    releasedAtMs: 0,
     reasoning: undefined,
     ...overrides,
   };
@@ -224,7 +227,7 @@ describe('deliveredCeilingTokens', () => {
 
 describe('renderDimensionSection — derived from the description plus option labels', () => {
   const support = dimensionSupportFor(EFFORT_DIMENSION, budgetModel);
-  const section = renderDimensionSection(EFFORT_DIMENSION, support);
+  const section = renderDimensionSection(EFFORT_DIMENSION, support.options);
 
   it('carries the declared sentence naming the axis', () => {
     expect(section).toContain(EFFORT_DIMENSION.promptDescription);
@@ -241,7 +244,7 @@ describe('renderDimensionSection — derived from the description plus option la
     for (const spec of [EFFORT_DIMENSION, MODEL_DIMENSION]) {
       const rendered = renderDimensionSection(
         spec,
-        dimensionSupportFor(spec, spec === EFFORT_DIMENSION ? budgetModel : effortModel)
+        dimensionSupportFor(spec, spec === EFFORT_DIMENSION ? budgetModel : effortModel).options
       );
       for (const option of dimensionSupportFor(
         spec,
@@ -258,14 +261,15 @@ describe('renderDimensionSection — derived from the description plus option la
   it('labels its answer line with the dimension, so a new dimension cannot break the parser', () => {
     expect(section).toContain('effort:');
     expect(
-      renderDimensionSection(MODEL_DIMENSION, dimensionSupportFor(MODEL_DIMENSION, effortModel))
+      renderDimensionSection(
+        MODEL_DIMENSION,
+        dimensionSupportFor(MODEL_DIMENSION, effortModel).options
+      )
     ).toContain('model:');
   });
 
   it('refuses to render a section for a dimension that presents nothing', () => {
-    expect(() =>
-      renderDimensionSection(EFFORT_DIMENSION, { options: [], mandatory: false })
-    ).toThrow(RangeError);
+    expect(() => renderDimensionSection(EFFORT_DIMENSION, [])).toThrow(RangeError);
   });
 });
 
@@ -294,6 +298,45 @@ describe('parseDimensionAnswer — derived from the option labels', () => {
     expect(parseDimensionAnswer(EFFORT_DIMENSION, support, 'effort: Ludicrous')).toBeUndefined();
   });
 
+  /**
+   * Option labels are short common words — Min, Mid, Low, Max — so an answer
+   * that merely CONTAINS one has not named it. Substring matching is sound for
+   * long distinctive identifiers and unsound here: it binds a real budget off an
+   * unrelated word, which is worse than the declared fallback the caller applies
+   * when nothing matches.
+   */
+  it('does not bind a label that merely appears inside an unrelated answer', () => {
+    for (const answer of [
+      'effort: turbo-max-overdrive',
+      'effort: minimal effort please',
+      'effort: midway through',
+      'effort: the lowest of the low settings',
+    ]) {
+      expect(parseDimensionAnswer(EFFORT_DIMENSION, support, answer)).toBeUndefined();
+    }
+  });
+
+  /**
+   * Decoration is not content. Markdown emphasis is among the most common things
+   * a model wraps a one-word answer in, and treating it as content resolves
+   * nothing — which sends the turn to the caller's fallback at a silently
+   * different rung than the one classified.
+   */
+  it('tolerates formatting noise around a label the answer does name', () => {
+    for (const [answer, expected] of [
+      ['effort: "High"', 'high'],
+      ['effort: `Mid`', 'medium'],
+      ['effort: Max.', 'max'],
+      ['effort: **Max**', 'max'],
+      ['effort: *Max*', 'max'],
+      ['**High**', 'high'],
+      ['_Mid_', 'medium'],
+      ['effort: __Low__', 'low'],
+    ] as const) {
+      expect(parseDimensionAnswer(EFFORT_DIMENSION, support, answer)).toBe(expected);
+    }
+  });
+
   it('returns nothing for an empty answer', () => {
     expect(parseDimensionAnswer(EFFORT_DIMENSION, support, '   ')).toBeUndefined();
   });
@@ -301,6 +344,20 @@ describe('parseDimensionAnswer — derived from the option labels', () => {
   it('never returns an option the model does not offer', () => {
     const narrow = dimensionSupportFor(EFFORT_DIMENSION, effortModel);
     expect(parseDimensionAnswer(EFFORT_DIMENSION, narrow, 'effort: Lite')).not.toBe('lite');
+  });
+
+  /**
+   * The strategy follows the DECLARED domain, not the call site: a dimension
+   * whose domain is a fixed literal list of words is matched by naming one,
+   * while a dimension whose domain is the catalog itself is matched by the fuzzy
+   * identifier matcher — model ids are long and distinctive, so finding one
+   * inside prose is evidence rather than coincidence.
+   */
+  it('matches a catalog-domain dimension with the fuzzy identifier matcher', () => {
+    const support = dimensionSupportFor(MODEL_DIMENSION, effortModel);
+    expect(
+      parseDimensionAnswer(MODEL_DIMENSION, support, 'model: use vendor/model for this task')
+    ).toBe('vendor/model');
   });
 });
 
@@ -382,6 +439,27 @@ describe('classifierIsBought — ≥2 distinct RESOLVED requirements', () => {
     };
     expect(withoutOff.options.length).toBeGreaterThan(1);
     expect(classifierIsBought(EFFORT_DIMENSION, plateauModel, withoutOff)).toBe(false);
+  });
+
+  /**
+   * The same collapse on a shape the CATALOG can produce, with no support
+   * hand-editing: a mandatory-reasoning budget-native model whose cap sits below
+   * every ladder tier offers no off rung and clamps all five rungs to the
+   * protocol floor. Five labels, one resolved requirement, so the turn buys no
+   * classifier call (§Derived, never declared). The hand-filtered case above
+   * proves the arithmetic; this one proves the arithmetic is reachable, which is
+   * what decides whether a real turn is charged a reserve it cannot spend.
+   */
+  it('is not bought on a real catalog shape whose whole ladder plateaus', () => {
+    const plateauMandatory = modelFor({
+      reasoning: { mandatory: true },
+      contextLength: 900,
+      providerCap: 900,
+      releasedAtMs: 0,
+    });
+    const support = dimensionSupportFor(EFFORT_DIMENSION, plateauMandatory);
+    expect(ids(support)).toEqual([...CANONICAL_REASONING_EFFORTS]);
+    expect(classifierIsBought(EFFORT_DIMENSION, plateauMandatory, support)).toBe(false);
   });
 
   it('is not bought for a single presented option', () => {

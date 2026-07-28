@@ -1,5 +1,13 @@
 import { z } from 'zod';
-import { jsonTag, listTag, mediaTag, optionalTag, textTag } from '@hushbox/shared';
+import {
+  jsonTag,
+  listTag,
+  mediaTag,
+  optionalTag,
+  textTag,
+  TURN_DECISION_REDUCER,
+} from '@hushbox/shared';
+import { portsAccepting } from '../engine/model-ports.js';
 import type {
   ConstraintEntryOf,
   ConstraintKind,
@@ -48,6 +56,23 @@ export function makeFakeConstraints(): NamedConstraintRegistry {
       out: textTag(),
     },
     { kind: 'reducer', name: 'pairJoin', version: 1, in: [textTag(), textTag()], out: textTag() },
+    {
+      // The REAL decision reducer's name and signature: the classifier
+      // derivation keys on this name, so a fake that renamed it would test a
+      // graph shape production never produces.
+      kind: 'reducer',
+      name: TURN_DECISION_REDUCER,
+      version: 1,
+      in: [textTag(), optionalTag(textTag())],
+      out: jsonTag(CLASSIFICATION_SCHEMA_NAME),
+    },
+    {
+      kind: 'reducer',
+      name: 'classifyText',
+      version: 1,
+      in: [textTag()],
+      out: jsonTag(CLASSIFICATION_SCHEMA_NAME),
+    },
   ];
   return {
     resolve: <K extends ConstraintKind>(kind: K, name: string): ConstraintEntryOf<K> | undefined =>
@@ -92,12 +117,15 @@ export function makeFakeNodeRegistry(): NodeRegistryContext {
   return {
     hasNode: (_type, version) => version === 1,
     resolveValuePorts: (node) => {
-      if (node.type === 'modelCall') return FAKE_MODEL_PORTS[node.model];
+      if (node.type === 'modelCall') {
+        const ports = FAKE_MODEL_PORTS[node.model];
+        return ports === undefined ? undefined : portsAccepting(ports, node.inputSchema);
+      }
       if (node.type === 'transform') return FAKE_TRANSFORM_PORTS[node.transform];
       if (node.type === 'smartModel') {
         const ids = [node.classifierModelId, ...node.candidates.map((candidate) => candidate.id)];
         return ids.every((id) => fakeTextModel(id))
-          ? { in: [textTag()], out: textTag() }
+          ? portsAccepting({ in: [textTag()], out: textTag() }, node.inputSchema)
           : undefined;
       }
       return FAKE_SUB_WORKFLOW_PORTS[node.ref];

@@ -13,9 +13,15 @@
 // kokoro-js is imported statically: this module only loads inside the
 // dedicated worker thread (main thread imports nothing from kokoro-js),
 // so there's no module-graph pollution concern. Tests mock the import
-// via vi.mock(). Static import also lets Vite bundle the worker as a
-// single IIFE chunk — dynamic imports inside a worker would require
-// `worker.format: 'es'` config, which we're avoiding.
+// via vi.mock(). The worker is built as an ES module, which the repo
+// requires rather than avoids (WORKER_BUILD_OPTIONS in the shared build
+// config): the classic-worker wrapper corrupts `new.target`, which the
+// transformers dependency loaded here needs intact.
+//
+// This file's path is also named as a dependency-scan entry by both app
+// build configs, because the dev scanner cannot see through the worker's
+// `new URL` construction and would otherwise discover kokoro-js only on the
+// first TTS click.
 
 import { KokoroTTS, env } from 'kokoro-js';
 

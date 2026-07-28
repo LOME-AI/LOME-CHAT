@@ -5,17 +5,18 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { resolveOrtAssets, type OrtAsset } from './lib/ort-assets-plugin.js';
+import { resolveOrtAssets, type OrtAsset } from './lib/build-seam.js';
 import {
   PAGES_MAX_FILE_BYTES,
   appBundleOptions,
   PAGES_MAX_FILE_COUNT,
   checkPagesLimits,
-  collectWebBundleViolations,
+  collectBundleViolations,
   declaredOrtCommonVersion,
-  verifyWebBundle,
+  requestedDistributionDirectories,
+  verifyBundle,
   type BundleFile,
-} from './verify-web-bundle.js';
+} from './verify-bundle.js';
 
 let distributionDir: string;
 let runtimeDir: string;
@@ -71,14 +72,14 @@ afterEach(async () => {
   await fs.rm(runtimeDir, { recursive: true, force: true });
 });
 
-describe('collectWebBundleViolations', () => {
+describe('collectBundleViolations', () => {
   it('reports nothing for a bundle that self-hosts the runtime and ships no copies', async () => {
     const assets = await fakeRuntime();
     await selfHost(assets);
     await writeDistributionFile('assets/tts.worker-abc.js', 'const p="/ort/";');
 
     expect(
-      await collectWebBundleViolations({ distributionDir, shipsTts: true, ortAssets: assets })
+      await collectBundleViolations({ distributionDir, shipsTts: true, ortAssets: assets })
     ).toEqual([]);
   });
 
@@ -87,7 +88,7 @@ describe('collectWebBundleViolations', () => {
     await selfHost(assets);
     await fs.rm(path.join(distributionDir, 'ort/ort-wasm-simd-threaded.jsep.wasm'));
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir,
       shipsTts: true,
       ortAssets: assets,
@@ -107,7 +108,7 @@ describe('collectWebBundleViolations', () => {
       'stale bytes from another version'
     );
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir,
       shipsTts: true,
       ortAssets: assets,
@@ -124,7 +125,7 @@ describe('collectWebBundleViolations', () => {
     await writeDistributionFile('assets/ort-wasm-simd-threaded.jsep-B0T3yYHD.wasm', 'copy');
     await writeDistributionFile('_astro/ort-wasm-simd-threaded.jsep-B0T3yYHD.mjs', 'copy');
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir,
       shipsTts: true,
       ortAssets: assets,
@@ -140,7 +141,7 @@ describe('collectWebBundleViolations', () => {
     await selfHost(assets);
     await writeDistributionFile('assets/tts.worker-abc.js', 'new URL("/assets/ort-wasm.wasm",x)');
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir,
       shipsTts: true,
       ortAssets: assets,
@@ -155,7 +156,7 @@ describe('collectWebBundleViolations', () => {
     await selfHost(assets);
     await writeDistributionFile('_astro/tts.worker-abc.js', 'new URL("/_astro/ort-wasm.wasm",x)');
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir,
       shipsTts: true,
       ortAssets: assets,
@@ -174,7 +175,7 @@ describe('collectWebBundleViolations', () => {
     );
 
     expect(
-      await collectWebBundleViolations({ distributionDir, shipsTts: true, ortAssets: assets })
+      await collectBundleViolations({ distributionDir, shipsTts: true, ortAssets: assets })
     ).toEqual([]);
   });
 
@@ -188,7 +189,7 @@ describe('collectWebBundleViolations', () => {
     await handle.truncate(PAGES_MAX_FILE_BYTES + 1);
     await handle.close();
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir,
       shipsTts: true,
       ortAssets: assets,
@@ -209,7 +210,7 @@ describe('collectWebBundleViolations', () => {
     );
 
     expect(
-      await collectWebBundleViolations({ distributionDir, shipsTts: true, ortAssets: assets })
+      await collectBundleViolations({ distributionDir, shipsTts: true, ortAssets: assets })
     ).toEqual([]);
   });
 
@@ -221,7 +222,7 @@ describe('collectWebBundleViolations', () => {
       'const env={versions:{common:"0.0.0-hoisted"}};'
     );
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir,
       shipsTts: true,
       ortAssets: assets,
@@ -243,7 +244,7 @@ describe('collectWebBundleViolations', () => {
         'const external={versions:{common:`1.26.0`}};'
     );
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir,
       shipsTts: true,
       ortAssets: assets,
@@ -258,7 +259,7 @@ describe('collectWebBundleViolations', () => {
     await selfHost(assets);
     await fs.rm(path.join(distributionDir, ORT_VERSION_CHUNK));
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir,
       shipsTts: true,
       ortAssets: assets,
@@ -273,7 +274,7 @@ describe('collectWebBundleViolations', () => {
     await selfHost(assets);
     await writeDistributionFile('assets/tts.worker-abc.js', 'const env={versions:{common:unset}};');
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir,
       shipsTts: true,
       ortAssets: assets,
@@ -294,7 +295,7 @@ describe('collectWebBundleViolations', () => {
     );
 
     expect(
-      await collectWebBundleViolations({ distributionDir, shipsTts: true, ortAssets: assets })
+      await collectBundleViolations({ distributionDir, shipsTts: true, ortAssets: assets })
     ).toEqual([]);
   });
 
@@ -307,7 +308,7 @@ describe('collectWebBundleViolations', () => {
         'return Object.setPrototypeOf(closure, _vite_importMeta.prototype);'
     );
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir,
       shipsTts: true,
       ortAssets: assets,
@@ -328,7 +329,7 @@ describe('collectWebBundleViolations', () => {
         'class y{constructor(){return Object.setPrototypeOf(e,df.prototype)}}'
     );
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir,
       shipsTts: true,
       ortAssets: assets,
@@ -344,7 +345,7 @@ describe('collectWebBundleViolations', () => {
     await selfHost(assets);
     await fs.rm(path.join(distributionDir, WORKER_CHUNK));
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir,
       shipsTts: true,
       ortAssets: assets,
@@ -356,7 +357,7 @@ describe('collectWebBundleViolations', () => {
   });
 
   it('resolves the runtime from the installed package when no assets are supplied', async () => {
-    const violations = await collectWebBundleViolations({ distributionDir, shipsTts: true });
+    const violations = await collectBundleViolations({ distributionDir, shipsTts: true });
 
     const installed = resolveOrtAssets();
     expect(violations).toHaveLength(installed.length);
@@ -366,7 +367,7 @@ describe('collectWebBundleViolations', () => {
   });
 });
 
-describe('collectWebBundleViolations for a dist that must not ship TTS', () => {
+describe('collectBundleViolations for a dist that must not ship TTS', () => {
   let appDir: string;
   let ttsFreeDistribution: string;
 
@@ -374,6 +375,7 @@ describe('collectWebBundleViolations for a dist that must not ship TTS', () => {
     appDir = await fs.mkdtemp(path.join(os.tmpdir(), 'verify-bundle-app-'));
     ttsFreeDistribution = path.join(appDir, 'dist');
     await fs.mkdir(ttsFreeDistribution, { recursive: true });
+    await fs.writeFile(path.join(ttsFreeDistribution, '_headers'), '/*\n  X-Frame-Options: DENY\n');
   });
 
   afterEach(async () => {
@@ -390,7 +392,7 @@ describe('collectWebBundleViolations for a dist that must not ship TTS', () => {
     await writeAppFile('dist/assets/tts.worker-abc.js', 'self.onmessage=()=>{};');
     await writeAppFile('dist/assets/ort-wasm-simd-threaded.jsep-xyz.wasm', 'runtime bytes');
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir: ttsFreeDistribution,
       shipsTts: false,
     });
@@ -403,7 +405,7 @@ describe('collectWebBundleViolations for a dist that must not ship TTS', () => {
   it('accepts a dist carrying neither a worker chunk nor an ORT runtime file', async () => {
     await writeAppFile('dist/assets/index-abc.js', 'console.info("app");');
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir: ttsFreeDistribution,
       shipsTts: false,
     });
@@ -417,13 +419,26 @@ describe('collectWebBundleViolations for a dist that must not ship TTS', () => {
     await handle.truncate(PAGES_MAX_FILE_BYTES + 1);
     await handle.close();
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir: ttsFreeDistribution,
       shipsTts: false,
     });
 
     expect(violations).toHaveLength(1);
     expect(violations[0]).toContain('oversized.bin');
+  });
+
+  it('reports a dist whose _headers file is missing', async () => {
+    await fs.rm(path.join(ttsFreeDistribution, '_headers'));
+    await writeAppFile('dist/assets/index-abc.js', 'console.info("app");');
+
+    const violations = await collectBundleViolations({
+      distributionDir: ttsFreeDistribution,
+      shipsTts: false,
+    });
+
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toContain('_headers');
   });
 
   it('does not walk the checked-in native copy of the built app beside dist', async () => {
@@ -436,7 +451,7 @@ describe('collectWebBundleViolations for a dist that must not ship TTS', () => {
       'runtime bytes'
     );
 
-    const violations = await collectWebBundleViolations({
+    const violations = await collectBundleViolations({
       distributionDir: ttsFreeDistribution,
       shipsTts: false,
     });
@@ -464,8 +479,35 @@ describe('appBundleOptions', () => {
     expect(appBundleOptions('/repo', 'apps/crawler-view').shipsTts).toBe(false);
   });
 
+  it('expects no TTS in the sandbox origin bundle', () => {
+    expect(appBundleOptions('/repo', 'apps/sandbox')).toEqual({
+      distributionDir: path.join('/repo', 'apps/sandbox/dist'),
+      shipsTts: false,
+    });
+  });
+
+  it('keeps the app declaration when a sibling dist directory is named', () => {
+    expect(appBundleOptions('/repo', 'apps/web', 'dist-ios')).toEqual({
+      distributionDir: path.join('/repo', 'apps/web/dist-ios'),
+      shipsTts: true,
+    });
+  });
+
   it('throws for an app that never declared a TTS expectation', () => {
-    expect(() => appBundleOptions('/repo', 'apps/sandbox')).toThrow(/declared TTS expectation/);
+    expect(() => appBundleOptions('/repo', 'apps/marketing')).toThrow(/declared TTS expectation/);
+  });
+});
+
+describe('requestedDistributionDirectories', () => {
+  it('verifies the primary dist when no directory is named', () => {
+    expect(requestedDistributionDirectories([])).toEqual(['dist']);
+  });
+
+  it('verifies every directory named on the command line', () => {
+    expect(requestedDistributionDirectories(['dist-ios', 'dist-android'])).toEqual([
+      'dist-ios',
+      'dist-android',
+    ]);
   });
 });
 
@@ -493,13 +535,13 @@ describe('checkPagesLimits', () => {
   });
 });
 
-describe('verifyWebBundle', () => {
+describe('verifyBundle', () => {
   it('resolves for a compliant bundle', async () => {
     const assets = await fakeRuntime();
     await selfHost(assets);
 
     await expect(
-      verifyWebBundle({ distributionDir, shipsTts: true, ortAssets: assets })
+      verifyBundle({ distributionDir, shipsTts: true, ortAssets: assets })
     ).resolves.toBeUndefined();
   });
 
@@ -510,8 +552,18 @@ describe('verifyWebBundle', () => {
     await writeDistributionFile('assets/tts.worker-abc.js', 'new URL("/assets/ort-wasm.wasm",x)');
 
     await expect(
-      verifyWebBundle({ distributionDir, shipsTts: true, ortAssets: assets })
+      verifyBundle({ distributionDir, shipsTts: true, ortAssets: assets })
     ).rejects.toThrow(/ort-wasm-simd-threaded\.jsep-B0T3yYHD\.wasm[\S\s]*tts\.worker-abc\.js/);
+  });
+
+  it('names the verified dist in its failure message', async () => {
+    const assets = await fakeRuntime();
+    await selfHost(assets);
+    await writeDistributionFile('assets/ort-wasm-simd-threaded.jsep-B0T3yYHD.wasm', 'copy');
+
+    await expect(
+      verifyBundle({ distributionDir, shipsTts: true, ortAssets: assets })
+    ).rejects.toThrow(`Bundle verification failed (${distributionDir}):`);
   });
 
   it('hashes the real self-hosted runtime bytes rather than trusting the file name', async () => {
@@ -524,40 +576,54 @@ describe('verifyWebBundle', () => {
     await fs.writeFile(wasm, 'tampered');
 
     await expect(
-      verifyWebBundle({ distributionDir, shipsTts: true, ortAssets: assets })
+      verifyBundle({ distributionDir, shipsTts: true, ortAssets: assets })
     ).rejects.toThrow(new RegExp(digest.slice(0, 12)));
   });
 });
 
 describe('declaredOrtCommonVersion', () => {
-  async function writeManifest(manifest: unknown): Promise<string> {
-    const manifestPath = path.join(runtimeDir, 'package.json');
-    await fs.writeFile(manifestPath, JSON.stringify(manifest));
-    return manifestPath;
+  async function writeWorkspaceFile(contents: string): Promise<string> {
+    const workspacePath = path.join(runtimeDir, 'pnpm-workspace.yaml');
+    await fs.writeFile(workspacePath, contents);
+    return workspacePath;
   }
 
-  it('reads the exact onnxruntime-common pin packages/ui declares', async () => {
-    const uiManifest = path.resolve(import.meta.dirname, '../packages/ui/package.json');
-    const declared = (
-      JSON.parse(await fs.readFile(uiManifest, 'utf8')) as {
-        dependencies: Record<string, string>;
-      }
-    ).dependencies['onnxruntime-common'];
+  function extensionBlock(declared: string): string {
+    return [
+      'packageExtensions:',
+      "  '@huggingface/transformers@3.8.1':",
+      '    dependencies:',
+      `      onnxruntime-common: ${declared}`,
+      '',
+    ].join('\n');
+  }
 
-    expect(await declaredOrtCommonVersion()).toBe(declared);
+  it('returns the version the transformers package extension declares', async () => {
+    const workspacePath = await writeWorkspaceFile(extensionBlock('9.8.7-dev.20250101-abcdef0'));
+
+    expect(await declaredOrtCommonVersion(workspacePath)).toBe('9.8.7-dev.20250101-abcdef0');
   });
 
-  it('rejects a manifest that declares no onnxruntime-common pin', async () => {
-    const manifestPath = await writeManifest({ dependencies: { 'kokoro-js': '1.2.3' } });
-
-    await expect(declaredOrtCommonVersion(manifestPath)).rejects.toThrow(/onnxruntime-common/);
+  it("reads the repository's own workspace file when given no path", async () => {
+    expect(await declaredOrtCommonVersion()).toMatch(/^\d+\.\d+\.\d+/u);
   });
 
-  it('rejects a range where an exact onnxruntime-common pin is required', async () => {
-    const manifestPath = await writeManifest({
-      dependencies: { 'onnxruntime-common': '^1.22.0' },
-    });
+  it('rejects a workspace file declaring no onnxruntime-common extension', async () => {
+    const workspacePath = await writeWorkspaceFile(
+      [
+        'packageExtensions:',
+        "  '@huggingface/transformers@3.8.1':",
+        '    dependencies: {}',
+        '',
+      ].join('\n')
+    );
 
-    await expect(declaredOrtCommonVersion(manifestPath)).rejects.toThrow(/\^1\.22\.0/);
+    await expect(declaredOrtCommonVersion(workspacePath)).rejects.toThrow(/onnxruntime-common/u);
+  });
+
+  it('rejects a range where an exact onnxruntime-common version is required', async () => {
+    const workspacePath = await writeWorkspaceFile(extensionBlock('^1.22.0'));
+
+    await expect(declaredOrtCommonVersion(workspacePath)).rejects.toThrow(/\^1\.22\.0/u);
   });
 });

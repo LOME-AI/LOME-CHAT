@@ -7,12 +7,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { TTS_ORT_WASM_PATH } from '../../packages/shared/src/tts-hosts.js';
 import {
+  TTS_WORKER_SCAN_ENTRY,
   collectOrtAssets,
   contentTypeFor,
   ortAssetsPlugin,
   ortDistributionDir,
   resolveOrtAssets,
-} from './ort-assets-plugin.js';
+  resolveTtsWorkerSource,
+} from './build-seam.js';
 
 describe('ortDistributionDir', () => {
   it('resolves the installed transformers dist that carries the ORT runtime', () => {
@@ -58,6 +60,26 @@ describe('resolveOrtAssets', () => {
     for (const asset of assets) {
       expect(existsSync(asset.absPath)).toBe(true);
     }
+  });
+});
+
+describe('resolveTtsWorkerSource', () => {
+  it('returns an absolute path to an existing worker source file', () => {
+    const workerPath = resolveTtsWorkerSource();
+    expect(path.isAbsolute(workerPath)).toBe(true);
+    expect(existsSync(workerPath)).toBe(true);
+    expect(path.basename(workerPath)).toBe('tts.worker.ts');
+  });
+
+  it('throws when the worker source is not where the config expects it', () => {
+    const missing = path.join(os.tmpdir(), 'no-such-dir', 'tts.worker.ts');
+    expect(() => resolveTtsWorkerSource(missing)).toThrow(/TTS worker source not found/);
+  });
+});
+
+describe('TTS_WORKER_SCAN_ENTRY', () => {
+  it('is the resolved worker source, asserted at module load', () => {
+    expect(TTS_WORKER_SCAN_ENTRY).toBe(resolveTtsWorkerSource());
   });
 });
 

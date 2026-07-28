@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { modelId } from './model-id.js';
 import {
   EMPTY_PROMPT_BASIS,
   promptCharsOf,
@@ -57,14 +58,14 @@ describe('REFUSAL_CODES', () => {
 describe('ModelEntry', () => {
   const CANDIDATE: ModelEntry = {
     kind: 'candidate',
-    modelId: 'vendor/candidate',
+    modelId: modelId('vendor/candidate'),
     availability: { available: true },
     ceilingTokens: 8000,
     dimensions: [],
   };
   const PINNED: ModelEntry = {
     kind: 'pinned',
-    modelId: 'vendor/pinned',
+    modelId: modelId('vendor/pinned'),
     availability: { available: false, reason: 'model_output_cap_too_low' },
     ceilingTokens: 9000,
   };

@@ -420,20 +420,30 @@ function streamFailure(error: unknown, parameters: CallParameters): Error {
   return classified;
 }
 
-async function* inferLanguage(input: InferStreamInput): AsyncGenerator<InferenceEvent> {
-  const { provider, request, options, now } = input;
-  const parameters = parseCallParameters(request.parameters);
-  const content = toUserContent(request.inputs);
-
-  // The server-owned base system prompt rides every language turn (paid and
-  // trial); client custom instructions, when present, fold into it. It slots
-  // ahead of history + the current turn via the SDK's top-level `system`.
-  const system = buildTurnSystemPrompt({
+/**
+ * The turn's system prompt, or none at all.
+ *
+ * The server-owned base preamble rides every ANSWER turn (paid and trial), and
+ * client custom instructions fold into it. A ROUTING-ONLY call carries no
+ * preamble: its own prompt is the whole instruction, and its reserve prices
+ * exactly that — the preamble would be input no reservation covered.
+ */
+function systemPromptFor(request: InferenceRequest, now: () => Date): string | undefined {
+  if (request.routingOnly === true) return undefined;
+  return buildTurnSystemPrompt({
     now: now(),
     ...(request.customInstructions === undefined
       ? {}
       : { customInstructions: request.customInstructions }),
   });
+}
+
+async function* inferLanguage(input: InferStreamInput): AsyncGenerator<InferenceEvent> {
+  const { provider, request, options, now } = input;
+  const parameters = parseCallParameters(request.parameters);
+  const content = toUserContent(request.inputs);
+
+  const system = systemPromptFor(request, now);
 
   const result = streamText({
     // `.chat()` (not the callable `openrouter(model)`, whose overloads infer
@@ -445,7 +455,7 @@ async function* inferLanguage(input: InferStreamInput): AsyncGenerator<Inference
       request.model,
       languageRoutingOptions({ reasoning: parameters.reasoning !== undefined })
     ),
-    system,
+    ...(system === undefined ? {} : { system }),
     messages: [...toHistoryMessages(request.history), { role: 'user', content }],
     // Retry policy lives with callers via the lib/resilience policy factory —
     // the SDK's built-in retry would be a second mechanism, and its RetryError

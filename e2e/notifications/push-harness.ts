@@ -230,13 +230,19 @@ export async function gotoWithPreferences(page: Page, path: string): Promise<voi
  * when a push is the only thing that can reach them.
  *
  * This, rather than "another window is in front", is how the suite states
- * "away". The worker withholds a notification only from a window focused on the
- * conversation it is about, and which window the host considers focused is not
- * something a run can promise while a parallel matrix drives several browsers at once — both
- * directions of that were seen to flip under load, and focus emulation does not
- * reach the worker's view. With no window of the app open at all there is
- * nothing to be focused and the outcome is fixed. The app-in-front half of the
- * rule is left to the worker's own unit tests rather than raced here.
+ * "away" *to the service worker*. The worker withholds a notification only from
+ * a window focused on the conversation it is about, and it reads that from the
+ * `focused` flag on the clients `clients.matchAll()` returns — a
+ * browser-process-wide view that no per-page focus control reaches, so both
+ * directions of it were seen to flip under load. With no window of the app open
+ * at all there is nothing to be focused and the outcome is fixed. The
+ * app-in-front half of the rule is left to the worker's own unit tests rather
+ * than raced here.
+ *
+ * This limitation is the worker's alone. A page's own attention state
+ * (`document.hasFocus()`) is inside the page target and *is* controllable — see
+ * the window-attention helper, which the group suite uses to test the unread
+ * count and app badge on a genuinely unfocused window.
  *
  * The delivery channel must already be open (see {@link waitForPushServiceWorker});
  * it survives the navigation, since it is bound to the tab and not the page.

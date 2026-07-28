@@ -42,11 +42,11 @@ export function sendComposedEmail(
 /**
  * The single per-request dep resolver every `createApp*EmailPort` binds to:
  * billing/identity route deps take ONE static port object, but the sender
- * selection (env), the evidence db, and the request logger only exist per
- * invocation on Workers — so each send resolves them from the current request
- * via hono's context storage. Sender construction is single-sourced here.
+ * selection (env) and the request logger only exist per invocation on Workers —
+ * so each send resolves them from the current request via hono's context
+ * storage. Sender construction is single-sourced here.
  */
 export function resolveEmailSendDeps(): EmailSendDeps {
   const c = getContext<AppEnv>();
-  return { sender: createEmailSenderFromEnv(c.env, c.var.db), logger: c.var.logger };
+  return { sender: createEmailSenderFromEnv(c.env), logger: c.var.logger };
 }

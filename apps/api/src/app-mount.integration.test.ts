@@ -466,6 +466,14 @@ describe('J3: an admission-refused paid turn returns synchronous HTTP over /chat
     expect(status, `refusal code: ${code ?? 'none'}`).toBe(402);
   });
 
+  it('maps RUN_CAPACITY_REACHED to 402, the same status the collapsed code answered', async () => {
+    // Giving the run cap its own code must not move its status: a code outside
+    // the refusal map falls through to 409, which would change how every client
+    // handles it.
+    const { status, code } = await sendTurn(ERROR_CODES.RUN_CAPACITY_REACHED);
+    expect(status, `refusal code: ${code ?? 'none'}`).toBe(402);
+  });
+
   it('maps ADMISSION_UNAVAILABLE to 503', async () => {
     const { status, code } = await sendTurn(ERROR_CODES.ADMISSION_UNAVAILABLE);
     expect(status, `refusal code: ${code ?? 'none'}`).toBe(503);

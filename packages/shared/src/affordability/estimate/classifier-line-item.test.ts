@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildClassifierSystemPrompt,
   computeClassifierPromptOverhead,
   MAX_CLASSIFIER_CONTEXT_CHARS,
 } from '../smart-model/prompts.js';
 import { CLASSIFIER_OUTPUT_TOKEN_CAP } from '../smart-model/eligible-models.js';
 import { classifierLineItems, classifierReserveChars } from './classifier-line-item.js';
-import { STORAGE_COST_PER_CHARACTER_NANO } from './storage-rate.js';
 import type { ClassifierStage, NanoLineItem } from './types.js';
 
 function itemByLabel(items: readonly NanoLineItem[], label: string): NanoLineItem {
@@ -18,32 +18,40 @@ function itemByLabel(items: readonly NanoLineItem[], label: string): NanoLineIte
 const stage: ClassifierStage = {
   pricing: { inputPerToken: 5n, outputPerToken: 15n },
   inputTokens: 100n,
-  inputChars: 1000,
 };
 
 describe('classifierReserveChars', () => {
-  it('is the truncation budget plus the exact rendered prompt overhead', () => {
-    const catalog = [
-      { id: 'a/one', description: 'first' },
-      { id: 'b/two', description: 'second' },
-    ];
-    expect(classifierReserveChars(catalog)).toBe(
-      MAX_CLASSIFIER_CONTEXT_CHARS + computeClassifierPromptOverhead(catalog)
+  const pool = [{ id: 'a/one' }, { id: 'b/two' }];
+
+  it('is the truncation budget plus the worst-case rendered prompt overhead', () => {
+    expect(classifierReserveChars(pool)).toBe(
+      MAX_CLASSIFIER_CONTEXT_CHARS + computeClassifierPromptOverhead(pool)
     );
   });
 
-  it('treats a missing description as empty when rendering overhead', () => {
-    const withUndefined = [{ id: 'a/one' }];
-    expect(classifierReserveChars(withUndefined)).toBe(
-      MAX_CLASSIFIER_CONTEXT_CHARS +
-        computeClassifierPromptOverhead([{ id: 'a/one', description: '' }])
-    );
+  /**
+   * The reserve's whole point: it bounds the classifier call the executor will
+   * actually send. The excerpt leg is bounded on the emitting side (the
+   * truncator emits no more than {@link MAX_CLASSIFIER_CONTEXT_CHARS}, pinned
+   * where it lives); the template leg is bounded here, against a real render of
+   * the same model list carrying descriptions of any length.
+   */
+  it('bounds a real render of the same pool, whatever its descriptions say', () => {
+    const excerpt = 'e'.repeat(MAX_CLASSIFIER_CONTEXT_CHARS);
+    for (const description of ['', 'short', 'x'.repeat(5000)]) {
+      const sent =
+        buildClassifierSystemPrompt({
+          eligibleModels: pool.map((model) => ({ ...model, description })),
+          classifyEffort: true,
+        }).length + excerpt.length;
+      expect(classifierReserveChars(pool)).toBeGreaterThanOrEqual(sent);
+    }
   });
 });
 
 describe('classifierLineItems', () => {
   it('prices input tokens + the fixed output cap as a provider item', () => {
-    const res = classifierLineItems(stage, 4);
+    const res = classifierLineItems(stage);
     if (!res.ok) throw new Error('expected ok');
     const provider = itemByLabel(res.value, 'classifier-tokens');
     // 100 × 5 (input) + CAP × 15 (output) — reproduces computeClassifierWorstCaseCents' model legs.
@@ -51,46 +59,34 @@ describe('classifierLineItems', () => {
     expect(provider.kind).toBe('provider');
   });
 
-  it('prices input + output storage as a never-marked-up item', () => {
-    const res = classifierLineItems(stage, 4);
+  it('emits NO storage item — the classifier prompt and answer never rest', () => {
+    // Asserted on the whole list rather than on one absent label: a reserve that
+    // sums its items generically (one live folder does) charges whatever is here,
+    // so "nothing but the provider leg" is the property, not "no `storage` label".
+    const res = classifierLineItems(stage);
     if (!res.ok) throw new Error('expected ok');
-    const storage = itemByLabel(res.value, 'classifier-storage');
-    // inputChars×rate + CAP×outputCharsPerToken×rate — the storage legs, tier-inverted output.
-    expect(storage.fixedNano).toBe(
-      1000n * STORAGE_COST_PER_CHARACTER_NANO +
-        BigInt(CLASSIFIER_OUTPUT_TOKEN_CAP) * 4n * STORAGE_COST_PER_CHARACTER_NANO
-    );
-    expect(storage.kind).toBe('storage');
+    expect(res.value.map((item) => item.kind)).toEqual(['provider']);
+    expect(res.value.map((item) => item.label)).toEqual(['classifier-tokens']);
   });
 
   it('fails closed when the classifier pricing lacks an input rate', () => {
-    const res = classifierLineItems({ ...stage, pricing: { outputPerToken: 15n } }, 4);
+    const res = classifierLineItems({ ...stage, pricing: { outputPerToken: 15n } });
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.error.code).toBe('model-pricing-incomplete');
   });
 
   it('fails closed when the classifier pricing lacks an output rate', () => {
-    const res = classifierLineItems({ ...stage, pricing: { inputPerToken: 5n } }, 4);
+    const res = classifierLineItems({ ...stage, pricing: { inputPerToken: 5n } });
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.error.code).toBe('model-pricing-incomplete');
   });
 
   it('rejects a negative input token count', () => {
-    const res = classifierLineItems({ ...stage, inputTokens: -1n }, 4);
+    const res = classifierLineItems({ ...stage, inputTokens: -1n });
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.error.code).toBe('invalid-request');
-  });
-
-  it('rejects a non-integer or negative input char count', () => {
-    expect(classifierLineItems({ ...stage, inputChars: -1 }, 4).ok).toBe(false);
-    expect(classifierLineItems({ ...stage, inputChars: 1.5 }, 4).ok).toBe(false);
-  });
-
-  it('rejects a non-positive output chars-per-token', () => {
-    expect(classifierLineItems(stage, 0).ok).toBe(false);
-    expect(classifierLineItems(stage, -2).ok).toBe(false);
   });
 });

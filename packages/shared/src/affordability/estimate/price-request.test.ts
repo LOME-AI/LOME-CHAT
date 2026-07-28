@@ -144,19 +144,17 @@ describe('priceRequest — web search + classifier line items', () => {
     expect(res.value.items.some((entry) => entry.label === 'web-search-reservation')).toBe(false);
   });
 
-  it('folds the classifier pre-reserve line items into the manifest', () => {
+  it('folds the classifier pre-reserve into the manifest, provider leg only', () => {
     const res = priceRequest({
       ...baseReq,
       classifierStage: {
         pricing: { inputPerToken: 5n, outputPerToken: 15n },
         inputTokens: 100n,
-        inputChars: 1000,
       },
     });
     if (!res.ok) throw new Error('expected ok');
-    const labels = res.value.items.map((entry) => entry.label);
-    expect(labels).toContain('classifier-tokens');
-    expect(labels).toContain('classifier-storage');
+    const classifierItems = res.value.items.filter((entry) => entry.label.startsWith('classifier'));
+    expect(classifierItems.map((entry) => entry.label)).toEqual(['classifier-tokens']);
   });
 
   it('fails closed when the classifier pricing is incomplete', () => {
@@ -165,7 +163,6 @@ describe('priceRequest — web search + classifier line items', () => {
       classifierStage: {
         pricing: { inputPerToken: 5n },
         inputTokens: 100n,
-        inputChars: 1000,
       },
     });
     expect(res.ok).toBe(false);

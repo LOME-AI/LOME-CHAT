@@ -113,7 +113,7 @@ function noopTelemetry(): Telemetry {
 }
 
 /** One capturing sender shared by the confirm adapter and the dispatch job. */
-const sender = createEmailSenderFromEnv(testEnv, db);
+const sender = createEmailSenderFromEnv(testEnv);
 
 /** The full newsletter manifest wired to the REAL confirm-email adapter. */
 function buildApp(): Hono<AppEnv> {

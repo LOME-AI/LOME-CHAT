@@ -19,6 +19,7 @@ export {
   newsletterStatusEnum,
   newsletterSuppressReasonEnum,
   paymentStatusEnum,
+  reasoningEffortEnum,
   userLockReasonEnum,
   verificationPurposeEnum,
   walletTypeEnum,

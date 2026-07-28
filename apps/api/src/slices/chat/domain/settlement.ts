@@ -3,6 +3,7 @@ import { ERROR_CODES, toBase64 } from '@hushbox/shared';
 import {
   AllBranchesFailedError,
   SettlementConflictError,
+  anchorChargeKey,
   createChargingCommit,
 } from '../../workflows/index.js';
 import {
@@ -96,8 +97,9 @@ const FORK_TIP_MOVED_MESSAGE =
  * Content pairing is keyed by the CHARGE key. Each charge names the generation
  * that produced it (the node id); the interpreter surfaces that generation's
  * content under the same key in `outputs`, so a charge maps to the content item
- * minted for exactly its generation. A charge with no matching persisted
- * content is skipped by the charging commit — no content, no charge.
+ * minted for exactly its generation. A charge whose own generation persisted
+ * nothing falls back to the run's anchor (`anchorChargeKey`); a run that
+ * persisted nothing at all terminal-fails before any charge is posted.
  */
 
 /**
@@ -210,10 +212,25 @@ function isMediaModality(modality: Modality): boolean {
  * The billable generations whose content the run surfaced as a persistable
  * output: a text output under any charge, or a media output under a
  * media-modality charge. A media output paired to a NON-media charge is a
- * shape mismatch — it persists nothing, so the charging commit skips it
- * (no content, no charge), matching the text path's non-text-output skip.
+ * shape mismatch, so it mints no content item of its own; the charge still
+ * settles, against the run's anchor, because its node's value COMMITTED.
+ *
+ * Committing is the licence, and provider spend is NOT — a generation whose call
+ * succeeded but whose value failed the runtime output gate never reaches this
+ * function at all, because the interpreter charges after the commit and only on
+ * success (pinned in `interpreter.test.ts`, "bills nothing for a sibling whose
+ * value failed output validation"). So every charge here names work the run
+ * accepted, which is what makes anchoring a contentless one onto the run's
+ * content honest rather than an over-bill.
+ *
+ * An EMPTY result is the run's all-failed signal, and it is read off content
+ * rather than off charge count. A run may charge for a generation that persists
+ * nothing of its own — a turn-level classifier is one — so "some charge exists"
+ * stopped being evidence that any branch succeeded. Reading content keeps the
+ * signal true for every turn shape: no persistable content means nothing to
+ * save and nothing to bill.
  */
-function collectPersistableCharges(request: SettlementRequest): PersistableCharge[] {
+export function collectPersistableCharges(request: SettlementRequest): PersistableCharge[] {
   const persistable: PersistableCharge[] = [];
   for (const charge of request.charges) {
     const output: (typeof request.outputs)[string] | undefined = request.outputs[charge.key];
@@ -232,19 +249,15 @@ async function persistTurnContent(
   request: SettlementRequest,
   deps: ChatSettlementDeps
 ): Promise<Map<string, string>> {
-  // Zero charges is the all-failed signal: a succeeded generation always
-  // produces a charge, so no charges means every selected model failed. A
-  // multi-model turn tolerates a subset failing (those charges simply never
-  // arrive), but ALL failing terminal-fails the run — throw to roll back so
-  // nothing persists and nothing bills, and the client is told it failed.
-  if (request.charges.length === 0) {
+  // No persistable content is the all-failed signal. A multi-model turn
+  // tolerates a subset failing (those outputs simply never arrive), but ALL
+  // failing terminal-fails the run — throw to roll back so nothing persists and
+  // nothing bills, and the client is told it failed rather than being told a
+  // turn succeeded that saved and billed nothing.
+  const persistable = collectPersistableCharges(request);
+  if (persistable.length === 0) {
     throw new AllBranchesFailedError('chat settlement: no model produced content');
   }
-  const persistable = collectPersistableCharges(request);
-  // Charges arrived but none carry persistable content (e.g. a media output
-  // under a non-media charge): persist nothing for them — the charging commit
-  // then skips each (no content, no charge).
-  if (persistable.length === 0) return new Map<string, string>();
 
   const { identity } = deps;
   const conversationsStores = deps.conversationsStores
@@ -268,10 +281,17 @@ async function persistTurnContent(
   // tip advances (cascade-aware: deleting the tip nulls it via FK SET NULL).
   const ctx: GraftContext = { tx, conversationsStores, deps, lockedForkTip };
   const graft = await planGraft(ctx);
-  // Aggregate the run's FULL charge set (own generations + auxiliary classifier
-  // charges) by the content item each anchors to, so display equals debit for
-  // every turn shape. Only persistable charges mint content items; a classifier
-  // anchors to its answer's item.
+  // Aggregate the run's FULL charge set by the content item each anchors to, so
+  // display equals debit for every turn shape. Only persistable charges mint
+  // content items, so a charge with no content of its own resolves through
+  // `anchorChargeKey`'s run-level rule — the run's FIRST persisted content in
+  // charge order. A turn-level classifier is that case: it has no content and no
+  // parent charge that does, and naming a sibling would lose it whenever that
+  // sibling is the one that failed. Pinned in `settlement.test.ts` ("anchors a
+  // turn-level charge to the run's first persisted content", "takes the FIRST
+  // persisted key in run order") and end-to-end in this file's integration suite
+  // ("lands a turn-level classifier charge on the run's content when the first
+  // sibling failed").
   const contentItemKeys = new Set(persistable.map((item) => item.charge.key));
   const displayCostByKey = aggregateDisplayCostByKey(request.charges, contentItemKeys);
   return writeGraftedTurn(ctx, { graft, epochPublicKey, persistable, displayCostByKey });
@@ -445,47 +465,29 @@ interface DisplayCostAggregate {
 }
 
 /**
- * The persistable charge key whose content item a charge's cost mirrors onto for
- * DISPLAY: its own key when that key minted a content item, else the key one
- * `#`-segment up (a classifier keyed `<answer>#classifier` mirrors onto the
- * answer's item). Mirrors the DEBIT anchor resolution in the workflows charging
- * commit (`anchorContentItemId`) so display lands on the SAME content item the
- * debit does. `undefined` when neither key minted content — that charge persisted
- * nothing, and both display and debit skip it (saved ⟺ billed).
- */
-function resolveDisplayAnchorKey(
-  key: string,
-  contentItemKeys: ReadonlySet<string>
-): string | undefined {
-  if (contentItemKeys.has(key)) return key;
-  const separator = key.lastIndexOf('#');
-  if (separator === -1) return undefined;
-  const base = key.slice(0, separator);
-  /* v8 ignore next -- every suffixed charge (only smartModel's classifier today) anchors to a base that persisted text content; a suffixed charge whose base minted no content item is unreachable */
-  if (!contentItemKeys.has(base)) return undefined;
-  return base;
-}
-
-/**
  * The per-content-item DISPLAY cost: for each persisted content item (keyed by
  * its originating charge key), the SUM over EVERY charge in the run that anchors
- * to it — its own generation PLUS any auxiliary charge (a Smart Model classifier)
- * whose cost the debit path already FKs to the same content item. Each summand is
+ * to it — its own generation PLUS every contentless charge whose cost the debit
+ * path FKs to the same content item, because both paths resolve the anchor
+ * through the one `anchorChargeKey`. Each summand is
  * `billableCost + storageFee`, the identical value `chargeWithinTx` debits,
  * so the mirrored display total equals the wallet debit total by construction
  * (Σ content_items.cost == Σ usage_records.cost per run) and cannot drift.
  * `isSmartModel` is true iff a charge anchoring here ran the smartModel routing
- * pipeline (`smartModelRan`), independent of whether the classifier billed — a
- * classifier that failed and fell back badges the answer just the same. The
- * debit path is untouched — this only fills the denormalized display column.
+ * pipeline (`smartModelRan`), which the slot sets from the turn's own shape: an
+ * answer that fell back to its declared candidate because no decision reached the
+ * slot badges just the same. The chip reads "the pipeline ran", never "a
+ * classifier billed". The debit path is untouched — this only fills the
+ * denormalized display column.
  */
 function aggregateDisplayCostByKey(
   charges: readonly SettlementCharge[],
   contentItemKeys: ReadonlySet<string>
 ): Map<string, DisplayCostAggregate> {
   const byKey = new Map<string, DisplayCostAggregate>();
+  const runChargeKeys = charges.map((charge) => charge.key);
   for (const charge of charges) {
-    const anchorKey = resolveDisplayAnchorKey(charge.key, contentItemKeys);
+    const anchorKey = anchorChargeKey(charge.key, (key) => contentItemKeys.has(key), runChargeKeys);
     if (anchorKey === undefined) continue;
     const cost = charge.billableCostNanoUsd + (charge.storageFeeNanoUsd ?? 0n);
     const prior = byKey.get(anchorKey);
@@ -547,7 +549,7 @@ async function writeGraftedTurn(
 
   // The all-failed case throws before this function, so at least one group
   // persisted and lastSiblingId is set.
-  /* v8 ignore next 3 -- groups is non-empty (empty charges terminal-fail upstream), so the loop always sets lastSiblingId */
+  /* v8 ignore next 3 -- groups is non-empty (a run with no persistable content terminal-fails upstream), so the loop always sets lastSiblingId */
   if (lastSiblingId === undefined) {
     throw new Error('chat settlement: no assistant sibling was persisted');
   }
@@ -655,10 +657,10 @@ async function persistAssistantSibling(
     items: params.group.items.map(({ charge, output }) => {
       // The full charged cost, mirrored for display reads so display equals debit:
       // the SUM of every charge anchored to this content item — its own generation
-      // (marked-up model cost + additive storage fee) PLUS any Smart Model
-      // classifier charge FK'd to the same item by the debit path. The aggregate
-      // derives each summand from the SAME storage-fee-bearing charge
-      // `chargeWithinTx` debits, so the two cannot diverge.
+      // (marked-up model cost + additive storage fee) PLUS every contentless
+      // charge the debit path FKs to the same item. The aggregate derives each
+      // summand from the SAME storage-fee-bearing charge `chargeWithinTx` debits,
+      // so the two cannot diverge.
       const aggregate = params.displayCostByKey.get(charge.key);
       /* v8 ignore next 3 -- every persistable charge key seeds its own aggregate entry (its own key IS a content-item key), so a miss is an unreachable invariant break */
       if (aggregate === undefined) {
@@ -1117,23 +1119,29 @@ function resolveMemberBudgetAttribution(
  * Text storage = (chars) × per-char rate over the NEW turn only — the persisted
  * user prompt plus this generation's response — never the resent history. Media
  * storage = artifact bytes × per-byte rate. The shared user prompt is stored
- * ONCE per turn, so its char cost is attributed only to the primary (first)
- * charge; every branch still carries its own response (and media) storage. The
- * first charge is always a succeeded generation (an all-failed turn never
- * reaches settlement), so the prompt fee is never lost to a skipped charge.
+ * ONCE per turn, so its char cost is attributed to exactly one charge; every
+ * branch still carries its own response (and media) storage.
+ *
+ * That one charge is the first PERSISTED charge, not the first charge. A run
+ * may charge for a generation that persists nothing of its own — a turn-level
+ * classifier is one, and it charges before any sibling — so declaration order
+ * alone no longer names a charge whose own content item can carry the fee. This
+ * guarantees the fee rides a charge that minted content, which is what keeps the
+ * whole prompt fee on one item in both the debit and the display.
  */
 export function withStorageFees(
   request: SettlementRequest,
   promptChars: number
 ): SettlementCharge[] {
   const promptFee = BigInt(promptChars) * STORAGE_COST_PER_CHARACTER_NANO;
-  return request.charges.map((charge, index) => {
+  const promptFeeKey = collectPersistableCharges(request)[0]?.charge.key;
+  return request.charges.map((charge) => {
     const output = request.outputs[charge.key];
     const responseChars = output?.kind === 'text' ? output.text.length : 0;
     const responseFee = BigInt(responseChars) * STORAGE_COST_PER_CHARACTER_NANO;
     const mediaFee = BigInt(mediaBytesOf(output)) * MEDIA_STORAGE_COST_PER_BYTE_NANO;
-    const storageFeeNanoUsd = (index === 0 ? promptFee : 0n) + responseFee + mediaFee;
-    return { ...charge, storageFeeNanoUsd };
+    const promptShare = charge.key === promptFeeKey ? promptFee : 0n;
+    return { ...charge, storageFeeNanoUsd: promptShare + responseFee + mediaFee };
   });
 }
 

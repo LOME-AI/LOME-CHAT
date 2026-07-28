@@ -2,7 +2,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { DollarSign, CreditCard, Lock, MapPin, User, Home } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button, ModalActions, OverlayContent, OverlayHeader } from '@hushbox/ui';
-import { TEST_IDS, dollarsToNanoUsd, friendlyErrorMessage, parseNanoUSD } from '@hushbox/shared';
+import {
+  TEST_IDS,
+  dollarsToNanoUsd,
+  friendlyErrorMessage,
+  nanoUsdToDollarString,
+  parseNanoUSD,
+} from '@hushbox/shared';
 import { FormInput } from '@/components/shared/form-input';
 import { DevOnly } from '@/components/shared/dev-only';
 import { getErrorBody } from '@/lib/api';
@@ -77,6 +83,38 @@ function statusErrorMessage(status: 'failed' | 'expired'): string {
   return status === 'expired'
     ? 'Your payment could not be confirmed and has expired. Please try again.'
     : 'Your payment was declined. Please try again or use a different card.';
+}
+
+// Only a numeric amount is priced; the input is `type="number"` with its
+// non-numeric keys blocked, so anything else is a partially-typed value that
+// prices as nothing rather than throwing mid-render.
+const NUMERIC_AMOUNT = /^\d*\.?\d*$/;
+
+/**
+ * A top-up against a negative balance clears the deficit before it adds
+ * spendable funds (BILLING §Fee Structure), so a $5 payment against a $0.50
+ * deficit leaves $4.50 available. Stating it at the point of payment is what
+ * stops the user discovering it from a balance that does not match the amount
+ * they paid.
+ *
+ * This is a payment disclosure, not a refusal, which is why it carries amounts
+ * at all: §Notices 6's no-magnitude rule governs the refusal vocabulary, whose
+ * copy is single-homed in the shared money layer.
+ */
+function negativeBalanceDisclosure(
+  balanceNanoUsd: string,
+  amountDollars: string
+): string | undefined {
+  const balance = BigInt(parseNanoUSD(balanceNanoUsd));
+  if (balance >= 0n) return undefined;
+
+  const deficit = nanoUsdToDollarString((-balance).toString());
+  const priced = NUMERIC_AMOUNT.test(amountDollars) ? amountDollars : '';
+  const netCredit = BigInt(parseNanoUSD(dollarsToNanoUsd(priced))) + balance;
+
+  return netCredit > 0n
+    ? `Your balance is $${deficit} behind. This payment clears that first and adds $${nanoUsdToDollarString(netCredit.toString())} to your balance.`
+    : `Your balance is $${deficit} behind. A payment clears that before crediting your balance.`;
 }
 
 interface PaymentSuccessCardProps {
@@ -455,6 +493,7 @@ export function PaymentForm({
   const { data: balanceData, refetch: refetchBalance } = useBalance({ enabled: true });
   // A deposit credits the purchased wallet; the poll watches that value rise.
   const displayBalance = balanceData?.purchased.balanceNanoUsd ?? '0';
+  const deficitDisclosure = negativeBalanceDisclosure(displayBalance, form.amount);
 
   const stopPolling = useCallback((): void => {
     setIsPolling(false);
@@ -733,6 +772,12 @@ export function PaymentForm({
           success={form.amountValidation.success}
           className="[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         />
+
+        {deficitDisclosure !== undefined && (
+          <p role="status" className="text-muted-foreground text-sm">
+            {deficitDisclosure}
+          </p>
+        )}
 
         <CardFormSection scriptError={scriptError} scriptLoaded={scriptLoaded} form={form} />
 

@@ -140,6 +140,8 @@ jobs:
         env:
           OPENROUTER_API_KEY_RESTRICTED: ${{ secrets.OPENROUTER_API_KEY_RESTRICTED }}
           LINEAR_API_KEY_READ: ${{ secrets.LINEAR_API_KEY_READ }}
+          FCM_PROJECT_ID_CI: ${{ secrets.FCM_PROJECT_ID_CI }}
+          FCM_SERVICE_ACCOUNT_JSON_CI: ${{ secrets.FCM_SERVICE_ACCOUNT_JSON_CI }}
         # END GENERATED: vitest-env
 
       - name: Verify environment configuration
@@ -219,11 +221,8 @@ jobs:
         run: pnpm verify:evidence --require=openrouter
       - name: Verify Linear was called
         run: pnpm verify:evidence --require=linear
-      # Resend and FCM have no CI sandbox, so these assert the real adapter
-      # send-and-record code path ran (against a mocked HTTP seam), not a live
-      # provider call. Founder-verify/CI-pending: a real Resend/FCM sandbox call.
-      - name: Verify Resend was called
-        run: pnpm verify:evidence --require=resend
+      # FCM is a real call: the live test authenticates against Google and
+      # posts a validate-only send, and writes the row only after it succeeds.
       - name: Verify FCM push was called
         run: pnpm verify:evidence --require=push-fcm
 
@@ -309,6 +308,13 @@ jobs:
           SANDBOX_ORIGIN_URL: https://sandbox.hushbox.ai
         # END GENERATED: headers-env
 
+      # The deployed bundle is assembled by the three steps above, not by a
+      # build script, so the bundle guard runs as its own step: after the last
+      # step that adds a file to the dist (the Pages file-count check counts
+      # `_headers`) and before the upload. The step needs no env block.
+      - name: Verify web bundle
+        run: pnpm verify:bundle
+
       - name: Upload web build artifact
         uses: actions/upload-artifact@v6
         with:
@@ -353,6 +359,14 @@ jobs:
           VITE_APP_VERSION: ${{ needs.version.outputs.version }}
           VITE_WEB_URL: https://hushbox.ai
         # END GENERATED: build-env-mobile
+
+      # The OTA bundles are built after the web dist was verified, into their own
+      # sibling dist directories, so they get their own guard run before upload.
+      # Each is named as an argument; the app they belong to — and with it the
+      # TTS expectation — is the script's own. The step needs no env block.
+      - name: Verify mobile OTA bundles
+        if: needs.version.result == 'success'
+        run: pnpm verify:bundle dist-ios dist-android dist-android-direct
 
       - name: Upload mobile build artifacts
         if: needs.version.result == 'success'

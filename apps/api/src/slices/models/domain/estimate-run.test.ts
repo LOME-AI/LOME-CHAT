@@ -5,6 +5,7 @@ import {
   ESTIMATED_VIDEO_BYTES_PER_SECOND,
   MEDIA_STORAGE_COST_PER_BYTE_NANO,
   STORAGE_COST_PER_CHARACTER_NANO,
+  TURN_DECISION_REDUCER,
   VALUE_STORE_BYTE_BUDGET_BYTES,
   WorkflowDefinition,
   nanoUSD,
@@ -135,6 +136,14 @@ function smartModelNode(
     in: { node: 'input', port: 'prompt' },
     ...extra,
   };
+}
+
+function fanInNode(
+  id: string,
+  reducer: string,
+  ins: readonly { readonly node: string; readonly port: string }[]
+): unknown {
+  return { id, version: 1, out: 'out', type: 'fanIn', reducer, ins };
 }
 
 function workflow(
@@ -503,6 +512,24 @@ describe('estimateRun', () => {
     expect(result._unsafeUnwrap()).toBe(classifierReserve + BASE_1000 * 4n);
   });
 
+  it('holds NO internal classifier reserve for a slot fed the decision from outside', () => {
+    const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
+    const estimateRun = createEstimateRun(resolverOf(cheap));
+
+    // A slot declaring an input schema reads a decision produced elsewhere, so
+    // the turn-level classifier node is what is priced — pricing a reserve here
+    // too would hold for one call twice.
+    const external = estimateRun(
+      workflow([smartModelNode('s1', 'cheap', ['cheap', 'cheap'], { inputSchema: 'turnDecision' })])
+    );
+    const internal = estimateRun(workflow([smartModelNode('s1', 'cheap', ['cheap', 'cheap'])]));
+    const reserve = classifierWorstCaseNanoUsd(cheap, [{ id: 'cheap' }, { id: 'cheap' }])!;
+
+    expect(external._unsafeUnwrap()).toBe(BASE_1000);
+    expect(internal._unsafeUnwrap()).toBe(BASE_1000 + reserve);
+    expect(reserve).toBeGreaterThan(0n);
+  });
+
   it('holds NO classifier reserve for a single-candidate model-only node (short-circuit never bills)', () => {
     const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
     const estimateRun = createEstimateRun(resolverOf(cheap));
@@ -659,7 +686,15 @@ describe('estimateRun', () => {
     });
   });
 
-  it('holds the classifier reserve for a single-candidate node declaring the effort dimension (pinned + auto)', () => {
+  /**
+   * A pinned model on auto effort still buys a classifier, but the MODEL
+   * dimension is closed — one candidate, nothing to route — so the prompt names
+   * no model and the reserve prices no model line. Pricing one here while the
+   * shared producer prices none would put the server BELOW the client, which is
+   * the affordable-then-402 direction; both figures stay upper bounds on the
+   * call the executor sends, but the gap has to point the other way.
+   */
+  it('holds the classifier reserve, and no model line, for a pinned + auto node', () => {
     const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
     const estimateRun = createEstimateRun(resolverOf(cheap));
 
@@ -669,8 +704,11 @@ describe('estimateRun', () => {
       ])
     );
 
-    const classifierReserve = classifierWorstCaseNanoUsd(cheap, [{ id: 'cheap' }])!;
+    const classifierReserve = classifierWorstCaseNanoUsd(cheap, [])!;
     expect(result._unsafeUnwrap()).toBe(classifierReserve + BASE_1000);
+    // And it is genuinely smaller than the model-listing reserve, so the
+    // assertion above cannot pass by the two being the same number.
+    expect(classifierReserve).toBeLessThan(classifierWorstCaseNanoUsd(cheap, [{ id: 'cheap' }])!);
   });
 
   it('caps smartModel candidate (answer) ceilings via node params, classifier at its bounded reserve', () => {
@@ -707,7 +745,8 @@ describe('estimateRun', () => {
     );
 
     // Both the classifier reserve and the candidate ceiling scale by the width.
-    const classifierReserve = classifierWorstCaseNanoUsd(cheap, [{ id: 'cheap' }])! * 3n;
+    // Effort-only, so the prompt names no model and the reserve prices none.
+    const classifierReserve = classifierWorstCaseNanoUsd(cheap, [])! * 3n;
     expect(result._unsafeUnwrap()).toBe(classifierReserve + BASE_1000 * 3n);
   });
 
@@ -769,7 +808,7 @@ describe('estimateRun', () => {
       ])
     );
 
-    const classifierReserve = classifierWorstCaseNanoUsd(cheap, [{ id: 'mid' }])!;
+    const classifierReserve = classifierWorstCaseNanoUsd(cheap, [])!;
     // mid contextLength 2000 priced on both legs = 2000×2500 + 2000×10_000.
     expect(result._unsafeUnwrap()).toBe(classifierReserve + BASE_1000 * 2n);
   });
@@ -1139,13 +1178,44 @@ describe('estimateRun — persisting-turn storage', () => {
       workflow([modelNode('m1', 'gpt')], { inputChars: 100, tier: 'free' })
     );
 
-    // provider = BASE_1000 = 14,375,000.
+    // provider = BASE_1000 = 12,500,000.
     // output-storage = outputCeiling(1000) × outputCharsPerToken(free=4) × 300 = 1,200,000.
     // input-storage (once) = 100 × 300 = 30,000. Storage never marks up.
     expect(outputCharsPerTokenForTier('free')).toBe(4);
     const outputStorage = 1000n * BigInt(outputCharsPerTokenForTier('free')) * CHAR_RATE;
     expect(result._unsafeUnwrap()).toBe(BASE_1000 + outputStorage + 100n * CHAR_RATE);
     expect(outputStorage).toBe(1_200_000n);
+  });
+
+  it('reserves NO output storage for a node whose output another node consumes', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+    // Settlement persists SINK outputs, so a consumed value is never stored and
+    // reserving storage for it holds money nothing can bill. The decision
+    // reducer consuming `m1` is exactly that shape.
+    const consumed = workflow(
+      [
+        modelNode('m1', 'gpt'),
+        fanInNode('decide', TURN_DECISION_REDUCER, [
+          { node: 'input', port: 'prompt' },
+          { node: 'm1', port: 'out' },
+        ]),
+      ],
+      { inputChars: 0, tier: 'free' }
+    );
+
+    expect(estimateRun(consumed)._unsafeUnwrap()).toBe(BASE_1000);
+  });
+
+  it('still reserves output storage for the sink the same graph persists', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+    const sinkOnly = workflow([modelNode('m1', 'gpt')], { inputChars: 0, tier: 'free' });
+    const outputStorage = 1000n * BigInt(outputCharsPerTokenForTier('free')) * CHAR_RATE;
+
+    expect(estimateRun(sinkOnly)._unsafeUnwrap()).toBe(BASE_1000 + outputStorage);
   });
 
   it('sizes output storage at the paid (conservative, 2 chars/token) ratio', () => {
@@ -1196,7 +1266,7 @@ describe('estimateRun — persisting-turn storage', () => {
     expect(mediaStorage).toBe(360_000_000n);
   });
 
-  it('adds classifier, candidate-output, and input storage to a smartModel node', () => {
+  it('adds candidate-output and input storage to a smartModel node, never classifier storage', () => {
     const cheap = buildDescriptor({ id: 'cheap', contextLength: 1000 });
     const estimateRun = createEstimateRun(resolverOf(cheap));
 
@@ -1209,20 +1279,23 @@ describe('estimateRun — persisting-turn storage', () => {
       smartModelNode('s1', 'cheap', ['cheap'], pinnedAuto),
     ]);
 
-    // Classifier reserve storage (raw): reserve chars input + output cap chars, at
-    // the trial output ratio (classifier storage is always the trial ratio).
-    const reserveChars = classifierReserveChars([{ id: 'cheap' }]);
-    const classifierStorage =
-      BigInt(reserveChars) * CHAR_RATE +
-      BigInt(CLASSIFIER_OUTPUT_TOKEN_CAP) * BigInt(outputCharsPerTokenForTier('trial')) * CHAR_RATE;
     // The one candidate ('cheap', full-context 1000 output) at the free output ratio.
     const candidateOutputStorage = 1000n * BigInt(outputCharsPerTokenForTier('free')) * CHAR_RATE;
     const inputStorage = 50n * CHAR_RATE;
+    // The classifier contributes NO storage to the difference: its prompt and
+    // answer never rest, so the reserve has no storage leg to switch on when the
+    // turn persists. What the classifier would have added is measured here so the
+    // assertion cannot pass by the term being small.
+    const reserveChars = classifierReserveChars([{ id: 'cheap' }]);
+    const classifierStorageIfItExisted =
+      BigInt(reserveChars) * CHAR_RATE +
+      BigInt(CLASSIFIER_OUTPUT_TOKEN_CAP) * BigInt(outputCharsPerTokenForTier('trial')) * CHAR_RATE;
+    expect(classifierStorageIfItExisted).toBeGreaterThan(0n);
 
     const delta =
       estimateRun(withStorageDefinition)._unsafeUnwrap() -
       estimateRun(withoutStorageDefinition)._unsafeUnwrap();
-    expect(delta).toBe(classifierStorage + candidateOutputStorage + inputStorage);
+    expect(delta).toBe(candidateOutputStorage + inputStorage);
   });
 
   it('adds no storage when the definition carries no storage stamp', () => {

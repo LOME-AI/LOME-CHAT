@@ -32,16 +32,18 @@ interface PushNotifyInfra {
  * capability never throws and never blocks its caller: every failure is
  * swallowed after `notifyEvent` has logged its own code.
  *
- * Content NEVER reaches the payload — `notifyEvent` uses fixed generic
- * per-category copy (a push notification sits outside the E2E envelope) — and
- * presence rides the CALLER's fire-time snapshot, so members already watching
- * are suppressed without the notifications slice ever querying the room.
+ * Content NEVER reaches the payload — `notifyEvent` sends only the generic
+ * category + conversationId pair, and each transport resolves its own fixed
+ * per-category copy at the edge (a push notification sits outside the E2E
+ * envelope) — and presence rides the CALLER's fire-time snapshot, so members
+ * already watching are suppressed without the notifications slice ever
+ * querying the room.
  */
 function createCategoryPushNotify(
   category: NotificationCategory,
   { env, db, telemetry, membership }: PushNotifyInfra
 ): NotifyConversationEvent {
-  const push = createPushSenderFromEnv(env, db);
+  const push = createPushSenderFromEnv(env);
   const deviceTokens = createDeviceTokenStore(db);
   const preferences = createNotificationPreferencesStore(db);
   return async ({ conversationId, actorUserId, recipientUserIds, presentUserIds }) => {

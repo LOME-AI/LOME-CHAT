@@ -1,14 +1,18 @@
-import { getUserTier, resolveFundingDecision } from '@hushbox/shared/affordability';
+import { getUserTier, resolveFunding } from '@hushbox/shared/affordability';
 import { notFoundError, unavailableError } from '../../../lib/errors/index.js';
 import { ResultAsync, errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
 import { HOLDS_READ_SCRIPT } from './admission-scripts.js';
 import { resolveEffectiveSpendable } from './admission.js';
-import { conversationBudgetScopeId, memberBudgetScopeId } from './budget-resolution.js';
+import {
+  conversationBudgetScopeId,
+  memberBudgetScopeId,
+  resolveBudgetScopes,
+} from './budget-resolution.js';
 import { groupEffectiveRemainingNanoUsd } from './group-budget.js';
 import { BILLING_KEYS } from './keys.js';
 import type { UserTier } from '@hushbox/shared/affordability';
 import type { DomainError } from '../../../lib/errors/index.js';
-import type { AdmissionDeps } from './admission.js';
+import type { AdmissionDeps, BudgetScope } from './admission.js';
 import type { RedisClient } from './keys.js';
 
 /** One hold hash's active readout: the held sum. */
@@ -150,9 +154,12 @@ export interface ReadFundingSnapshotArgs {
  */
 export interface FundingSnapshot {
   /**
-   * Hold-aware. When the payer is the caller it is exactly what admission's
-   * balance gate compares. When the payer is the conversation owner it is the
-   * group's hold-aware remaining, whose owner-balance dimension is the RAW
+   * Hold-aware, and whole at whatever tier the payer is: when the payer is the
+   * caller it is exactly what admission gates their turn on — the purchased
+   * wallet's spendable funds while that balance funds turns, otherwise the
+   * day's remaining free allowance, which is then the entire money gate because
+   * a free wallet skips the balance check. When the payer is the conversation owner it
+   * is the group's hold-aware remaining, whose owner-balance dimension is the RAW
    * purchased balance — neither the owner's paid-tier cushion nor the owner
    * wallet's own holds are applied, by ruling (a member must not be able to
    * infer the owner's activity elsewhere). So an owner-funded figure can
@@ -168,19 +175,111 @@ export interface FundingSnapshot {
   readonly payer: 'self' | 'owner';
 }
 
-/** The caller's own wallet figures, plus the raw balance the tier derives from. */
-interface SelfFunding {
+/** What one funding arm resolves: the money pair, unlabelled. */
+interface FundingFigures {
   readonly spendableNanoUsd: bigint;
   readonly heldNanoUsd: bigint;
-  readonly purchasedBalanceNanoUsd: bigint;
 }
 
 /**
- * The caller's PURCHASED wallet resolved through the same snapshot + spendable
- * rule admission gates with, minus the wallet's active holds. The free-tier
- * daily allowance is a budget scope, not a balance — it rides the budgets
- * endpoint, never this number. Spendable may be negative (overdrawn wallet);
- * clamping would hide the deficit the composer must show.
+ * The caller's own figures under the tier that produced them, plus the raw
+ * purchased balance the group funding core reads independently of them.
+ */
+interface SelfFunding extends FundingFigures {
+  readonly purchasedBalanceNanoUsd: bigint;
+  readonly tier: UserTier;
+}
+
+/**
+ * The paid arm: the caller's PURCHASED wallet resolved through the same
+ * snapshot + spendable rule admission gates with, minus the wallet's active
+ * holds. Spendable may be negative (holds beyond the cushion); clamping would
+ * hide the deficit the composer must show.
+ */
+function readPurchasedFunding(
+  deps: AdmissionDeps,
+  purchasedWalletId: string,
+  now: Date
+): ResultAsync<FundingFigures, DomainError> {
+  return resolveEffectiveSpendable(deps, purchasedWalletId).andThen((spendable) =>
+    readActiveHolds(deps.redis, [BILLING_KEYS.walletHolds.buildKey(purchasedWalletId)], now).map(
+      (readouts): FundingFigures => {
+        const holds = totalHolds(readouts);
+        return {
+          spendableNanoUsd: spendable.effectiveSpendableNanoUsd - holds.heldNanoUsd,
+          heldNanoUsd: holds.heldNanoUsd,
+        };
+      }
+    )
+  );
+}
+
+/**
+ * Exactly one scope comes back for an allowance-only resolve; anything else is
+ * a defect in the resolver, never a state to default around.
+ */
+function soleScope(scopes: readonly BudgetScope[]): BudgetScope {
+  const scope = scopes[0];
+  /* v8 ignore next 3 -- unreachable: the only caller requests the allowance scope alone, and resolveBudgetScopes pushes exactly one scope per request field; kept fail-fast */
+  if (scope === undefined || scopes.length !== 1) {
+    throw new Error('spendable: allowance resolve returned no single budget scope');
+  }
+  return scope;
+}
+
+/**
+ * The free arm: a payer whose purchased balance cannot fund a turn draws the
+ * day-keyed free allowance, and that allowance IS their effective balance
+ * (BILLING §Funding). The gate is reproduced rather than restated — the scope
+ * comes from the same `resolveBudgetScopes` call the admission hook makes, so
+ * the served remaining and the scope id whose holds come off it are admission's
+ * own, and the allowance can never drift into a second derivation here. There
+ * is no reset: a new day resolves a new scope id with no row behind it, which
+ * is why this reads "remaining today" from `now` alone.
+ *
+ * The wallet-holds hash is deliberately not read: a free wallet skips the
+ * balance check entirely (`spendableFor`), so the allowance scope is the whole
+ * money gate, and its holds are the ones that move the served number.
+ */
+function readAllowanceFunding(
+  deps: AdmissionDeps,
+  userId: string,
+  now: Date
+): ResultAsync<FundingFigures, DomainError> {
+  return resolveBudgetScopes(deps.stores, deps.db, { now, allowance: { userId } }).andThen(
+    (scopes) => {
+      const allowance = soleScope(scopes);
+      return readActiveHolds(
+        deps.redis,
+        [BILLING_KEYS.scopeHolds.buildKey(allowance.scopeId)],
+        now
+      ).map((readouts): FundingFigures => {
+        const holds = totalHolds(readouts);
+        return {
+          spendableNanoUsd: allowance.remainingNanoUsd - holds.heldNanoUsd,
+          heldNanoUsd: holds.heldNanoUsd,
+        };
+      });
+    }
+  );
+}
+
+/** The tier of a wallet holder, from the one shared derivation. */
+function tierForBalance(purchasedBalanceNanoUsd: bigint): UserTier {
+  // The daily allowance never moves the tier (a positive purchased balance
+  // does), so the allowance dimension is irrelevant to this derivation.
+  return getUserTier({ purchasedBalanceNanoUsd, freeAllowanceNanoUsd: 0n }).tier;
+}
+
+/**
+ * The caller's own funding, priced from the wallet that would actually pay
+ * their turn. ONE tier derivation both picks the arm and labels its figures, so
+ * the number and the tier beside it cannot describe different wallets: `paid`
+ * reads the purchased wallet through admission's own spendable rule, every arm
+ * below it the day-keyed allowance. Hidden coupling: the send path resolves the
+ * payer wallet at this same tier boundary (`chat/domain/turn-context.ts` falls
+ * through to the free wallet there), so moving the boundary in one place alone
+ * makes this endpoint describe a wallet that will not pay.
  */
 function readSelfFunding(
   deps: AdmissionDeps,
@@ -193,33 +292,26 @@ function readSelfFunding(
         notFoundError('spendable: caller has no purchased wallet')
       );
     }
-    return resolveEffectiveSpendable(deps, purchased.id).andThen((spendable) =>
-      readActiveHolds(deps.redis, [BILLING_KEYS.walletHolds.buildKey(purchased.id)], args.now).map(
-        (readouts): SelfFunding => {
-          const holds = totalHolds(readouts);
-          return {
-            spendableNanoUsd: spendable.effectiveSpendableNanoUsd - holds.heldNanoUsd,
-            heldNanoUsd: holds.heldNanoUsd,
-            purchasedBalanceNanoUsd: purchased.balanceNanoUsd,
-          };
-        }
-      )
+    const tier = tierForBalance(purchased.balanceNanoUsd);
+    const figures =
+      tier === 'paid'
+        ? readPurchasedFunding(deps, purchased.id, args.now)
+        : readAllowanceFunding(deps, args.userId, args.now);
+    return figures.map(
+      (funding): SelfFunding => ({
+        ...funding,
+        purchasedBalanceNanoUsd: purchased.balanceNanoUsd,
+        tier,
+      })
     );
   });
-}
-
-/** The tier of a wallet holder, from the one shared derivation. */
-function tierForBalance(purchasedBalanceNanoUsd: bigint): UserTier {
-  // The daily allowance never moves the tier (a positive purchased balance
-  // does), so the allowance dimension is irrelevant to this derivation.
-  return getUserTier({ purchasedBalanceNanoUsd, freeAllowanceNanoUsd: 0n }).tier;
 }
 
 function selfSnapshot(self: SelfFunding): FundingSnapshot {
   return {
     spendableNanoUsd: self.spendableNanoUsd,
     heldNanoUsd: self.heldNanoUsd,
-    tier: tierForBalance(self.purchasedBalanceNanoUsd),
+    tier: self.tier,
     payer: 'self',
   };
 }
@@ -320,7 +412,7 @@ export function readFundingSnapshot(
       if (conversation === null) return self.map((funding) => selfSnapshot(funding));
       return ResultAsync.combine([self, readGroupFunding(deps, conversation, args.now)]).map(
         ([selfFunding, group]): FundingSnapshot => {
-          const decision = resolveFundingDecision({
+          const decision = resolveFunding({
             isSolo: false,
             // A link guest never reaches this endpoint (refused at HTTP for
             // every route class), so the caller always has a wallet to fall

@@ -51,7 +51,9 @@ describe('useUserTierInfo', () => {
 
     expect(result.current.tier).toBe('paid');
     expect(result.current.purchasedBalanceNanoUsd).toBe(10_000_000_000n);
-    expect(result.current.freeAllowanceNanoUsd).toBe(5_000_000_000n);
+    // Not read from the balance endpoint: the allowance never moves the
+    // tier, and a free payer's spendable is served by /billing/spendable.
+    expect(result.current.freeAllowanceNanoUsd).toBe(0n);
   });
 
   it('returns free tier for authenticated user with zero balance', () => {
@@ -64,7 +66,9 @@ describe('useUserTierInfo', () => {
 
     expect(result.current.tier).toBe('free');
     expect(result.current.purchasedBalanceNanoUsd).toBe(0n);
-    expect(result.current.freeAllowanceNanoUsd).toBe(5_000_000_000n);
+    // Not read from the balance endpoint: the allowance never moves the
+    // tier, and a free payer's spendable is served by /billing/spendable.
+    expect(result.current.freeAllowanceNanoUsd).toBe(0n);
   });
 
   it('returns trial tier for unauthenticated user', () => {

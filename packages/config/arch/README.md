@@ -96,7 +96,7 @@ isNotNull, like, ilike, between, sql, asc, desc`), by either route: an
   are exempt — they build throwaway apps with their own `onError`.
 - `demo-isolation` — production web code (`apps/web/src/**`, excluding
   `apps/web/src/demo/**` and test files) may not statically `import … from
-  '…/demo/…'`. The interactive demo fakes a logged-in session plus a global
+'…/demo/…'`. The interactive demo fakes a logged-in session plus a global
   fetch shim and is code-split out of the main chunk by `main.tsx`'s
   `isDemoPath`-gated dynamic `import('./demo/bootstrap')`; a static import would
   silently bundle the fake-auth bypass into production. Dynamic imports are
@@ -106,3 +106,81 @@ isNotNull, like, ilike, between, sql, asc, desc`), by either route: an
   exactly `demo`, so the `@/lib/is-demo-path` helper is never flagged. Requires
   `apps/web/src/**/*.{ts,tsx}` in `run.ts`'s `SOURCE_GLOBS` to run against real
   web code.
+- `no-evidence-from-mocked-seam` — no backend file may both fake the HTTP
+  transport and enable a `service_evidence` write. Flagged shapes: a
+  `fetch`-named property holding a vitest mock in the same options object as a
+  hardcoded `isCI: true`, or any `recordServiceEvidence` call in a file that
+  fakes fetch at all (including `vi.stubGlobal('fetch', …)`). Indirection is
+  followed syntactically — a mock reached through a variable, a reassignment, or
+  a local factory function still counts.
+
+  **The invariant, and why fcm/webpush/resend differ from helcim/r2.** An
+  evidence row is what `pnpm verify:evidence --require=<svc>` treats as proof
+  that a real call to a real external service happened; a missing row hard-fails
+  CI, which is the only thing standing between an integration going silently
+  dark and a red build. So an adapter may record evidence **only where its real
+  implementation actually executes in CI**. That holds for helcim (a real
+  sandbox charge), hookdeck, r2 (a real S3 PUT) and openrouter (a real,
+  cassette-backed catalog fetch), and those adapters record it themselves. It
+  does **not** hold for fcm, webpush and resend: `push-sender-factory.ts` and
+  `email-sender-factory.ts` deliberately return mock senders whenever
+  `isLocalDev || isCI`, because FCM has no sandbox, a real adapter would fire
+  real sends at the junk tokens every E2E notification path seeds, and the
+  `/dev/push` capture surface depends on the mock. **Those factories are correct
+  and must not be "fixed"** — the defect this rule guards was evidence-writing
+  code sitting in an adapter the factory mocks away, which made "a real call
+  happened" and "`isCI`" mutually exclusive. `push-fcm` and `resend` both landed
+  rows from a `vi.fn()` fetch, so `verify:evidence` was green while nothing had
+  ever reached Google or Resend. Evidence for those three belongs in a separate
+  CI-gated test that makes the real call itself
+  (`push-fcm-live.integration.test.ts` is the pattern).
+
+  What made those two files harmful, precisely, is that the faked transport sat
+  next to a **real database connection** (`createDb`): a real `service_evidence`
+  row landed from a call that never left the process. A test that fakes the
+  transport but hands the adapter a spy or fake db — `payment-helcim.test.ts`
+  does exactly this — cannot write a real row at all, so it is harmless. The
+  rule keys on the shape (fake transport + open evidence gate) because that is
+  what is statically visible; the harm it exists to prevent is the narrower
+  fake-transport-plus-real-db combination.
+
+  **Separating a fake from a real-delegating wrapper** is the rule's whole
+  difficulty. The live FCM test hands the adapter a `fetchImpl` too, but its
+  wrapper awaits the real global `fetch` and only clones the response; the
+  cassette transport likewise closes over `globalThis.fetch`. Keying on the
+  presence of a `fetchImpl` would flag the one file in the repo that does this
+  correctly. The discriminator is vitest's mocking surface: a `vi.fn`,
+  `vi.mock`, `vi.doMock` or `vi.stubGlobal` value has no socket behind it, and a
+  wrapper that delegates never needs one. `vi.spyOn` is in the set for a
+  different reason — it is the entry point to `mockImplementation`, the shape a
+  fake takes when it replaces an existing function. A bare
+  `vi.spyOn(globalThis, 'fetch')` with no `mockImplementation` **does** call
+  through to the real `fetch`, so a capture-and-delegate spy passed alongside
+  `isCI: true` is flagged even though its transport is real: a known, accepted
+  over-fire, and not a reason to drop `spyOn` (dropping it would let every
+  `spyOn(...).mockImplementation(...)` fake through).
+
+  **What it does not prove:** that an evidence write in a passing file followed a
+  genuine network call. No static rule can. It catches the mocked-seam shape —
+  the shape both historical defects had — and nothing more.
+
+  **Verified escapes — do not read the guard as total.** Each of these passes the
+  rule today:
+
+  - An in-file hand-written fake that touches no `vi.*` at all, such as an
+    `async () => Response.json({ name: 'x' })` bound to `fetchImpl`. This is the
+    repo's own prevailing style (`payment-helcim-fixtures.ts`'s
+    `createFixtureFetch`, `gateway-metadata.test.ts`), so it is the likeliest
+    escape, not a contrived one.
+  - `isCI` passed as a shorthand or a variable rather than a `true` literal — a
+    one-token mutation of the actual `push-fcm` violator.
+  - `globalThis.fetch = vi.fn()` / `global.fetch = vi.fn()` assignment (only
+    `vi.stubGlobal('fetch', …)` is recognized).
+  - msw's `setupServer` and module-level `vi.mock('./transport.js')`, which fake
+    the transport without ever naming a `fetch` slot.
+
+  **Coverage limit:** `run.ts`'s `SOURCE_GLOBS` do not include
+  `apps/api/src/platform/**`, `apps/api/src/jobs/**` or `scripts/**`, so real
+  `recordServiceEvidence` callers living there (`linear-real.integration.test.ts`
+  is one) are never seen by this rule. Widening the globs changes the input to
+  every rule in the directory, so it is a deliberate decision, not a tidy-up.

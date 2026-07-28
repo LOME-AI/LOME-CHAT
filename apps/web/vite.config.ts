@@ -10,9 +10,10 @@ import { previewDirectoryIndexFallback } from './src/lib/preview-directory-index
 import { headersPlugin } from '../../scripts/lib/headers-vite-plugin';
 import {
   ORT_EXTERN_WASM_CONDITION,
+  TTS_WORKER_SCAN_ENTRY,
   WORKER_BUILD_OPTIONS,
   ortAssetsPlugin,
-} from '../../scripts/lib/ort-assets-plugin';
+} from '../../scripts/lib/build-seam';
 
 const envDir = resolve(__dirname, '../..');
 
@@ -257,6 +258,14 @@ export default defineConfig(({ mode, command }) => {
     // ES-format workers keep `new.target` intact, which the TTS worker's
     // transformers dependency needs to load at all (see the constant).
     worker: WORKER_BUILD_OPTIONS,
+    optimizeDeps: {
+      // Setting `entries` REPLACES Vite's default `**/*.html` glob, so the
+      // default is restated here: dropping it silently shrinks the cold-start
+      // dep cache by an order of magnitude (only the worker's own subtree gets
+      // prebundled) with no error, just a slower dev server. The worker entry
+      // is what keeps kokoro-js out of late discovery (see the constant).
+      entries: ['**/*.html', TTS_WORKER_SCAN_ENTRY],
+    },
     resolve: {
       // Picks onnxruntime-web's extern-wasm build variant so the TTS worker
       // does not drag a bundled ~21 MB wasm copy into the output alongside the

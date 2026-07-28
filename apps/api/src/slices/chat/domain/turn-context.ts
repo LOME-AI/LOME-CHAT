@@ -1,4 +1,4 @@
-import { ERROR_CODES, resolveFundingDecision } from '@hushbox/shared';
+import { ERROR_CODES, resolveFunding } from '@hushbox/shared';
 import { groupEffectiveRemainingNanoUsd, readBalance } from '../../billing/index.js';
 import { resolveCallerMember } from '../../conversations/index.js';
 import { forbiddenError, notFoundError } from '../../../lib/errors/index.js';
@@ -100,7 +100,7 @@ export interface PayerFunding {
 
 /**
  * The primitive funding inputs the route resolved from the DB, minus the
- * model-tier flag — everything the shared {@link resolveFundingDecision} core
+ * model-tier flag — everything the shared {@link resolveFunding} core
  * needs except `isPremiumModel`. Frozen onto the {@link TurnContext} so the
  * route's premium tier gate re-runs the SAME core with the selected model's
  * premium classification, instead of re-deriving the funding branching itself.
@@ -144,7 +144,7 @@ export interface TurnContext {
   readonly payerUserId: string;
   /**
    * The primitive funding inputs behind the frozen payer wallet, for the route's
-   * premium tier gate to re-run {@link resolveFundingDecision} against the
+   * premium tier gate to re-run {@link resolveFunding} against the
    * selected model — so the who-pays and premium decisions share one core.
    */
   readonly fundingDecisionInputs: FundingDecisionInputs;
@@ -405,7 +405,7 @@ function resolvePayerWallet(
       callerOwnPurchasedBalanceNanoUsd: 0n,
       turnEstimateNanoUsd: undefined,
     };
-    const decision = resolveFundingDecision({ ...groupInputs, isPremiumModel: false });
+    const decision = resolveFunding({ ...groupInputs, isPremiumModel: false });
     if (decision.payer === 'owner') {
       // Owner-funded: the spendable funds are the group MIN itself (legacy
       // `computeEffectivePayerBalance`), the tightest of the three caps — not

@@ -406,12 +406,21 @@ local_protocol = "http"
     beforeEach(() => {
       process.env['OPENROUTER_API_KEY_RESTRICTED'] = 'test-openrouter-restricted';
       process.env['LINEAR_API_KEY_READ'] = 'test-linear-read';
+      process.env['FCM_PROJECT_ID_CI'] = 'test-fcm-project';
+      process.env['FCM_SERVICE_ACCOUNT_JSON_CI'] = '{"client_email":"t","private_key":"k"}';
     });
 
     afterEach(() => {
       delete process.env['OPENROUTER_API_KEY_RESTRICTED'];
       delete process.env['LINEAR_API_KEY_READ'];
+      delete process.env['FCM_PROJECT_ID_CI'];
+      delete process.env['FCM_SERVICE_ACCOUNT_JSON_CI'];
     });
+
+    const parseDevVariables = async (): Promise<Record<string, string>> => {
+      const { parse } = await import('dotenv');
+      return parse(readFileSync(path.join(TEST_DIR_ENV, 'apps/api/.dev.vars'), 'utf8'));
+    };
 
     it('throws when the required ciVitest secret LINEAR_API_KEY_READ is missing', () => {
       delete process.env['LINEAR_API_KEY_READ'];
@@ -419,6 +428,44 @@ local_protocol = "http"
       expect(() => {
         generateEnvFiles(TEST_DIR_ENV, 'ciVitest');
       }).toThrow('Missing required secrets in process.env: LINEAR_API_KEY_READ');
+    });
+
+    it('throws when the required ciVitest secret FCM_PROJECT_ID_CI is missing', () => {
+      delete process.env['FCM_PROJECT_ID_CI'];
+
+      expect(() => {
+        generateEnvFiles(TEST_DIR_ENV, 'ciVitest');
+      }).toThrow('Missing required secrets in process.env: FCM_PROJECT_ID_CI');
+    });
+
+    it('throws when the required ciVitest secret FCM_SERVICE_ACCOUNT_JSON_CI is missing', () => {
+      delete process.env['FCM_SERVICE_ACCOUNT_JSON_CI'];
+
+      expect(() => {
+        generateEnvFiles(TEST_DIR_ENV, 'ciVitest');
+      }).toThrow('Missing required secrets in process.env: FCM_SERVICE_ACCOUNT_JSON_CI');
+    });
+
+    // The live FCM send test reads its credential from process.env, and turbo
+    // runs tests in strict env mode passing through only HB_TEST_SCOPE — so the
+    // generated .dev.vars is the sole route from the CI job's secrets to that
+    // test process. Were this emission to break, the suite would skip and
+    // `verify:evidence --require=push-fcm` would fail indistinguishably from an
+    // unprovisioned secret.
+    it('emits FCM_PROJECT_ID_CI into the backend .dev.vars', async () => {
+      generateEnvFiles(TEST_DIR_ENV, 'ciVitest');
+
+      const devVariables = await parseDevVariables();
+      expect(devVariables['FCM_PROJECT_ID_CI']).toBe('test-fcm-project');
+    });
+
+    it('emits FCM_SERVICE_ACCOUNT_JSON_CI into the backend .dev.vars', async () => {
+      generateEnvFiles(TEST_DIR_ENV, 'ciVitest');
+
+      const devVariables = await parseDevVariables();
+      expect(devVariables['FCM_SERVICE_ACCOUNT_JSON_CI']).toBe(
+        '{"client_email":"t","private_key":"k"}'
+      );
     });
   });
 });
@@ -757,7 +804,7 @@ old content
 
       const content = readCiYml();
       expect(content).toContain(
-        'for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD ADMIN_ACTOR_ALLOWLIST ADMIN_SQL_PANEL_DATABASE_URL CLOUDFLARE_ACCESS_LOG_API_TOKEN CLOUDFLARE_ACCOUNT_ID APP_VERSION RESEND_API_KEY RESEND_WEBHOOK_SECRET OPENROUTER_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SENTRY_DSN; do'
+        'for secret in DATABASE_URL UPSTASH_REDIS_REST_URL UPSTASH_REDIS_REST_TOKEN OPAQUE_MASTER_SECRET IRON_SESSION_SECRET CF_ACCESS_TEAM_DOMAIN CF_ACCESS_AUD ADMIN_ACTOR_ALLOWLIST ADMIN_SQL_PANEL_DATABASE_URL CLOUDFLARE_ACCESS_LOG_API_TOKEN CLOUDFLARE_ACCOUNT_ID APP_VERSION RESEND_API_KEY RESEND_WEBHOOK_SECRET OPENROUTER_API_KEY FCM_PROJECT_ID FCM_SERVICE_ACCOUNT_JSON VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY NOTIFICATION_TAG_SECRET HELCIM_API_TOKEN LINEAR_API_KEY_READ HELCIM_WEBHOOK_VERIFIER R2_S3_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY SENTRY_DSN; do'
       );
       // The Ops-lane admin creds are not Worker secrets, so they are not verified here.
       expect(content).not.toContain('R2_ADMIN_ACCESS_KEY_ID');

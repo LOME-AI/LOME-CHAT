@@ -804,16 +804,30 @@ lands the row with `fetchImpl` mocked, and `ci.yml:222-224` admits it in a comme
 FOUNDER RULE for this work is: **an evidence row is written only when a real network call
 to the real external service actually happened.**
 
-**F2 — FCM credentials must follow the Linear pattern, not the env registry.** Declaring
-a `secret()` for `Mode.CiVitest` makes `generate-env.ts:246-248` throw
-`Missing required secrets in process.env` and hard-fails CI the moment the code lands.
-Linear avoids this: the secret is a raw job env var (`ci.yml:142`) read directly via
-`process.env['LINEAR_API_KEY_READ']` (`linear-real.integration.test.ts:37-39`) behind
-`describe.skipIf(!shouldRun)`, with `verify:evidence` as the real guard
-(`linear-real.integration.test.ts:23-24`). Gating derives from ONE `createEnvUtilities()`
-call plus explicit key/db-presence terms — never raw `process.env['CI']` sniffing, and
-never key-presence alone. Fork PRs already cannot run CI at all (OPENROUTER's ciVitest
-`secret()` already fail-fasts), so forks impose no new constraint.
+**F2 — CORRECTED 2026-07-27 (my original F2 was WRONG; do not follow any brief quoting it).**
+F2 originally claimed Linear proves a "raw job env var bypasses the registry" pattern. It
+does not. `LINEAR_API_KEY_READ` IS a registry entry — `env.config.ts:475`
+`[Mode.CiVitest]: secret('LINEAR_API_KEY_READ')` with `env.config.ts:701`
+`z.string().min(1).optional()`. The `ci.yml` job env exists to feed `generate:env`, NOT
+vitest. Turbo runs strict env mode and `turbo.json`'s `test` task declares only
+`"passThroughEnv": ["HB_TEST_SCOPE"]`, so a raw job env var never reaches the test process
+— proved by probe. Following the original F2 would have shipped a test that silently skips
+in CI forever, failing `verify:evidence` indistinguishably from a missing credential.
+
+THE CORRECT ROUTE: declare `FCM_PROJECT_ID_CI` and `FCM_SERVICE_ACCOUNT_JSON_CI` in
+`packages/shared/src/env.config.ts` as `[Mode.CiVitest]: secret(...)` ONLY — no
+Development/E2E/CiE2E/Production entries (production keeps its existing separate
+`FCM_PROJECT_ID`/`FCM_SERVICE_ACCOUNT_JSON`) — plus `.optional()` Zod entries, mirroring
+`LINEAR_API_KEY_READ` exactly. Then run `pnpm generate:env`: the `# BEGIN GENERATED:
+vitest-env` block in `ci.yml` regenerates with the new secrets, so there is NO manual
+`ci.yml` env edit and NO `turbo.json` change. Because the vars have no Development entry,
+local dev and the default-mode generate are unaffected.
+
+ACCEPTED CONSEQUENCE (consistent with ruling R-B): `generate:env --mode=ciVitest` hard-fails
+with `Missing required secrets in process.env: FCM_PROJECT_ID_CI, …` until the founder
+provisions. That is louder and more diagnostic than a silent skip, and is the intended
+behavior — do not soften it. Fork PRs already cannot run CI (OPENROUTER precedent), so
+forks impose no new constraint.
 
 **F3 — FCM `validate_only` semantics are settled; NO SPIKE IS NEEDED.** It is a
 top-level snake_case sibling of `message` in the POST body to
@@ -899,8 +913,10 @@ itself accepts against a real RSA key — nothing verifies that today.
   This is the part that replaces mock-shaped error handling with reality.
 - Gating follows `deriveLinearGate` exactly: one `createEnvUtilities()` call, `isCI &&
   !isE2E && hasCredentials`, expressed as a named pure function with its own unit test,
-  behind `describe.skipIf`. Credentials read from `process.env` directly. NO new
-  `env.config.ts` entry, and no `secret()` for any CI mode (F2).
+  behind `describe.skipIf`. Credentials reach the test process via the generated env files
+  from the two new `env.config.ts` registry entries (CORRECTED F2). Do NOT add
+  `passThroughEnv` entries to `turbo.json` and do NOT hand-edit `ci.yml`'s generated
+  vitest-env block — run `pnpm generate:env` and commit what it writes.
 - `recordServiceEvidence(..., SERVICE_NAMES.PUSH_FCM)` is called as the LAST statement of
   that test, only after every assertion passed — mirroring
   `gateway-metadata.integration.test.ts:75`.
@@ -923,7 +939,17 @@ itself accepts against a real RSA key — nothing verifies that today.
 `roles/firebasecloudmessaging.admin`. Exposed to CI as two GitHub secrets named
 `FCM_PROJECT_ID_CI` and `FCM_SERVICE_ACCOUNT_JSON_CI` — distinct from the production
 `FCM_PROJECT_ID`/`FCM_SERVICE_ACCOUNT_JSON` so a production credential can never be the
-thing CI reads. The test reads both from `process.env` directly (F2).
+thing CI reads. They are declared as `env.config.ts` registry entries and reach the test
+process through generated env files — see the CORRECTED F2, which supersedes the earlier
+"read from process.env directly / no registry entry" instruction.
+
+**ORCHESTRATOR RULING 2026-07-27 (the dead `db` param):** dropping `db`/`isCI` from
+`FcmPushSenderConfig` makes `createPushSenderFromEnv`'s trailing `db` parameter unused,
+which is a hard lint error (`unused-imports/no-unused-vars`, args:'after-used'). **Take
+Option A — drop the parameter.** Update `apps/api/src/adapters/push-notify.ts:44`, the
+notifications barrel export at `index.ts:53`, and every test call site. Do NOT rename it
+`_db`: a dead parameter is a wrong name, which CODE-RULES §Durable Naming treats as worse
+than none. `push-notify.ts` is in no other task's ownership, so this is safe to take.
 
 **AUDIT NOTE (R-B) — what the auditor CAN and CANNOT verify.** The credential does not
 exist in any agent's environment, so the real two-leg call CANNOT be executed during
@@ -932,8 +958,10 @@ the gate function's unit test; that the suite skips (not fails) with no credenti
 the default request body contains no `validate_only` key; that the classifier assertion
 consumes a real response body rather than a fixture the test itself authored; that the
 evidence write is the last statement after all assertions; that the mocked evidence write
-and its test are gone; and that no `env.config.ts` `secret()` was added for a CI mode.
-The real call is proven by the founder's next CI run, not by this audit.
+and its test are gone; and that the two `env.config.ts` entries exist for `Mode.CiVitest` ONLY, with no
+Development entry (which would break local dev) and no Production entry (production has
+its own separate FCM vars). The real call is proven by the founder's next CI run, not by
+this audit.
 
 **CAVEATS (state in the report):** proves OAuth/JWT signing, project id, scope, request
 shape and error classification against Google — NOT delivery to a device. Requires a
@@ -1126,11 +1154,208 @@ condition, recorded for the future: Resend publishes test-mode addresses and res
 send-only keys, so a real CI call is buildable later on Task 18's exact shape — that was
 considered and declined, not overlooked.
 
+**SECOND, UNRELATED ITEM folded into this task (orchestrator amendment 2026-07-27):**
+`scripts/generate-env.test.ts` has a failing expectation — its expected production-secret
+list omits `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `NOTIFICATION_TAG_SECRET`, which an
+EARLIER task in THIS run added to `env.config.ts`. This run therefore owns the breakage.
+It is red at HEAD and blocks `pnpm test`, hence the whole CI DAG. Add the three names to
+the expectation so it reflects the registry. Do NOT change `env.config.ts` to satisfy the
+test — the registry is right and the test is stale. This item shares no file with the
+Resend work; it is folded here only to avoid spawning a task for one line, and the auditor
+gates both independently.
+
 **Files:** `.github/workflows/ci.yml`, `apps/api/src/slices/notifications/adapters/email-resend.ts`,
+`scripts/generate-env.test.ts`,
 `email-resend.integration.test.ts`, `email-sender-factory.ts` (if the config shape changes),
 `packages/db/src/evidence.ts`, `packages/db/src/evidence.integration.test.ts`.
 **Scoped checks:** `pnpm test:api`; `pnpm test:db`; `turbo lint typecheck --filter=@hushbox/api --filter=@hushbox/db --force`; `pnpm lint:unused`.
 **Sensitive:** no → 1 auditor.
+
+
+## Task 23 — Arch guard: no evidence row from a mocked seam (depends on 18 and 22)
+
+**Objective:** make the founder's evidence rule structural repo-wide, so the defect Tasks 18
+and 22 removed cannot be reintroduced by a future integration.
+
+**Design context:** the root cause was never the factories. `push-sender-factory.ts:67` and
+`email-sender-factory.ts:64` both return mocks for `isLocalDev || isCI`, which is CORRECT
+and must not change — FCM has no sandbox, so a real adapter in CI would fire real Google
+calls on every E2E notification path with seeded junk tokens, and would break the
+`/dev/push` capture surface. The defect was evidence-writing code placed in an adapter the
+factory never runs in CI, which made a real call and `isCI` mutually exclusive. The
+invariant this rule encodes: **an adapter may write evidence only if its real
+implementation actually executes in CI** (true for helcim/hookdeck/r2/openrouter; false for
+fcm/webpush/resend, whose evidence therefore belongs to a CI-gated test that made a real
+call). The checkable form of the historical bug is: a file must not both fake the HTTP
+transport and write evidence.
+
+**THE CRUX — a naive predicate flags the one honest test.** Task 18's
+`push-fcm-live.integration.test.ts` passes `fetchImpl: capturingFetch` AND calls
+`recordServiceEvidence` — but `capturingFetch` DELEGATES to the real global `fetch` and
+only clones the response. A rule keyed on the mere presence of `fetchImpl` would flag the
+single file in the repo that does this correctly, which would be worse than no rule. The
+predicate must separate "faked transport" from "wrapped real transport". The likely
+discriminator is the vitest mocking surface — `vi.fn()`, `vi.mock(...)`, `vi.stubGlobal('fetch', …)`,
+or assignment to `global`/`globalThis.fetch` — since a real-delegating wrapper is a plain
+function. Determine the exact predicate empirically against the three concrete files below;
+do not guess and do not settle for an allowlist.
+
+**Acceptance criteria:**
+- A new ts-morph rule in `packages/config/arch/rules/`, following the structure and
+  registration of the existing rules in that directory.
+- It MUST flag both historical violators. Recover their pre-fix shapes from git
+  (`git show HEAD:apps/api/src/slices/notifications/adapters/push-fcm.integration.test.ts`
+  and the HEAD version of `email-resend.integration.test.ts`) and use them as fixtures.
+- It MUST NOT flag `apps/api/src/slices/notifications/adapters/push-fcm-live.integration.test.ts`.
+  Verify this against the real file, not a paraphrase of it. If your predicate cannot
+  separate these three files, STOP and report — a rule that flags the honest test is worse
+  than no rule, and I would rather rule on a narrower predicate than ship a wrong one.
+- A colocated `.rule.test.ts` matching the existing tests' style, covering both the
+  violating and the compliant shape.
+- `pnpm arch:check` green repo-wide with the rule active.
+- `packages/config/arch/README.md` documents the rule AND the invariant behind it — a
+  future reader must be able to tell why fcm/webpush/resend differ from helcim/r2, or they
+  will "fix" the factories and reintroduce the problem.
+
+**CAVEATS (state in the report):** this catches the mocked-seam shape specifically. It does
+not, and cannot statically, prove that a given evidence write followed a genuine network
+call — say so plainly rather than overclaiming the guarantee.
+
+**Files:** `packages/config/arch/rules/*` (new rule + test), `packages/config/arch/README.md`,
+and the rule registration point if rules are registered explicitly.
+**Scoped checks:** `pnpm arch:check`; `pnpm test:config`; `turbo lint typecheck --filter=@hushbox/config --force`.
+**Sensitive:** no → 1 auditor.
+
+
+## Task 24 — Close the two generic-payload-law gaps found by the privacy audit
+
+**Objective:** correct a wrong comment on a privacy boundary, and make the generic-payload
+law structural on the FCM path as it already is on the web path.
+
+**Design context:** a close-out privacy audit verified that push meets the founder's bar on
+every surface — no user-derived text reaches any title, body, payload, tag or header, and
+the service worker cannot decrypt (no key, no storage access, no `fetch` handler). It found
+two real gaps, both approved for fixing by the founder 2026-07-27.
+
+**FINDING A — a wrong comment on a privacy-critical claim.**
+`apps/api/src/slices/notifications/ports/push-sender.ts:38-41` states the collapse alias is
+applied as "FCM `collapse_key` + notification `tag`, Web Push `Topic`". The Android
+notification tag is the **raw conversationId** (`push-fcm.ts:224` → `:237`), and
+`collapse-alias.ts:9-11` says so explicitly: "It is deliberately NOT the Android
+notification tag." A reader trusting the port comment would conclude no raw id reaches
+Google; it does, twice (`data.conversationId` and the tag). Correct the comment to state
+what is actually true, including that the raw id does reach FCM by design and why
+(`push-fcm.ts:219-224` carries the real reasoning — do not duplicate it, reference the
+fact). A wrong comment is worse than none, and worst of all on a privacy boundary.
+
+**FINDING B — the law is convention on FCM, structure on web.**
+`push-webpush.ts:56-61` validates `message.data` against `pushEventPayloadSchema` and FAILS
+CLOSED with a `validation` error. `push-fcm.ts` forwards `data` verbatim with no validation.
+Today there is exactly one caller (`notify-event.ts`) and it is correct, but nothing
+structural stops a future call site shipping a conversation title to Google and to the
+Android shade. Add the same fail-closed validation to the FCM adapter so both transports
+enforce the law identically.
+
+Note this is safe by construction: the composite hands BOTH partitions the same
+`PushMessage`, and the web path already requires a valid generic payload — so any message
+that reaches FCM today already satisfies the schema. This tightens a guard without changing
+any passing behavior.
+
+**Acceptance criteria:**
+- The port comment is accurate. Verify your correction against `push-fcm.ts:224`/`:237` and
+  `collapse-alias.ts:9-11` rather than against the old comment.
+- `push-fcm.ts` validates `message.data` against `pushEventPayloadSchema` and returns a
+  `validation` DomainError on failure, mirroring `push-webpush.ts:56-61`'s shape and error
+  message style. No FCM request is issued for an invalid payload.
+- A test proves the fail-closed path: a message whose `data` carries an extra key (e.g.
+  `title`) must be REJECTED and must not reach `fetchImpl`. This mirrors the web SW's
+  existing guard at `apps/web/src/sw/handlers.test.ts:148-156`.
+- Every existing push test still passes unchanged — if one needs editing, that is a signal
+  the change altered behavior; stop and report rather than adjusting the test.
+- No change to `notify-event.ts`, the copy table, or the payload schema.
+
+**DO NOT DO, but DO ASSESS AND REPORT:** the stronger design is to remove free-form
+`title`/`body` from `PushMessage` entirely and have each adapter derive copy from
+`NOTIFICATION_COPY` by category — exactly as the service worker already does
+(`sw/handlers.ts:141`). That would make smuggled content structurally unrepresentable
+rather than merely validated, and it is the One-Implementation-Shared move. It also touches
+the port, both adapters, the mock, the composite and their tests, so it is out of this
+task's scope. Report your assessment of its feasibility and blast radius for a founder
+decision; do NOT implement it.
+
+**ALSO REPORT, do not act:** the env var `NOTIFICATION_TAG_SECRET` secures the collapse
+ALIAS, not the tag — a naming defect. Renaming touches production secrets and is a founder
+decision, not yours.
+
+**Files:** `apps/api/src/slices/notifications/ports/push-sender.ts` (comment only),
+`apps/api/src/slices/notifications/adapters/push-fcm.ts`, `push-fcm.test.ts`.
+**Scoped checks:** `pnpm test:api`; `turbo lint typecheck --filter=@hushbox/api --force`.
+**Sensitive:** no → 1 auditor.
+
+
+## Task 25 — Make smuggled content unrepresentable in PushMessage (supersedes Task 24's Finding B)
+
+**Objective:** remove free-form `title`/`body` from the `PushMessage` port so the
+generic-payload law is enforced by the type system rather than by one correct caller.
+
+**Why Finding B was withdrawn (do not resurrect it).** Task 24 proposed validating
+`message.data` against `pushEventPayloadSchema` in the FCM adapter. That does NOT close the
+hole: `push-fcm.ts:230` sends `notification: { title: message.title, body: message.body }`
+as a sibling of `data`, so a smuggled title bypasses any `data` schema entirely. The premise
+that the web adapter already gates FCM is also false — `push-composite.ts:60-62` short-circuits
+an empty partition before calling its sender, and `push-webpush.ts:53-55` returns before its
+`safeParse`, so a native-only message never passes web validation. Both facts verified.
+
+**The design.** `PushMessage` carries the generic payload itself, not rendered strings:
+
+    PushMessage { recipients, payload: PushEventPayload, collapseKey? }
+
+where `PushEventPayload` is the existing shared `{ category, conversationId }` type behind
+`pushEventPayloadSchema`. Preferred shape; if you find a concrete reason to instead carry
+`category`/`conversationId` as two sibling fields, take it and justify it in the report.
+
+Each adapter derives its own copy at the edge via `notificationCopyForCategory(...)` —
+exactly as `apps/web/src/sw/handlers.ts:141` already does. This makes the server match the
+client, not the reverse.
+
+- `push-fcm.ts`: derive copy for `notification: { title, body }`; send
+  `data: { category, conversationId }` from the typed payload.
+- `push-webpush.ts`: encode the typed payload directly. Its `safeParse` and its
+  `validationError` branch become dead — DELETE them; a validation guard against a shape the
+  type system now guarantees is noise, and leaving it implies a risk that no longer exists.
+- `push-composite.ts`: the alias input becomes `message.payload.conversationId`, replacing
+  the `message.data?.['conversationId']` lookup and its `undefined` branch.
+- `notify-event.ts`: stops calling `notificationCopyForCategory` and passes the payload.
+- The mock sender, `withPushCapture`, and the `/dev/push` viewer follow; the viewer must
+  derive copy for display rather than read fields that no longer exist.
+
+**EXPLICIT SCOPE GRANT:** `push-fcm-live.integration.test.ts` (Task 18's audited CI-gated
+live-send proof) currently passes `title`/`body` and no `data`; it MUST be updated. You are
+authorized to edit it. Preserve its semantics exactly — it must still make the same real
+two-leg call, still skip cleanly without credentials, and still write its evidence row last.
+Changing what it proves is a defect.
+
+**Acceptance criteria:**
+- `PushMessage` has no free-form text field. Grep proves no `title:`/`body:` remains on any
+  `PushMessage` construction outside `NOTIFICATION_COPY` itself.
+- Every adapter derives copy from the shared table; the copy exists in exactly one place.
+- `push-webpush.ts`'s now-unreachable payload validation is deleted, not left in place.
+- Behavior is byte-identical on the wire: the FCM request body and the Web Push ciphertext
+  must be the same as before for the same logical notification. Prove it — do not assert it.
+- Existing tests are updated only where the type change forces it. No assertion's MEANING
+  may change. If a test's intent has to change, stop and report.
+- `pnpm test:api` push suites green; the `/dev/push` viewer still renders.
+
+**CAVEATS (state in the report):** this closes server-side smuggling of rendered text. It
+does not change what metadata reaches Google — `data.conversationId` and the raw Android
+`tag` are unchanged and deliberate.
+
+**Files:** `apps/api/src/slices/notifications/ports/push-sender.ts`, `adapters/push-fcm.ts`,
+`adapters/push-webpush.ts`, `adapters/push-composite.ts`, `adapters/push-mock.ts`,
+`adapters/push-sender-factory.ts`, `domain/notify-event.ts`, the `/dev/push` viewer route,
+and the tests those force.
+**Scoped checks:** `pnpm test:api`; `turbo lint typecheck --filter=@hushbox/api --force`.
+**Sensitive:** YES (privacy boundary) → 2 auditors.
 
 ## Standing amendments
 

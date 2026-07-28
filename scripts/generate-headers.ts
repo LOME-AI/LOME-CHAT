@@ -120,10 +120,9 @@ function buildSpaHeaders(
   // `TTS_MODEL_CONNECT_SRC` (huggingface.co + *.hf.co) is the on-device
   // Kokoro TTS model download: the accessibility reader and the blog "Listen"
   // control fetch model/tokenizer files from the hub, which 302-redirect large
-  // weights to the Xet CDN on a region-variable *.hf.co subdomain. Sourced
-  // from the same shared constant the worker pins `env.remoteHost` from, so the
-  // fetched host and this allowlist cannot drift. The onnxruntime WASM runtime
-  // is self-hosted same-origin (see tts.worker.ts), so no third-party CDN.
+  // weights to the Xet CDN on a region-variable *.hf.co subdomain. The
+  // onnxruntime WASM runtime is self-hosted same-origin (see tts.worker.ts),
+  // so no third-party CDN.
   const connectSource = [
     "'self'",
     apiOrigin.http,

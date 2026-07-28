@@ -9,6 +9,9 @@ import type { PromptBudgetResult } from '@/hooks/billing/use-prompt-budget';
 // Controllable isMobile for the auto-focus effect (desktop-only behavior).
 const isMobileRef = { current: false };
 
+vi.mock('@/hooks/billing/use-turn-options', () => ({
+  useTurnOptions: () => ({ isPending: false, options: { affordable: { all: [] } } }),
+}));
 vi.mock('@hushbox/ui', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@hushbox/ui')>();
   return {
@@ -102,10 +105,7 @@ vi.mock('@/hooks/billing/use-stable-balance', () => ({
 }));
 
 // Mock usePromptBudget directly — PromptInput's only budget dependency.
-// useModelFloor rides the same module; the picker's greying is out of scope
-// here, so it reports nothing below floor.
 vi.mock('@/hooks/billing/use-prompt-budget', () => ({
-  useModelFloor: () => ({ isPending: false, isBelowFloor: () => false }),
   usePromptBudget: (input: { value: string }): PromptBudgetResult => ({
     fundingSource: 'personal_balance',
     notifications: [],
@@ -115,6 +115,8 @@ vi.mock('@/hooks/billing/use-prompt-budget', () => ({
     estimatedCostNanoUsd: 1_000_000n,
     isOverCapacity: false,
     hasBlockingError: false,
+    sendRefusal: undefined,
+    effortDimension: undefined,
     maxOutputTokens: 100_000,
     estimatedInputTokens: 100,
     hasContent: input.value.trim().length > 0,

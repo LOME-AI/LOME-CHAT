@@ -213,7 +213,7 @@ function sweep(): Sweep {
     const compiled =
       point.models.length === 1
         ? compileSingleTurn(resolver, first, options)
-        : compileMultiModelTurn(resolver, point.models, options);
+        : compileMultiModelTurn(resolver, point.models, options).map((build) => build.definition);
     if (compiled.isErr()) refusedLabels.push(label);
     else turns.push({ label, budget, definition: compiled.value });
   }

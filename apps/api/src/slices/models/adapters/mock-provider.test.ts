@@ -583,7 +583,7 @@ describe('createMockModelProvider — classifier knobs', () => {
     const events = await collect(
       provider.infer(classifierRequest('cheap/model'), languageDescriptor('cheap/model'))
     );
-    expect(textOf(events)).toBe('picked/model');
+    expect(textOf(events)).toBe('model: picked/model');
     expect(finishOf(events).metadata.providerCostUsd).toBeGreaterThan(0);
   });
 
@@ -592,7 +592,7 @@ describe('createMockModelProvider — classifier knobs', () => {
     const events = await collect(
       provider.infer(classifierRequest('cheap/model'), languageDescriptor('cheap/model'))
     );
-    expect(textOf(events)).toBe('cheap/model');
+    expect(textOf(events)).toBe('model: cheap/model');
   });
 
   it('throws a typed InferenceError when classifier-failure is set', async () => {
@@ -625,10 +625,10 @@ describe('createMockModelProvider — classifier knobs', () => {
       outputs: ['text'],
     };
     const events = await collect(provider.infer(effortOnly, languageDescriptor('cheap/model')));
-    expect(textOf(events)).toBe('medium');
+    expect(textOf(events)).toBe('effort: Mid');
   });
 
-  it('answers two lines (model, then effort) for a both-dimensions classifier prompt', async () => {
+  it('answers one labelled line per dimension for a both-dimensions classifier prompt', async () => {
     const provider = createMockModelProvider({ classifierResolution: 'picked/model' });
     const both: InferenceRequest = {
       model: 'cheap/model',
@@ -642,7 +642,7 @@ describe('createMockModelProvider — classifier knobs', () => {
       outputs: ['text'],
     };
     const events = await collect(provider.infer(both, languageDescriptor('cheap/model')));
-    expect(textOf(events)).toBe('picked/model\nmedium');
+    expect(textOf(events)).toBe('model: picked/model\neffort: Mid');
   });
 
   it('emits the directed classifier effort when the knob is set', async () => {
@@ -659,7 +659,10 @@ describe('createMockModelProvider — classifier knobs', () => {
       outputs: ['text'],
     };
     const events = await collect(provider.infer(effortOnly, languageDescriptor('cheap/model')));
-    expect(textOf(events)).toBe('high');
+    // The directive is an option id; the mock emits the user-facing LABEL,
+    // because that is what the classifier is presented and what the answer
+    // parser matches on.
+    expect(textOf(events)).toBe('effort: High');
   });
 
   it('resolves a classifier request whose only input is the marker system prompt', async () => {
@@ -671,7 +674,7 @@ describe('createMockModelProvider — classifier knobs', () => {
       outputs: ['text'],
     };
     const events = await collect(provider.infer(markerOnly, languageDescriptor('cheap/model')));
-    expect(textOf(events)).toBe('picked/model');
+    expect(textOf(events)).toBe('model: picked/model');
   });
 });
 
@@ -699,7 +702,7 @@ describe('createMockModelProvider — classifier delay knob', () => {
     await vi.advanceTimersByTimeAsync(1);
     const events = await pending;
     expect(settled).toBe(true);
-    expect(textOf(events)).toBe('picked/model');
+    expect(textOf(events)).toBe('model: picked/model');
   });
 
   it('does not delay a plain (non-classifier) turn', async () => {

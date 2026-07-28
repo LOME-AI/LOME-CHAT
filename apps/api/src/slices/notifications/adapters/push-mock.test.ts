@@ -7,8 +7,7 @@ const message: PushMessage = {
     { platform: 'ios', userId: 'user-a', token: 'token-a' },
     { platform: 'android', userId: 'user-b', token: 'token-b' },
   ],
-  title: 'New Message',
-  body: 'You have a new message',
+  payload: { category: 'message', conversationId: '018f4e2a-1c3b-7d4e-9f0a-1b2c3d4e5f60' },
 };
 
 describe('createMockPushSender', () => {

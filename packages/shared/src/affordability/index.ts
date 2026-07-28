@@ -52,6 +52,8 @@ export {
 export * from './catalog-admission.js';
 export * from './fees.js';
 export * from './pricing.js';
+// Tier derivation and its constants — the tier half of the tier-and-premium
+// classification seam (`docs/BILLING.md` §The public surface).
 export * from './tiers.js';
 // Named: the output-token clamp is behind the wall; the notice generator is not.
 export { generateNotifications } from './budget.js';
@@ -77,3 +79,14 @@ export * from './smart-model/index.js';
 export * from './billing/funding-decision.js';
 export * from './billing/client-billing.js';
 export * from './estimate/index.js';
+// The feature surface of `docs/BILLING.md` §The public surface. Six exports plus
+// the named structural seams, and nothing about how any of them is computed: the
+// producer, the classifier seam (choose · render · wire), the funding decision
+// and the notice vocabulary.
+export { getTurnOptions } from './turn-options.js';
+export { chooseFrom, renderOptions, wireFor } from './classifier-choice.js';
+export type { ChosenOptions } from './classifier-choice.js';
+export * from './model-id.js';
+export * from './turn-types.js';
+export { NOTICE_COPY, NOTICE_REASONS, notices, noticeText } from './notices.js';
+export type { Notice, NoticeCopy, NoticeReason } from './notices.js';

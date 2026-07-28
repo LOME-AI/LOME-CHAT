@@ -140,7 +140,7 @@ export function cronEntriesFor(cron: string, deps: CronDependencies): CronEntry[
         telemetry: deps.telemetry,
         now: deps.now,
         resolveSend: () => ({
-          sender: createEmailSenderFromEnv(deps.env, deps.db),
+          sender: createEmailSenderFromEnv(deps.env),
           adminEmails: parseAdminNotificationRecipients(deps.env.ADMIN_ACTOR_ALLOWLIST),
         }),
       }),

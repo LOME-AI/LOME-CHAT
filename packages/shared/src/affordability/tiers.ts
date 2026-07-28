@@ -48,14 +48,25 @@ export interface UserBalanceState {
  * @param options - Optional flags (isLinkGuest distinguishes trial from guest)
  * @returns Full tier info including access permissions
  */
+/**
+ * Whether a tier may call premium models. The rule lives here alone: the money
+ * layer's per-row premium verdict and {@link getUserTier}'s `canAccessPremium`
+ * are the same fact, so they read one function rather than repeating the
+ * comparison in two places.
+ */
+export function tierCanAccessPremium(tier: UserTier): boolean {
+  return tier === 'paid';
+}
+
 export function getUserTier(
   user: UserBalanceState | null,
   options?: { isLinkGuest?: boolean }
 ): UserTierInfo {
   if (user === null) {
+    const tier: UserTier = options?.isLinkGuest ? 'guest' : 'trial';
     return {
-      tier: options?.isLinkGuest ? 'guest' : 'trial',
-      canAccessPremium: false,
+      tier,
+      canAccessPremium: tierCanAccessPremium(tier),
       purchasedBalanceNanoUsd: 0n,
       freeAllowanceNanoUsd: 0n,
     };
@@ -65,7 +76,7 @@ export function getUserTier(
 
   return {
     tier,
-    canAccessPremium: tier === 'paid',
+    canAccessPremium: tierCanAccessPremium(tier),
     purchasedBalanceNanoUsd: user.purchasedBalanceNanoUsd,
     freeAllowanceNanoUsd: user.freeAllowanceNanoUsd,
   };

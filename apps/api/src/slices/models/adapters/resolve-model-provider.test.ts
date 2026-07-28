@@ -111,7 +111,7 @@ describe('resolveModelProvider — mock path', () => {
       db,
       mockDirectives: { classifierResolution: 'model-A' },
     });
-    expect(await drainText(provider, classifierRequest('base/model'))).toBe('model-A');
+    expect(await drainText(provider, classifierRequest('base/model'))).toBe('model: model-A');
     expect(insert).not.toHaveBeenCalled();
   });
 });

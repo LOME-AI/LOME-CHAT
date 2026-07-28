@@ -91,6 +91,7 @@ vi.mock('@/components/shared/stable-content', () => ({
 
 const defaultBudget: PromptBudgetResult = {
   fundingSource: 'personal_balance',
+  effortDimension: undefined,
   notifications: [],
   capacityPercent: 5,
   capacityCurrentUsage: 1100,
@@ -98,6 +99,7 @@ const defaultBudget: PromptBudgetResult = {
   estimatedCostNanoUsd: 1_000_000n,
   isOverCapacity: false,
   hasBlockingError: false,
+  sendRefusal: undefined,
   hasContent: true,
   maxOutputTokens: 100_000,
   estimatedInputTokens: 100,
@@ -316,7 +318,7 @@ describe('PromptInput', () => {
         fundingSource: 'denied',
         hasBlockingError: true,
         notifications: [
-          { id: 'insufficient_balance', type: 'error', message: 'Insufficient balance.' },
+          { id: 'insufficient_funds', type: 'error', message: 'Sample blocking notice.' },
         ],
       });
       renderWithProviders(
@@ -346,14 +348,14 @@ describe('PromptInput', () => {
         fundingSource: 'denied',
         hasBlockingError: true,
         notifications: [
-          { id: 'insufficient_balance', type: 'error', message: 'Insufficient balance.' },
+          { id: 'insufficient_funds', type: 'error', message: 'Sample blocking notice.' },
         ],
       });
       renderWithProviders(
         <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />
       );
       expect(screen.getByTestId('budget-messages')).toBeInTheDocument();
-      expect(screen.getByText('Insufficient balance.')).toBeInTheDocument();
+      expect(screen.getByText('Sample blocking notice.')).toBeInTheDocument();
     });
 
     it('does not show budget messages when no notifications', () => {
@@ -368,18 +370,16 @@ describe('PromptInput', () => {
         ...defaultBudget,
         notifications: [
           {
-            id: 'capacity_warning',
+            id: 'context_near_capacity',
             type: 'warning',
-            message: "Your conversation is near this model's memory limit.",
+            message: 'Sample warning notice.',
           },
         ],
       });
       renderWithProviders(
         <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />
       );
-      expect(
-        screen.getByText("Your conversation is near this model's memory limit.")
-      ).toBeInTheDocument();
+      expect(screen.getByText('Sample warning notice.')).toBeInTheDocument();
     });
 
     it('shows info messages', () => {
@@ -387,16 +387,16 @@ describe('PromptInput', () => {
         ...defaultBudget,
         notifications: [
           {
-            id: 'trial_notice',
+            id: 'trial_preview_pays',
             type: 'info',
-            message: 'Free preview. Sign up for full access.',
+            message: 'Sample info notice.',
           },
         ],
       });
       renderWithProviders(
         <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />
       );
-      expect(screen.getByText('Free preview. Sign up for full access.')).toBeInTheDocument();
+      expect(screen.getByText('Sample info notice.')).toBeInTheDocument();
     });
 
     it('hides budget messages while app is not stable (balance loading)', () => {
@@ -409,9 +409,9 @@ describe('PromptInput', () => {
         ...defaultBudget,
         notifications: [
           {
-            id: 'trial_notice',
+            id: 'trial_preview_pays',
             type: 'info',
-            message: 'Free preview. Sign up for full access.',
+            message: 'Sample info notice.',
           },
         ],
       });
@@ -419,7 +419,7 @@ describe('PromptInput', () => {
         <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />
       );
       expect(screen.queryByTestId('budget-messages')).not.toBeInTheDocument();
-      expect(screen.queryByText('Free preview. Sign up for full access.')).not.toBeInTheDocument();
+      expect(screen.queryByText('Sample info notice.')).not.toBeInTheDocument();
     });
 
     it('hides budget messages while app is not stable (session loading)', () => {
@@ -432,9 +432,9 @@ describe('PromptInput', () => {
         ...defaultBudget,
         notifications: [
           {
-            id: 'trial_notice',
+            id: 'trial_preview_pays',
             type: 'info',
-            message: 'Free preview. Sign up for full access.',
+            message: 'Sample info notice.',
           },
         ],
       });
@@ -442,7 +442,7 @@ describe('PromptInput', () => {
         <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />
       );
       expect(screen.queryByTestId('budget-messages')).not.toBeInTheDocument();
-      expect(screen.queryByText('Free preview. Sign up for full access.')).not.toBeInTheDocument();
+      expect(screen.queryByText('Sample info notice.')).not.toBeInTheDocument();
     });
   });
 
@@ -1271,9 +1271,9 @@ describe('PromptInput', () => {
         hasBlockingError: true,
         notifications: [
           {
-            id: 'read_only_notice',
+            id: 'conversation_read_only',
             type: 'info',
-            message: 'You have read-only access to this conversation.',
+            message: 'Sample read-only notice.',
           },
         ],
       });
@@ -1348,9 +1348,9 @@ describe('PromptInput', () => {
         hasBlockingError: true,
         notifications: [
           {
-            id: 'read_only_notice',
+            id: 'conversation_read_only',
             type: 'info',
-            message: 'You have read-only access to this conversation.',
+            message: 'Sample read-only notice.',
           },
         ],
       });
@@ -1372,9 +1372,9 @@ describe('PromptInput', () => {
         hasBlockingError: true,
         notifications: [
           {
-            id: 'read_only_notice',
+            id: 'conversation_read_only',
             type: 'info',
-            message: 'You have read-only access to this conversation.',
+            message: 'Sample read-only notice.',
           },
         ],
       });
@@ -1386,9 +1386,7 @@ describe('PromptInput', () => {
           currentUserPrivilege="read"
         />
       );
-      expect(
-        screen.getByText('You have read-only access to this conversation.')
-      ).toBeInTheDocument();
+      expect(screen.getByText('Sample read-only notice.')).toBeInTheDocument();
     });
 
     it('Enter key does not submit when currentUserPrivilege is read', () => {
@@ -1398,9 +1396,9 @@ describe('PromptInput', () => {
         hasBlockingError: true,
         notifications: [
           {
-            id: 'read_only_notice',
+            id: 'conversation_read_only',
             type: 'info',
-            message: 'You have read-only access to this conversation.',
+            message: 'Sample read-only notice.',
           },
         ],
       });
@@ -1425,7 +1423,7 @@ describe('PromptInput', () => {
         hasBlockingError: true,
         notifications: [
           {
-            id: 'capacity_exceeded',
+            id: 'prompt_too_long',
             type: 'error',
             message: 'Message exceeds model capacity.',
           },
@@ -1443,7 +1441,7 @@ describe('PromptInput', () => {
         hasBlockingError: true,
         notifications: [
           {
-            id: 'capacity_exceeded',
+            id: 'prompt_too_long',
             type: 'error',
             message: 'Message exceeds model capacity.',
           },
@@ -2101,6 +2099,83 @@ describe('PromptInput', () => {
       );
       const lastCall = mockUsePromptBudget.mock.calls.at(-1)?.[0] as Record<string, unknown>;
       expect(lastCall).not.toHaveProperty('reasoningEffort');
+    });
+  });
+
+  describe('a blocked send always carries its notice (§Notices 7)', () => {
+    it('renders the hold reason when the send is blocked by a run in flight', () => {
+      // The disabled button alone is not a notice. A blocked send with no
+      // explanation leaves the user to guess which input to change — and for a
+      // hold there IS no input to change, only waiting.
+      mockUsePromptBudget.mockReturnValue({
+        ...defaultBudget,
+        hasBlockingError: true,
+        sendRefusal: 'funds_held_by_run',
+      });
+
+      renderWithProviders(
+        <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />
+      );
+
+      expect(screen.getByText(/Wait for it to finish/)).toBeInTheDocument();
+    });
+
+    it('renders the LENGTH reason for a prompt-too-long refusal, not the hold reason', () => {
+      mockUsePromptBudget.mockReturnValue({
+        ...defaultBudget,
+        hasBlockingError: true,
+        sendRefusal: 'prompt_too_long',
+      });
+
+      renderWithProviders(
+        <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />
+      );
+
+      expect(screen.getByText(/Shorten your message/)).toBeInTheDocument();
+      expect(screen.queryByText(/Wait for it to finish/)).not.toBeInTheDocument();
+    });
+
+    it('renders exactly ONE blocking notice', () => {
+      mockUsePromptBudget.mockReturnValue({
+        ...defaultBudget,
+        hasBlockingError: true,
+        sendRefusal: 'funds_held_by_run',
+      });
+
+      renderWithProviders(
+        <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />
+      );
+
+      // One blocking notice, in the one notice surface the composer has.
+      const blocking = screen.getAllByText(/Wait for it to finish/);
+      expect(blocking).toHaveLength(1);
+    });
+  });
+
+  describe('no text-modality surface renders a pre-send cost figure', () => {
+    /**
+     * §Affordability 11: an estimate is surfaced only where a generation is
+     * priced per unit — media shows one before generating; a text turn displays
+     * its FINAL cost at completion and never an estimate beforehand.
+     *
+     * The composer holds `estimatedCostNanoUsd` as a decision value, so this
+     * pins the rendering rather than the intent: no currency reaches the DOM
+     * however the budget is configured.
+     */
+    it('renders no currency anywhere in the composer, even with a priced estimate', () => {
+      mockUsePromptBudget.mockReturnValue({
+        ...defaultBudget,
+        estimatedCostNanoUsd: 123_456_789n,
+      });
+
+      const { container } = renderWithProviders(
+        <PromptInput value="Hello" onChange={mockOnChange} onSubmit={mockOnSubmit} />
+      );
+
+      // Any of these appearing would be a pre-send figure on a text turn.
+      expect(container.textContent).not.toMatch(/\$/);
+      expect(container.textContent).not.toMatch(/\d+\.\d{2,}/);
+      expect(container.textContent).not.toMatch(/¢/);
     });
   });
 });

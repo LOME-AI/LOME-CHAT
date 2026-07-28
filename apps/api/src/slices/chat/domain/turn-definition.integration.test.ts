@@ -282,7 +282,7 @@ describe('multi-model effort resolution (union choice set, per-model downgrade)'
     });
     return result
       ._unsafeUnwrap()
-      .nodes.filter((node) => node.type === 'modelCall')
+      .definition.nodes.filter((node) => node.type === 'modelCall')
       .map((node) => node.params['reasoning']);
   }
 

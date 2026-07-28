@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { makeBalance } from '@/test-utils/balance-fixture';
 import { renderHook } from '@testing-library/react';
 import {
   createModelStoreStub,
@@ -13,8 +12,8 @@ vi.mock('@/lib/auth', () => ({
   useSession: vi.fn(),
 }));
 
-vi.mock('@/hooks/billing/billing.js', () => ({
-  useBalance: vi.fn(),
+vi.mock('@/hooks/billing/use-spendable.js', () => ({
+  useSpendable: vi.fn(),
 }));
 
 vi.mock('@/hooks/models/models.js', () => ({
@@ -31,13 +30,18 @@ vi.mock('@/stores/model', async (importOriginal) => {
 });
 
 import { useSession } from '@/lib/auth';
-import { useBalance } from '@/hooks/billing/billing.js';
+import { useSpendable } from '@/hooks/billing/use-spendable.js';
 import { useModels, getAccessibleModelIds } from '@/hooks/models/models.js';
 import type { SelectedModelEntry } from '@/stores/model';
 import type { Model, ChatModality } from '@hushbox/shared';
 
 const mockedUseSession = vi.mocked(useSession);
-const mockedUseBalance = vi.mocked(useBalance);
+const mockedUseSpendable = vi.mocked(useSpendable);
+
+/** A served funding snapshot at the given payer tier. */
+function servedTier(tier: 'paid' | 'free' | 'trial' | 'guest'): { data: unknown } {
+  return { data: { spendableNanoUsd: '0', heldNanoUsd: '0', tier, payer: 'self' } };
+}
 const mockedUseModels = vi.mocked(useModels);
 const mockedGetAccessibleModelIds = vi.mocked(getAccessibleModelIds);
 const mockedUseModelStore = vi.mocked(useModelStore);
@@ -107,7 +111,7 @@ describe('useModelValidation', () => {
     mockedUseSession.mockReturnValue({ data: null, isPending: false } as ReturnType<
       typeof useSession
     >);
-    mockedUseBalance.mockReturnValue({ data: undefined } as ReturnType<typeof useBalance>);
+    mockedUseSpendable.mockReturnValue({ data: undefined } as never);
     stubStore(buildState());
     mockedGetAccessibleModelIds.mockReturnValue({
       strongestId: 'basic-model',
@@ -151,9 +155,7 @@ describe('useModelValidation', () => {
       data: { user: { id: 'user-123' } },
       isPending: false,
     } as ReturnType<typeof useSession>);
-    mockedUseBalance.mockReturnValue({
-      data: makeBalance('10000000000', '0'),
-    } as ReturnType<typeof useBalance>);
+    mockedUseSpendable.mockReturnValue(servedTier('paid') as never);
     mockedUseModels.mockReturnValue({
       data: { models: testModels, premiumIds: new Set(['premium-model']) },
     } as ReturnType<typeof useModels>);
@@ -171,9 +173,7 @@ describe('useModelValidation', () => {
       data: { user: { id: 'user-123' } },
       isPending: false,
     } as ReturnType<typeof useSession>);
-    mockedUseBalance.mockReturnValue({
-      data: makeBalance('0', '1000000000'),
-    } as ReturnType<typeof useBalance>);
+    mockedUseSpendable.mockReturnValue(servedTier('free') as never);
     mockedUseModels.mockReturnValue({
       data: { models: testModels, premiumIds: new Set(['premium-model']) },
     } as ReturnType<typeof useModels>);
@@ -186,14 +186,12 @@ describe('useModelValidation', () => {
     expect(mockSetSelectedModels).not.toHaveBeenCalled();
   });
 
-  it('falls text back to strongest when free user has a premium text model selected', () => {
+  it('KEEPS a premium text model selected for a free user — marked, never removed', () => {
     mockedUseSession.mockReturnValue({
       data: { user: { id: 'user-123' } },
       isPending: false,
     } as ReturnType<typeof useSession>);
-    mockedUseBalance.mockReturnValue({
-      data: makeBalance('0', '1000000000'),
-    } as ReturnType<typeof useBalance>);
+    mockedUseSpendable.mockReturnValue(servedTier('free') as never);
     mockedUseModels.mockReturnValue({
       data: { models: testModels, premiumIds: new Set(['premium-model']) },
     } as ReturnType<typeof useModels>);
@@ -203,16 +201,17 @@ describe('useModelValidation', () => {
       useModelValidation();
     });
 
-    expect(mockSetSelectedModels).toHaveBeenCalledWith('text', [
-      { id: 'basic-model', name: 'Basic Model' },
-    ]);
+    // The picker renders it greyed with its reason; rewriting the store would
+    // hide a model the payer can unlock, and would change a selection the user
+    // never changed.
+    expect(mockSetSelectedModels).not.toHaveBeenCalled();
   });
 
-  it('falls text back to strongest when trial user has a premium text model selected', () => {
+  it('KEEPS a premium text model selected for a trial user — marked, never removed', () => {
     mockedUseSession.mockReturnValue({ data: null, isPending: false } as ReturnType<
       typeof useSession
     >);
-    mockedUseBalance.mockReturnValue({ data: undefined } as ReturnType<typeof useBalance>);
+    mockedUseSpendable.mockReturnValue({ data: undefined } as never);
     mockedUseModels.mockReturnValue({
       data: { models: testModels, premiumIds: new Set(['premium-model']) },
     } as ReturnType<typeof useModels>);
@@ -222,12 +221,10 @@ describe('useModelValidation', () => {
       useModelValidation();
     });
 
-    expect(mockSetSelectedModels).toHaveBeenCalledWith('text', [
-      { id: 'basic-model', name: 'Basic Model' },
-    ]);
+    expect(mockSetSelectedModels).not.toHaveBeenCalled();
   });
 
-  it('uses the mocked strongest model for the text fallback', () => {
+  it('leaves a premium selection alone even when a stronger basic model exists', () => {
     const modelsWithMultipleBasic: Model[] = [
       ...testModels,
       {
@@ -260,9 +257,9 @@ describe('useModelValidation', () => {
       useModelValidation();
     });
 
-    expect(mockSetSelectedModels).toHaveBeenCalledWith('text', [
-      { id: 'expensive-basic', name: 'Expensive Basic' },
-    ]);
+    // The fallback exists for a selection the CATALOG dropped, not for one the
+    // payer merely cannot fund today.
+    expect(mockSetSelectedModels).not.toHaveBeenCalled();
   });
 
   it('does not reset if strongest model is not in the models list', () => {
@@ -308,7 +305,7 @@ describe('useModelValidation', () => {
       data: { user: { id: 'user-123' } },
       isPending: false,
     } as ReturnType<typeof useSession>);
-    mockedUseBalance.mockReturnValue({ data: undefined } as ReturnType<typeof useBalance>);
+    mockedUseSpendable.mockReturnValue({ data: undefined } as never);
     mockedUseModels.mockReturnValue({
       data: { models: testModels, premiumIds: new Set(['premium-model']) },
     } as ReturnType<typeof useModels>);
@@ -326,9 +323,7 @@ describe('useModelValidation', () => {
       data: { user: { id: 'user-123' } },
       isPending: false,
     } as ReturnType<typeof useSession>);
-    mockedUseBalance.mockReturnValue({
-      data: makeBalance('10000000000', '0'),
-    } as ReturnType<typeof useBalance>);
+    mockedUseSpendable.mockReturnValue(servedTier('paid') as never);
     mockedUseModels.mockReturnValue({
       data: { models: testModels, premiumIds: new Set(['premium-model']) },
     } as ReturnType<typeof useModels>);
@@ -352,9 +347,7 @@ describe('useModelValidation', () => {
       data: { user: { id: 'user-123' } },
       isPending: false,
     } as ReturnType<typeof useSession>);
-    mockedUseBalance.mockReturnValue({
-      data: makeBalance('10000000000', '0'),
-    } as ReturnType<typeof useBalance>);
+    mockedUseSpendable.mockReturnValue(servedTier('paid') as never);
     mockedUseModels.mockReturnValue({
       data: { models: testModels, premiumIds: new Set(['premium-model']) },
     } as ReturnType<typeof useModels>);
@@ -380,7 +373,7 @@ describe('useModelValidation', () => {
       mockedUseSession.mockReturnValue({ data: null, isPending: false } as ReturnType<
         typeof useSession
       >);
-      mockedUseBalance.mockReturnValue({ data: undefined } as ReturnType<typeof useBalance>);
+      mockedUseSpendable.mockReturnValue({ data: undefined } as never);
       mockedUseModels.mockReturnValue({
         data: { models: testModels, premiumIds: new Set(['premium-model']) },
       } as ReturnType<typeof useModels>);
@@ -410,7 +403,7 @@ describe('useModelValidation', () => {
       mockedUseSession.mockReturnValue({ data: null, isPending: false } as ReturnType<
         typeof useSession
       >);
-      mockedUseBalance.mockReturnValue({ data: undefined } as ReturnType<typeof useBalance>);
+      mockedUseSpendable.mockReturnValue({ data: undefined } as never);
       mockedUseModels.mockReturnValue({
         data: { models: testModels, premiumIds: new Set(['premium-model']) },
       } as ReturnType<typeof useModels>);
@@ -441,9 +434,7 @@ describe('useModelValidation', () => {
         data: { user: { id: 'user-123' } },
         isPending: false,
       } as ReturnType<typeof useSession>);
-      mockedUseBalance.mockReturnValue({
-        data: makeBalance('10000000000', '0'),
-      } as ReturnType<typeof useBalance>);
+      mockedUseSpendable.mockReturnValue(servedTier('paid') as never);
       mockedUseModels.mockReturnValue({
         data: { models: testModels, premiumIds: new Set(['premium-model']) },
       } as ReturnType<typeof useModels>);
@@ -474,7 +465,7 @@ describe('useModelValidation', () => {
         data: undefined,
         isPending: true,
       } as unknown as ReturnType<typeof useSession>);
-      mockedUseBalance.mockReturnValue({ data: undefined } as ReturnType<typeof useBalance>);
+      mockedUseSpendable.mockReturnValue({ data: undefined } as never);
       mockedUseModels.mockReturnValue({
         data: { models: testModels, premiumIds: new Set(['premium-model']) },
       } as ReturnType<typeof useModels>);

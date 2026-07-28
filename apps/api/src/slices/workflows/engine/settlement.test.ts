@@ -4,6 +4,7 @@ import { runSettlement } from '../../../lib/idempotency/index.js';
 import {
   SettlementCompletionError,
   SettlementFenceLost,
+  anchorChargeKey,
   createChargingCommit,
   createFencedSettlementHook,
   keyRowCompletion,
@@ -11,7 +12,12 @@ import {
 import type { SettlementCharge, SettlementRequest } from '@hushbox/shared';
 import type { Database } from '@hushbox/db';
 import type { KeyRowFence, SettlementTx } from '../../../lib/idempotency/index.js';
-import type { BillingStores, SpendingUpsert, UsageRecordInput } from '../../billing/index.js';
+import type {
+  BillingStores,
+  LlmCompletionInput,
+  SpendingUpsert,
+  UsageRecordInput,
+} from '../../billing/index.js';
 import type { ChargeContext, KeyRowCompletion, SettlementCommit } from './settlement.js';
 
 /**
@@ -74,7 +80,7 @@ interface SpendingCall {
  * observable proof that chargeInputFor threaded `tokens`/`media` onto the
  * charge input. */
 interface DimensionCalls {
-  readonly llm: unknown[];
+  readonly llm: LlmCompletionInput[];
   readonly media: unknown[];
 }
 
@@ -94,7 +100,7 @@ function makeStores(
       usage.set(input.idempotencyKey, id);
       return Promise.resolve({ id, created: true });
     },
-    insertLlmCompletionWithinTx: (_tx: SettlementTx, input: unknown) => {
+    insertLlmCompletionWithinTx: (_tx: SettlementTx, input: LlmCompletionInput) => {
       dimensions?.llm.push(input);
       return Promise.resolve();
     },
@@ -363,6 +369,43 @@ describe('createChargingCommit — suffixed auxiliary charge anchoring', () => {
     expect(world.legs).toHaveLength(0);
   });
 
+  it("lands a turn-level charge on the run's content when the first sibling failed", async () => {
+    // The failure shape a turn-level classifier makes reachable: the classifier
+    // charges first and persists nothing of its own, sibling A fails (so it
+    // produces no charge at all), and sibling B persists. Neither the
+    // classifier's own key nor any parent of it names content, so only a
+    // run-level anchor keeps its spend billed instead of absorbed.
+    const captured: UsageRecordInput[] = [];
+    const persisted = new Map<string, string>([['sibling-b', 'c-sibling-b']]);
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [
+        settlementCharge('classify', { billableCostNanoUsd: applyMarkup(700n) }),
+        settlementCharge('sibling-b', { billableCostNanoUsd: applyMarkup(4200n) }),
+      ],
+      commitFor(captured, chargeContext({ contentItemIdFor: (key) => persisted.get(key) }))
+    );
+    expect(
+      captured.map((input) => ({
+        idempotencyKey: input.idempotencyKey,
+        contentItemId: input.contentItemId,
+        costNanoUsd: input.costNanoUsd,
+      }))
+    ).toEqual([
+      {
+        idempotencyKey: 'run-1:classify',
+        contentItemId: 'c-sibling-b',
+        costNanoUsd: applyMarkup(700n),
+      },
+      {
+        idempotencyKey: 'run-1:sibling-b',
+        contentItemId: 'c-sibling-b',
+        costNanoUsd: applyMarkup(4200n),
+      },
+    ]);
+  });
+
   it("anchors a doubly-suffixed charge to its branch key's content item, never the bare node", async () => {
     const captured: UsageRecordInput[] = [];
     // A smartModel node inside a fanOut body: the branch persists under
@@ -508,12 +551,65 @@ describe('createChargingCommit — token/media dimension forwarding', () => {
     ]);
   });
 
-  it('writes no dimension row when the record carries neither tokens nor media', async () => {
+  it('forwards the level the generation reasoned at onto its completion row', async () => {
+    const dimensions: DimensionCalls = { llm: [], media: [] };
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [
+        settlementCharge('answer', {
+          modality: 'text',
+          tokens: { inputTokens: 7, outputTokens: 11, reasoningTokens: 4, cachedInputTokens: 0 },
+          reasoningEffort: 'high',
+        }),
+      ],
+      createChargingCommit({ stores: makeStores([], [], dimensions), context: chargeContext() })
+    );
+    expect(dimensions.llm[0]?.reasoningEffort).toBe('high');
+  });
+
+  it('leaves the level absent when the generation carried no reasoning wire', async () => {
+    const dimensions: DimensionCalls = { llm: [], media: [] };
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [
+        settlementCharge('answer', {
+          modality: 'text',
+          tokens: { inputTokens: 7, outputTokens: 11, reasoningTokens: 0, cachedInputTokens: 0 },
+        }),
+      ],
+      createChargingCommit({ stores: makeStores([], [], dimensions), context: chargeContext() })
+    );
+    expect(dimensions.llm[0]?.reasoningEffort).toBeUndefined();
+  });
+
+  it('still writes a completion row for a text record that reported no usage', async () => {
     const dimensions: DimensionCalls = { llm: [], media: [] };
     await settle(
       makeWorld(),
       FENCE_A,
       [settlementCharge('answer')],
+      createChargingCommit({ stores: makeStores([], [], dimensions), context: chargeContext() })
+    );
+    expect(dimensions.llm).toEqual([
+      {
+        usageRecordId: 'usage-0',
+        inputTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        cachedInputTokens: 0,
+      },
+    ]);
+    expect(dimensions.media).toEqual([]);
+  });
+
+  it('writes no dimension row for a modality with neither a token nor a media shape', async () => {
+    const dimensions: DimensionCalls = { llm: [], media: [] };
+    await settle(
+      makeWorld(),
+      FENCE_A,
+      [settlementCharge('answer', { modality: 'embedding' })],
       createChargingCommit({ stores: makeStores([], [], dimensions), context: chargeContext() })
     );
     expect(dimensions.llm).toEqual([]);
@@ -627,5 +723,51 @@ describe('keyRowCompletion — the production fence over succeedKeyRow', () => {
     await expect(
       completeVia(() => Promise.reject(new Error('db unavailable')))
     ).rejects.toBeInstanceOf(SettlementCompletionError);
+  });
+});
+
+describe('anchorChargeKey — the one anchor rule', () => {
+  const persisted = (keys: readonly string[]) => (key: string) => keys.includes(key);
+
+  it('anchors a charge to its own content when it persisted some', () => {
+    expect(anchorChargeKey('answer', persisted(['answer']), ['answer'])).toBe('answer');
+  });
+
+  it('anchors a suffixed auxiliary charge to the generation it rode on', () => {
+    expect(
+      anchorChargeKey('answer#classifier', persisted(['answer']), ['answer', 'answer#classifier'])
+    ).toBe('answer');
+  });
+
+  it("anchors a turn-level charge to the run's first persisted content", () => {
+    expect(
+      anchorChargeKey('classify', persisted(['sibling-b']), ['classify', 'sibling-a', 'sibling-b'])
+    ).toBe('sibling-b');
+  });
+
+  it("anchors a suffixed charge whose own generation persisted nothing to the run's content", () => {
+    expect(
+      anchorChargeKey('sibling-a#classifier', persisted(['sibling-b']), [
+        'sibling-a#classifier',
+        'sibling-b',
+      ])
+    ).toBe('sibling-b');
+  });
+
+  it('takes the FIRST persisted key in run order when several persisted', () => {
+    expect(
+      anchorChargeKey('classify', persisted(['sibling-a', 'sibling-b']), [
+        'classify',
+        'sibling-a',
+        'sibling-b',
+      ])
+    ).toBe('sibling-a');
+  });
+
+  it('anchors nothing when the run persisted no content at all', () => {
+    expect(anchorChargeKey('classify', persisted([]), ['classify'])).toBeUndefined();
+    expect(
+      anchorChargeKey('answer#classifier', persisted([]), ['answer#classifier'])
+    ).toBeUndefined();
   });
 });

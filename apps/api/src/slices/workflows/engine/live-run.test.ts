@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PolicyHooks, listTag, nanoUSD, optionalTag, textTag } from '@hushbox/shared';
+import {
+  PolicyHooks,
+  REASONING_OFF,
+  jsonTag,
+  listTag,
+  nanoUSD,
+  optionalTag,
+  textTag,
+} from '@hushbox/shared';
+import { cheapestClassifierEffort } from '@hushbox/shared/affordability/smart-model/effort-dimension';
 import { providerUsdToBillableNanoUsd } from '../../billing/index.js';
 import { ok } from '../../../lib/result/index.js';
 import { fanIn } from '../builder/fan-in.js';
@@ -12,6 +21,8 @@ import { buildWorkflow } from '../builder/build-workflow.js';
 import { InferenceError } from '../../models/index.js';
 import { createWorkflowExecutor } from './interpreter.js';
 import { createLiveExecutionRegistry } from './live-execution-registry.js';
+import { portsAccepting } from './model-ports.js';
+import { TURN_DECISION_SCHEMA_NAME } from '../nodes/turn-decision.js';
 import { ReplayBuffer } from '../../../../../../packages/realtime/src/replay-buffer.js';
 import {
   DEFAULT_WORKFLOW_CAPABILITIES,
@@ -117,7 +128,12 @@ const nodes: NodeRegistryContext = {
   hasNode: (_type, version) => version === 1,
   resolveValuePorts: (node) => {
     if (node.type === 'subWorkflow') return { in: [textTag()], out: listTag(textTag()) };
-    return { in: [textTag()], out: textTag() };
+    // A node declaring an input schema takes that named json tag instead — the
+    // same derivation the live registry applies.
+    return portsAccepting(
+      { in: [textTag()], out: textTag() },
+      'inputSchema' in node ? node.inputSchema : undefined
+    );
   },
 };
 
@@ -244,25 +260,45 @@ function bindingFor(id: string): ModelBinding {
   };
 }
 
-/** One smartModel node: cheap classifier routes to 'answer-model'. */
+/**
+ * The turn-level decision graph: a cheap classifier `modelCall`, the registered
+ * `decideTurn` reducer, and the Smart Model slot consuming the envelope. The slot
+ * classifies nothing itself, so the classifier is its OWN node with its own
+ * top-level charge key.
+ */
 function smartModelDefinition(): WorkflowDefinition {
   const inputs = workflowInputs({ prompt: textTag() });
+  const classify = modelCall({
+    id: 'classify',
+    model: 'cheap-model',
+    accepts: textTag(),
+    produces: textTag(),
+    in: inputs.ports.prompt,
+  });
+  const decide = fanIn({
+    id: 'decide',
+    reducer: 'decideTurn',
+    accepts: [textTag(), optionalTag(textTag())],
+    ins: [inputs.ports.prompt, classify.out],
+    produces: jsonTag(TURN_DECISION_SCHEMA_NAME),
+  });
   const smart = smartModel({
     id: 'answer',
     classifierModelId: 'cheap-model',
     candidates: [{ id: 'cheap-model', description: 'cheap' }, { id: 'answer-model' }],
-    in: inputs.ports.prompt,
+    accepts: jsonTag(TURN_DECISION_SCHEMA_NAME),
+    in: decide.out,
   });
   return buildWorkflow({
     deadlineClass: 'text',
     hooks: HOOKS,
     inputs,
-    nodes: [smart],
+    nodes: [classify, decide, smart],
     registries,
   })._unsafeUnwrap().definition;
 }
 
-/** The classifier call answers with the routed model id; answers echo. */
+/** The classifier call answers with a labelled routing line; answers echo. */
 const smartProvider: ModelProvider = {
   infer: (request: InferenceRequest) => {
     providerRequests.push(request);
@@ -274,7 +310,7 @@ const smartProvider: ModelProvider = {
       yield {
         kind: 'text-delta',
         index: 0,
-        content: isClassifier ? 'answer-model' : `echo:${text}`,
+        content: isClassifier ? 'model: answer-model' : `echo:${text}`,
       };
       yield {
         kind: 'finish',
@@ -340,7 +376,20 @@ describe('live workflow run — the composite smartModel turn', () => {
     const run = startSmartLive(history);
     await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
     expect(run.settlements[0]?.outputs).toEqual({ answer: { kind: 'text', text: 'echo:go' } });
+    // Charges land in the definition's topological order, so the classifier —
+    // an earlier LEVEL, not an auxiliary of the slot — comes first, under its own
+    // top-level key and with no content of its own.
     expect(run.settlements[0]?.charges).toEqual([
+      {
+        key: 'classify',
+        modelId: 'cheap-model',
+        providerName: 'p',
+        modality: 'text',
+        generationId: 'gen-cls',
+        billableCostNanoUsd: providerUsdToBillableNanoUsd(BRANCH_COST_USD),
+        isEstimated: false,
+        tokens: TOKENS,
+      },
       {
         key: 'answer',
         modelId: 'answer-model',
@@ -350,26 +399,15 @@ describe('live workflow run — the composite smartModel turn', () => {
         billableCostNanoUsd: providerUsdToBillableNanoUsd(BRANCH_COST_USD),
         isEstimated: false,
         tokens: TOKENS,
-        // The routing pipeline ran, so the primary answer charge is badged; the
-        // chip reads "ran", not "billed", independent of the classifier charge.
+        // The routing pipeline ran, so the answer charge is badged; the chip reads
+        // "ran", not "billed", independent of the classifier's own charge.
         smartModelRan: true,
       },
-      {
-        key: 'answer#classifier',
-        modelId: 'cheap-model',
-        providerName: 'p',
-        modality: 'text',
-        generationId: 'gen-cls',
-        billableCostNanoUsd: providerUsdToBillableNanoUsd(BRANCH_COST_USD),
-        isEstimated: false,
-        tokens: TOKENS,
-      },
     ]);
-    // The classifier request carries NO history (the truncated context is its
-    // whole input); the answer request carries the FULL run history.
+    // Both calls crossed the wire, in graph order, and the answer request carries
+    // the FULL run history.
     const [classifierRequest, answerRequest] = providerRequests;
     expect(classifierRequest?.model).toBe('cheap-model');
-    expect(classifierRequest).not.toHaveProperty('history');
     expect(answerRequest?.model).toBe('answer-model');
     expect(answerRequest?.history).toEqual(history);
   });
@@ -547,5 +585,156 @@ describe('live workflow run — every model output stream self-labels', () => {
         expect(resumed.events[0]?.event.kind).toBe('stream-start');
       }
     }
+  });
+});
+
+/** The auto-effort run's bindings: a reasoning answer model, a plain classifier. */
+const EFFORT_BINDINGS: Record<string, ModelBinding | undefined> = {};
+
+/** A reasoning-capable answer model: the full canonical ladder, native words. */
+const REASONING_BINDING: ModelBinding = {
+  descriptor: {
+    ...descriptor,
+    reasoning: { supportedEfforts: null },
+    limits: { contextLength: 200_000 },
+  },
+  ports: { in: [textTag()], out: textTag() },
+  price: () => ok(5n),
+};
+
+/**
+ * The auto-effort turn: a classifier `modelCall`, the `decideTurn` reducer, and
+ * one ordinary answer `modelCall` reading the envelope through its single port.
+ * A pinned turn is the same graph with the level already stamped on the answer.
+ */
+EFFORT_BINDINGS['answer-model'] = REASONING_BINDING;
+EFFORT_BINDINGS['cheap-model'] = binding;
+
+function effortTurnDefinition(pinned?: { readonly level: 'low'; readonly cap: number }) {
+  const inputs = workflowInputs({ prompt: textTag() });
+  const classify = modelCall({
+    id: 'classify',
+    model: 'cheap-model',
+    accepts: textTag(),
+    produces: textTag(),
+    in: inputs.ports.prompt,
+  });
+  const decide = fanIn({
+    id: 'decide',
+    reducer: 'decideTurn',
+    accepts: [textTag(), optionalTag(textTag())],
+    ins: [inputs.ports.prompt, classify.out],
+    produces: jsonTag(TURN_DECISION_SCHEMA_NAME),
+  });
+  const answer = modelCall({
+    id: 'answer',
+    model: 'answer-model',
+    accepts: jsonTag(TURN_DECISION_SCHEMA_NAME),
+    produces: textTag(),
+    in: decide.out,
+    params:
+      pinned === undefined
+        ? { maxOutputTokens: 40_000 }
+        : { maxOutputTokens: pinned.cap, reasoning: { effort: pinned.level } },
+    ...(pinned === undefined ? {} : { reasoningEffort: pinned.level }),
+  });
+  return buildWorkflow({
+    deadlineClass: 'text',
+    hooks: HOOKS,
+    inputs,
+    nodes: [classify, decide, answer],
+    registries,
+  })._unsafeUnwrap().definition;
+}
+
+/** The classifier answers with a labelled effort line; the answer model echoes. */
+const effortProvider: ModelProvider = {
+  infer: (request: InferenceRequest) => {
+    providerRequests.push(request);
+    return (async function* stream(): AsyncGenerator<InferenceEvent> {
+      await Promise.resolve();
+      const isClassifier = request.model === 'cheap-model';
+      yield { kind: 'text-delta', index: 0, content: isClassifier ? 'effort: High' : 'echo' };
+      yield {
+        kind: 'finish',
+        metadata: {
+          usage: { inputTokens: 1, outputTokens: 1 },
+          finishReason: 'stop',
+          providerCostUsd: BRANCH_COST_USD,
+          generationId: isClassifier ? 'gen-cls' : 'gen-answer',
+        },
+      };
+    })();
+  },
+};
+
+function startEffortLive(pinned?: { readonly level: 'low'; readonly cap: number }): {
+  readonly done: ReturnType<ReturnType<typeof createWorkflowExecutor>['start']>['done'];
+  readonly settlements: SettlementRequest[];
+} {
+  providerRequests.length = 0;
+  const settlements: SettlementRequest[] = [];
+  const execution = createLiveExecutionRegistry({
+    provider: effortProvider,
+    models: { resolve: (id) => EFFORT_BINDINGS[id] },
+    compute,
+    subWorkflows: { resolve: (ref) => NO_SUB_WORKFLOWS[ref] },
+    schemas: { resolveSchema: (name) => constraints.resolve('schema', name)?.schema },
+    predicates: predicateCode(DEFAULT_WORKFLOW_CAPABILITIES),
+    reducers: reducerCode(DEFAULT_WORKFLOW_CAPABILITIES),
+  });
+  const executor = createWorkflowExecutor({
+    registries,
+    execution,
+    estimateRun: () => ok(nanoUSD(100n)),
+    clock: { now: () => 1000 },
+    rng: { random: () => 0.5 },
+    telemetry: makeTelemetry(),
+  });
+  const handle = executor.start({
+    definition: effortTurnDefinition(pinned),
+    inputs: { prompt: { kind: 'text', text: 'go' } },
+    hooks: {
+      admission: () => Promise.resolve(grant(1_000_000n)),
+      settlement: (request) => {
+        settlements.push(request);
+        return Promise.resolve();
+      },
+    },
+    runKey: RUN_KEY,
+    emit: () => {},
+  });
+  return { done: handle.done, settlements };
+}
+
+function chargeFor(settlements: SettlementRequest[], key: string) {
+  return settlements[0]?.charges.find((charge) => charge.key === key);
+}
+
+describe('live workflow run — the level a generation ran at reaches its charge', () => {
+  it('records what the classifier chose, not what was asked for and not the fallback', async () => {
+    const run = startEffortLive();
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    // The turn asked for `auto` — the answer node carries neither a reasoning
+    // wire nor a stamped level — and the axis's declared fallback is the
+    // cheapest option, `off`. The classifier said High, so High is recorded.
+    expect(cheapestClassifierEffort()).toBe(REASONING_OFF);
+    expect(chargeFor(run.settlements, 'answer')?.reasoningEffort).toBe('high');
+    expect(providerRequests[1]?.parameters['reasoning']).toEqual({ effort: 'high' });
+  });
+
+  it('leaves the classifier generation itself with no level', async () => {
+    const run = startEffortLive();
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    expect(chargeFor(run.settlements, 'classify')?.reasoningEffort).toBeUndefined();
+  });
+
+  it('records the pinned level on a turn no classifier decided', async () => {
+    const run = startEffortLive({ level: 'low', cap: 40_000 });
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    // The decision still says High; a pinned dimension is never rewritten, so
+    // the recorded level is the one the user chose.
+    expect(chargeFor(run.settlements, 'answer')?.reasoningEffort).toBe('low');
+    expect(providerRequests[1]?.parameters['reasoning']).toEqual({ effort: 'low' });
   });
 });

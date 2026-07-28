@@ -1,5 +1,11 @@
 # B5 — implementation report 1
 
+**The git baseline moved during this task.** `HEAD` was `ada0341c` at dispatch and is
+`53daba72` ("billing refactor", 2026-07-26 23:52) now; the founder's commit absorbed this task's
+work mid-flight, so B5's code is INSIDE `53daba72` rather than in the working tree. No agent ran
+a git write. An auditor diffing "vs the baseline" wants `ada0341c..53daba72`, and must expect
+A2's, B4's and the concurrent workstream's changes in the same commit.
+
 ## Objective
 
 One premium classifier, outlier exclusion on `maxCallCost`, resolved-corner eligibility, and
@@ -212,21 +218,46 @@ Deleted `offeredLevels`' early return. Consequences, all verified:
 
 | command                                                                             | result                                                                                |
 | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `npx vitest run --root packages/shared src/affordability`                           | pass — 51 files, 1,347 tests                                                          |
+| `pnpm test:shared`                                                                  | **pass — 127 files, 3,017 tests**; coverage 99.9 / 99.46 / 100 / 100                   |
+| `pnpm test:web`                                                                     | **pass — 395 files, 6,431 tests**; coverage 99.65 / 98.8 / 99.76 / 99.87               |
+| `pnpm test:api`                                                                     | **7 tests red on the third run, all of them the known template-html snapshots**         |
 | `npx tsx scripts/with-env.ts npx vitest run --root apps/api src/slices/models`       | pass — 41 files, 796 tests, 1 skipped                                                 |
 | `npx tsx scripts/with-env.ts npx vitest run --root apps/api src/slices/chat`         | pass — 34 files, 755 tests                                                            |
+| `npx tsx … --root apps/api routes.integration + src/slices/models + src/slices/admin` | pass — 71 files, 1,536 tests (the catalog-pollution combination)                      |
 | `npx turbo typecheck --force --continue`                                            | pass — 16/16, zero cached                                                             |
 | `npx eslint src/affordability` (from `packages/shared`)                             | exit 0, after the last edit                                                           |
 | `npx eslint <owned files>` (from `apps/api`)                                        | exit 0, after the last edit                                                           |
 | coverage, `--coverage.include='src/affordability/**'`                               | 99.84 stmts / 99.26 branch / 100 funcs / 100 lines; every file ≥ 95 on every axis      |
 | coverage, my three api files                                                        | 100 / 97.72 / 100 / 100; lowest file 96.15 branch                                     |
 
-Attributed elsewhere, reproduced on files this task never touched:
+`pnpm test:web` being fully green is the check that matters most for ruling 1: the effort ladder
+feeds `use-prompt-budget` and `use-reasoning-effort`, and neither moved.
 
-- `apps/api` `notifications/domain/templates/template-html.test.ts` — 7 snapshot failures, the
-  listed concurrent-workstream entry.
-- `apps/api` `chat/domain/regenerate.integration.test.ts` — 2 failures under full-suite load, both
-  passing in isolation (the shared-database contention class).
+**`pnpm test:api` was run three times.** The last one is the state to judge:
+
+| run | red                                                                                                      |
+| --- | ---------------------------------------------------------------------------------------------------------- |
+| 1   | 11 tests: 7 template-html snapshots + 3 `runtime.test.ts` + 1 smart-model route — the last four were mine and are fixed |
+| 2   | 11 tests: 7 snapshots + 2 trial-route 403s + 2 of my margin tests (see deviation 6)                      |
+| 3   | **7 tests: the 7 template-html snapshots, and nothing else** (6,381 passed)                              |
+
+Attributed elsewhere, each reproduced on files this task never touched:
+
+- `notifications/domain/templates/template-html.test.ts` — 7 snapshot failures in all three runs,
+  the listed concurrent-workstream entry.
+- Run 3 also showed five integration files failing at COLLECTION on
+  `deps_ssr/@hushbox_db.js` — the listed stale-pre-bundle entry, triggered by this task adding a
+  file to `packages/shared`. `rm -rf apps/api/node_modules/.vite` then re-running those five files
+  gives 5 passed / 38 tests. Cache artifact, cured, as the entry says.
+- `chat/domain/regenerate.integration.test.ts` — 2 failures in the chat-slice run, passing in
+  isolation (the shared-database contention class); absent from run 3.
+- **The two `POST /chat/trial` 403s in run 2 are intermittent, not this task's.** They did not
+  appear in run 1 or run 3, nor in a deliberately catalog-polluting combination
+  (routes.integration + all of `models` + all of `admin`, 1,536 tests green). Mechanism: with a
+  small shared catalog the seeded 5-nano model can itself BE the 75th percentile and classify
+  premium — a pre-existing property of the percentile over a polluted pool, and one my collapse
+  does not change, because every rate-carrying seeded row also carries a context length and so is
+  in both the old and the new pool.
 
 **A trap worth adding to §Known Breakage, and a correction to my own first reading of it.**
 Running `npx vitest run --root <package>` directly makes ~20 `apps/web` files and
@@ -295,6 +326,15 @@ list for `turbo test --filter`: gate through the pnpm script, never through raw 
 5. **`exceedsTrialBudget`'s parameter renamed** `systemPromptChars` → `promptChars`, because
    `turn-core` passes the whole prompt basis while the classification leg passes a fixed
    representative count. The old name would have been wrong at one of the two call sites.
+6. **The margin tests derive their boundary instead of hard-coding it.** First written with the
+   measured constants (`805` system-prompt tokens, boundary input `3,255`), they then failed in a
+   full `apps/api` run reporting **1,740** system-prompt characters where an isolated run reports
+   **1,609** — the same assertion, the same pinned date, a different loaded copy of
+   `@hushbox/shared` (`packages/shared/src/prompt/` is unmodified vs `HEAD` and clean in the
+   working tree, so the preamble itself did not change; this is the pre-bundle entry on §Known
+   Breakage). Both amounts are now computed from `SYSTEM_PROMPT_CHARS` at run time, which is the
+   shape the run has already paid for twice: a priced quantity must be computed from the thing
+   priced, never from a constant copy of it.
 
 ## Not done, and why (needs a ruling)
 

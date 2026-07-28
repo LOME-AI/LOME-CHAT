@@ -7,7 +7,7 @@ import { ModelSelectorButton } from '@/components/chat/model-selector/model-sele
 import { MemberFacepile } from '@/components/chat/member/member-facepile';
 import type { Model, ChatModality } from '@hushbox/shared';
 import type { SelectedModelEntry } from '@/stores/model';
-import type { ModelFloorGroupContext } from '@/hooks/billing/use-prompt-budget';
+import type { PickerConversationContext } from '@/components/chat/model-selector/model-selector-types';
 import type { ModelSelectorGatingProps } from '@/components/chat/model-selector/model-selector-types';
 
 interface ChatHeaderProps extends ModelSelectorGatingProps {
@@ -28,7 +28,7 @@ interface ChatHeaderProps extends ModelSelectorGatingProps {
   /** Called when the picker should open or close. */
   onPickerOpenChange?: ((open: boolean) => void) | undefined;
   /** Group funding context for the picker's affordability floor (threading only). */
-  floorGroup?: ModelFloorGroupContext | undefined;
+  floorGroup?: PickerConversationContext | undefined;
 }
 
 export function ChatHeader({
@@ -37,7 +37,6 @@ export function ChatHeader({
   onModelSelect,
   title,
   premiumIds,
-  canAccessPremium,
   isAuthenticated,
   isLinkGuest,
   onPremiumClick,
@@ -63,7 +62,6 @@ export function ChatHeader({
           selectedModels={selectedModels}
           onSelect={onModelSelect}
           premiumIds={premiumIds}
-          canAccessPremium={canAccessPremium}
           isAuthenticated={isAuthenticated}
           isLinkGuest={isLinkGuest}
           onPremiumClick={onPremiumClick}

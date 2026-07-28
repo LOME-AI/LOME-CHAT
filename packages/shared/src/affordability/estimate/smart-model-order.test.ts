@@ -158,4 +158,100 @@ describe('the biconditional threshold matches the admission verdict across a swe
     expect(refusals).toBeGreaterThan(10);
     expect(admissions).toBeGreaterThan(10);
   });
+
+  it('holds with NO storage context', () => {
+    // Swept in both modes because the threshold is the client's own refusal
+    // predicate on a non-persisting turn as well as a persisting one. This case
+    // does NOT discriminate whether the pool is priced with storage — that pin is
+    // the one below, on a pool where storage changes the exclusion set.
+    const withoutStorage = smartModelMinimumRequiredNanoUsd(POOL, PROMPT_INPUT_TOKENS);
+    expect(withoutStorage).not.toBeNull();
+
+    let refusals = 0;
+    let admissions = 0;
+    for (let step = 0; step <= 200; step += 1) {
+      const balance = (BigInt(step) * (withoutStorage ?? 0n) * 2n) / 100n;
+      const admitted = admitSmartModel(POOL, balance, PROMPT_INPUT_TOKENS) !== null;
+      expect(admitted).toBe(balance >= (withoutStorage ?? 0n));
+      if (admitted) admissions += 1;
+      else refusals += 1;
+    }
+    expect(refusals).toBeGreaterThan(10);
+    expect(admissions).toBeGreaterThan(10);
+  });
+
+  /**
+   * The pin that discriminates whether the THRESHOLD prices its pool with the
+   * turn's storage context. Storage adds a per-token cost that is identical for
+   * every model, so it is multiplied by each model's own cap — which means a
+   * cheap-per-token, enormous-capacity candidate can be inside the outlier
+   * multiple on a non-persisting basis and outside it on a persisting one.
+   *
+   * `vendor/vast` is exactly that shape. If the storage argument is dropped from
+   * the pool pricing, it survives the outlier test, and since it is also the
+   * cheapest floor it LOWERS the threshold — so the client would refuse on a
+   * different boundary than admission caps at, breaking §Smart Model 5's
+   * client-refusal ⇔ server-refusal biconditional with nothing else red.
+   */
+  describe('the threshold prices its pool on the turn`s own storage basis', () => {
+    function poolModel(id: string, inputRate: bigint, outputRate: bigint, cap: number) {
+      return {
+        id,
+        pricing: { inputPerToken: nanoUSD(inputRate), outputPerToken: nanoUSD(outputRate) },
+        contextLength: 1_000_000,
+        maxOutputTokens: cap,
+      };
+    }
+    const ORDINARY = [
+      poolModel('vendor/a', 100n, 1000n, 8000),
+      poolModel('vendor/b', 100n, 2000n, 8000),
+      poolModel('vendor/c', 100n, 3000n, 8000),
+      poolModel('vendor/d', 100n, 4000n, 8000),
+    ];
+    /**
+     * Cheap per OUTPUT token with a 125× larger cap. Storage costs the same per
+     * token for every model, so it is multiplied by each model's own cap: this
+     * one's `maxCallCost` is 10,000,000n on a non-persisting basis (inside the
+     * multiple) and 610,000,000n on a persisting one (outside it).
+     *
+     * Its input rate is deliberately huge so it is never the cheapest ENGINE, and
+     * the prompt is empty so the input leg does not enter the floors — that is
+     * what leaves the exclusion as the ONLY difference between the two pools
+     * below, rather than the engine or the reserve.
+     */
+    const VAST = poolModel('vendor/vast', 100_000n, 10n, 1_000_000);
+    /** Its stand-in: an ordinary shape, and an identifier of the SAME LENGTH, so
+     * the classifier prompt overhead — and therefore the reserve — is identical. */
+    const TAME = poolModel('vendor/tame', 100n, 2000n, 8000);
+    const NO_PROMPT_TOKENS = 0;
+    const WITH_VAST = [...ORDINARY, VAST];
+    const WITH_TAME = [...ORDINARY, TAME];
+
+    it('excludes the storage-driven outlier only when the turn persists', () => {
+      const persisting = priceSmartModelPool(WITH_VAST, NO_PROMPT_TOKENS, STORAGE);
+      const ephemeral = priceSmartModelPool(WITH_VAST, NO_PROMPT_TOKENS);
+      expect(persisting?.priced.map((entry) => entry.id)).not.toContain(VAST.id);
+      expect(ephemeral?.priced.map((entry) => entry.id)).toContain(VAST.id);
+    });
+
+    it('minimises over the SURVIVING set, which is what the argument buys', () => {
+      // Both pools carry five identifiers of identical length, so they buy the
+      // same classifier and reserve; they differ only in whether their fifth
+      // member is the storage-driven outlier. Equal thresholds therefore mean the
+      // exclusion happened inside the threshold itself.
+      const withVast = smartModelMinimumRequiredNanoUsd(WITH_VAST, NO_PROMPT_TOKENS, STORAGE);
+      const withTame = smartModelMinimumRequiredNanoUsd(WITH_TAME, NO_PROMPT_TOKENS, STORAGE);
+      expect(withVast).not.toBeNull();
+      expect(withVast).toBe(withTame);
+    });
+
+    it('would fall to the excluded candidate`s floor if the pool were priced ephemerally', () => {
+      // The counterfactual, so the equality above cannot pass by both sides being
+      // computed the same wrong way: priced on a non-persisting basis the outlier
+      // survives, and it is the cheapest floor, so the threshold drops.
+      const persisting = smartModelMinimumRequiredNanoUsd(WITH_VAST, NO_PROMPT_TOKENS, STORAGE);
+      const ephemeral = smartModelMinimumRequiredNanoUsd(WITH_VAST, NO_PROMPT_TOKENS);
+      expect(ephemeral ?? 0n).toBeLessThan(persisting ?? 0n);
+    });
+  });
 });

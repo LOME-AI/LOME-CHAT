@@ -1,27 +1,26 @@
 /**
- * The turn's effort choice set and its per-model resolution — the ONE shared
- * authority for both (client menu / classifier options / server validation
- * all derive from here; One Implementation, Shared).
+ * The turn's effort choice set, and the ONE shared authority for it (client
+ * menu / classifier options / server validation all derive from here; One
+ * Implementation, Shared).
  *
  * A multi-model turn offers the UNION of the selected models' positional
  * ladders (`offeredLevels` stays the sole normalization authority — never
  * re-derived here), plus Min (reasoning off) when any model can disable.
- * Per-model resolution is downgrade-only: a model lacking the chosen level
- * falls to its nearest offered rung below; below the whole ladder resolves
- * to off when disabling is possible, and to the LOWEST offered rung on a
- * mandatory-reasoning model — the sole upward exception, because downward
- * is impossible. Single-model explicit picks are NOT resolved through this
- * module: an explicitly chosen level on a single-model turn runs as asked
- * or refuses (`planReasoning`'s G3 refusal), never silently substituted.
+ *
+ * Per-model resolution is NOT implemented here. `resolveEffortForModel` is a
+ * projection of the registry's one resolver onto this module's `ResolvedEffort`
+ * shape: the rule (downward-only, with the mandatory lowest-rung carve-out)
+ * lives in `dimensions/derive.ts` and is declared by the effort dimension's
+ * `resolution` field, so a second nearest-below walk cannot exist to drift from
+ * it. Single-model explicit picks are not resolved through this module at all:
+ * an explicitly chosen level on a single-model turn runs as asked or refuses
+ * (`planReasoning`'s refusal), never silently substituted.
  */
 
+import { resolveOption } from '../dimensions/derive.js';
+import { EFFORT_DIMENSION, effortSupportOf } from '../dimensions/effort.js';
 import { CANONICAL_REASONING_EFFORTS, REASONING_OFF } from '../reasoning-effort.js';
-import {
-  offeredLevels,
-  planReasoningOff,
-  reasoningBudgetForWire,
-  validCap,
-} from './reasoning-plan.js';
+import { offeredLevels, reasoningBudgetForWire, validCap } from './reasoning-plan.js';
 import type { CanonicalReasoningEffort, ReasoningOff } from '../reasoning-effort.js';
 import type { OfferedLevel, ReasoningPlanModel } from './reasoning-plan.js';
 
@@ -71,37 +70,38 @@ export type ResolvedEffort =
   | { readonly kind: 'default' };
 
 /**
- * Whether the model accepts an explicit reasoning-off wire — delegated to
- * the plan's own off gate so the predicate can never drift from what the
- * wire path actually accepts (headroom of 1 is the minimal valid probe).
+ * Whether Min is one of the model's own options — read off the registry support
+ * rather than re-probed here, so the menu's Min row and the resolver's off rung
+ * are the same fact rather than two predicates that agree today.
  */
-function canDisableReasoning(model: ReasoningPlanModel): boolean {
-  return planReasoningOff(model, 1).feasible;
-}
-
-function ladderPosition(label: CanonicalReasoningEffort): number {
-  return CANONICAL_REASONING_EFFORTS.indexOf(label);
+function offersMin(model: ReasoningPlanModel): boolean {
+  return effortSupportOf(model).options.some((option) => option.optionId === REASONING_OFF);
 }
 
 /**
- * Per-model downgrade resolution of the turn's chosen effort (multi-model
- * union semantics — see the module doc for the single-model G3 carve-out).
- * {@link REASONING_OFF} sits below every rung, so the same nearest-below walk
- * covers Min.
+ * Per-model resolution of the turn's chosen effort, projected from the registry
+ * onto the three wire shapes this module's consumers switch on.
+ *
+ * The mapping is total and lossless in both directions: the off option becomes
+ * the hard-off wire, a rung becomes its own offered level, and the registry's
+ * "this model offers nothing on the axis" — which it expresses as no resolved
+ * option — becomes the wire-silence arm. That last arm is the one thing the
+ * registry's return type does not carry, which is why the projection exists
+ * rather than the consumers calling `resolveOption` themselves.
  */
 export function resolveEffortForModel(
   model: ReasoningPlanModel,
   chosen: EffortChoice
 ): ResolvedEffort {
-  const offered = offeredLevels(model);
-  const chosenPosition = chosen === REASONING_OFF ? -1 : ladderPosition(chosen);
-  // offeredLevels is ascending, so findLast is the nearest rung at or below.
-  const nearestBelow = offered.findLast((level) => ladderPosition(level.label) <= chosenPosition);
-  if (nearestBelow !== undefined) return { kind: 'level', level: nearestBelow };
-  if (canDisableReasoning(model)) return { kind: 'off' };
-  const lowest = offered[0];
-  if (lowest !== undefined) return { kind: 'level', level: lowest };
-  return { kind: 'default' };
+  const resolved = resolveOption(EFFORT_DIMENSION, effortSupportOf(model), chosen);
+  if (resolved === undefined) return { kind: 'default' };
+  if (resolved === REASONING_OFF) return { kind: 'off' };
+  const level = offeredLevels(model).find((offered) => offered.label === resolved);
+  /* v8 ignore next -- unreachable: `resolveOption` only ever returns an option the
+     support presented, and every non-off option in the effort support is a rung
+     read off this same ladder */
+  if (level === undefined) return { kind: 'default' };
+  return { kind: 'level', level };
 }
 
 function resolvedBudgetTokens(model: ReasoningPlanModel, chosen: EffortChoice): number {
@@ -123,7 +123,7 @@ export function turnEffortOptions(models: readonly ReasoningPlanModel[]): Effort
     models.flatMap((model) => offeredLevels(model).map((level) => level.label))
   );
   const choices: EffortChoice[] = [
-    ...(models.some((model) => canDisableReasoning(model)) ? ([REASONING_OFF] as const) : []),
+    ...(models.some((model) => offersMin(model)) ? ([REASONING_OFF] as const) : []),
     ...CANONICAL_REASONING_EFFORTS.filter((label) => union.has(label)),
   ];
   return choices.map((choice) => ({

@@ -1,7 +1,18 @@
 import { test, expect } from '../fixtures.js';
 import { ChatPage } from '../pages';
 import { setupRealtimePair } from '../helpers/realtime.js';
+import {
+  hasAppBadgeApi,
+  hasWindowFocus,
+  installAppBadgeSpy,
+  lastAppBadgeCall,
+  minimizeAndBlurWindow,
+  restoreAndFocusWindow,
+} from '../helpers/window-attention.js';
 import { TIMEOUTS } from '../config/timeouts.js';
+
+/** The app's own title, and the stem every unread prefix is added to. */
+const APP_TITLE = 'HushBox';
 
 test.describe('Real-time WebSocket events', () => {
   test('user-only message appears for other member in real time', async ({
@@ -65,6 +76,64 @@ test.describe('Real-time WebSocket events', () => {
       timeout: TIMEOUTS.STREAM,
     });
   });
+
+  // Chromium-only: looking away is staged over the DevTools Protocol, which no
+  // other engine speaks (see the window-attention helper).
+  test(
+    'a message arriving while the user is looking away raises the unread title and app badge, and returning clears both',
+    {
+      tag: '@chromium-only',
+    },
+    async ({ authenticatedPage, testBobPage, groupConversation }) => {
+      await installAppBadgeSpy(authenticatedPage.context());
+
+      const { bobChatPage } = await setupRealtimePair(
+        authenticatedPage,
+        testBobPage,
+        groupConversation.id
+      );
+
+      // Bob turns AI off: an assistant reply would be a second countable arrival
+      // and the unread count would depend on which one landed first.
+      const bobAiToggle = bobChatPage.getAiToggleButton();
+      await bobAiToggle.click();
+      await expect(bobAiToggle).toHaveAccessibleName(/AI response off/);
+
+      await expect(authenticatedPage).toHaveTitle(APP_TITLE);
+      // The app badges only where the platform offers one, so a browser without
+      // the API would silently make the badge half of this test vacuous.
+      await expect.poll(() => hasAppBadgeApi(authenticatedPage)).toBe(true);
+
+      // Alice looks away. Asserted rather than assumed: everything below is about
+      // what the app does while unfocused, so a page that kept focus would fail
+      // on the consequences and say nothing about the cause.
+      await minimizeAndBlurWindow(authenticatedPage);
+      await expect.poll(() => hasWindowFocus(authenticatedPage)).toBe(false);
+
+      const testMessage = `Away message ${String(Date.now())}`;
+      await bobChatPage.sendFollowUpMessage(testMessage);
+
+      await expect(authenticatedPage).toHaveTitle(`(1) ${APP_TITLE}`);
+      await expect
+        .poll(() => lastAppBadgeCall(authenticatedPage))
+        .toEqual({ kind: 'set', count: 1, settled: 'fulfilled' });
+
+      // Alice comes back: a real focus event, and both signals stand down. Zero
+      // routes through `clearAppBadge`, never `setAppBadge(0)`.
+      await restoreAndFocusWindow(authenticatedPage);
+      await expect.poll(() => hasWindowFocus(authenticatedPage)).toBe(true);
+
+      await expect(authenticatedPage).toHaveTitle(APP_TITLE);
+      await expect
+        .poll(() => lastAppBadgeCall(authenticatedPage))
+        .toEqual({ kind: 'clear', count: null, settled: 'fulfilled' });
+
+      // The spy wrapped the platform API rather than standing in for it: the
+      // capability the app checks for is still there, and the calls above were
+      // settled by the real implementation behind it.
+      await expect.poll(() => hasAppBadgeApi(authenticatedPage)).toBe(true);
+    }
+  );
 
   test('typing indicator shows for other member', async ({
     authenticatedPage,

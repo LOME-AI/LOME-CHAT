@@ -9,6 +9,7 @@ import {
   buildSmartModelTurnDefinition,
   buildTrialSmartModelTurnDefinition,
 } from './smart-model-turn.js';
+import type { TurnBudget } from './turn-definition.js';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
@@ -46,7 +47,9 @@ afterAll(async () => {
   if (createdUserIds.length > 0) {
     await db.delete(users).where(inArray(users.id, createdUserIds));
   }
-  await db.delete(modelCatalog).where(inArray(modelCatalog.modelId, [MODEL, REASONING_MODEL]));
+  await db
+    .delete(modelCatalog)
+    .where(inArray(modelCatalog.modelId, [MODEL, REASONING_MODEL, DEAR_TRIAL_MODEL]));
   await db.$client.end();
 });
 
@@ -230,8 +233,17 @@ describe('buildSmartModelTurnDefinition without a budget', () => {
   });
 });
 
+/** A trial-eligible model dear enough that the character count binds the 1¢ cap. */
+const DEAR_TRIAL_MODEL = 'trial-forward/dear';
+
+/** Every trial send carries its 1¢ ceiling; these tests assert wiring, not money. */
+const TRIAL_BUDGET: TurnBudget = {
+  promptCharacterCount: 400,
+  funding: { kind: 'free', remainingNanoUsd: 10_000_000n },
+};
+
 describe('buildTrialSmartModelTurnDefinition with classifyEffort', () => {
-  it('declares both classifier dimensions when a trial candidate can reason (budget-less path)', async () => {
+  it('declares both classifier dimensions when a trial candidate can reason', async () => {
     const build = await withModelCatalogLock(redis, async () => {
       // Deterministic catalog under the lock (see the paid no-budget test):
       // one plain and one reasoning-capable trial-eligible model, so the
@@ -241,7 +253,11 @@ describe('buildTrialSmartModelTurnDefinition with classifyEffort', () => {
       await seedReasoningModel();
       return buildTrialSmartModelTurnDefinition(
         { db, telemetry: silentTelemetry },
-        { prompt: 'hello there', history: [], now: new Date(), classifyEffort: true }
+        {
+          now: new Date(),
+          budget: TRIAL_BUDGET,
+          classifyEffort: true,
+        }
       );
     });
     const value = build._unsafeUnwrap();
@@ -257,7 +273,11 @@ describe('buildTrialSmartModelTurnDefinition with classifyEffort', () => {
       await seedReasoningModel();
       return buildTrialSmartModelTurnDefinition(
         { db, telemetry: silentTelemetry },
-        { prompt: 'hello there', history: [], now: new Date(), reasoningOff: true }
+        {
+          now: new Date(),
+          budget: TRIAL_BUDGET,
+          reasoningOff: true,
+        }
       );
     });
     const value = build._unsafeUnwrap();
@@ -266,5 +286,60 @@ describe('buildTrialSmartModelTurnDefinition with classifyEffort', () => {
     if (node?.type !== 'smartModel') throw new Error('expected a smartModel node');
     expect(node.params['reasoning']).toEqual({ enabled: false });
     expect(node.classify).toBeUndefined();
+  });
+});
+
+describe('the trial Smart Model gate prices the budget`s own character count', () => {
+  /**
+   * The forwarding this arm's 1¢ ceiling depends on. The candidate gate must
+   * price the SAME characters the definition is compiled against — which is the
+   * route's `promptCharacterCount`, custom instructions included. When this file
+   * recounted the prompt locally instead, it could see the system prompt, the
+   * history and the input but NOT the instructions, and admitted sends the
+   * definition then priced above the cap.
+   *
+   * The model is priced so the count binds: input at 2,000 nano per token means
+   * 5,000 extra characters cost 5,000,000 nano, and the classifier reserve plus
+   * the fixed answer allocation already spend most of the 1¢ ceiling. Nothing
+   * here asserts an amount — the pin is that the count REACHES the gate, which a
+   * local recount of prompt-plus-history would not reproduce.
+   */
+  async function buildWith(promptCharacterCount: number): Promise<boolean> {
+    const build = await withModelCatalogLock(redis, async () => {
+      await db.delete(modelCatalog);
+      await db
+        .insert(modelCatalog)
+        .values({
+          modelId: DEAR_TRIAL_MODEL,
+          descriptor: {
+            id: DEAR_TRIAL_MODEL,
+            provider: 'p',
+            version: '2',
+            inputs: ['text'],
+            outputs: ['text'],
+            parameters: {},
+            behaviors: ['streaming'],
+            limits: { contextLength: 128_000 },
+            pricing: { inputPerToken: '2000', outputPerToken: '1000' },
+            zdrReachable: true,
+            releasedAt: 1_600_000_000,
+            fetchedAt: 0,
+          },
+        })
+        .onConflictDoNothing();
+      return buildTrialSmartModelTurnDefinition(
+        { db, telemetry: silentTelemetry },
+        {
+          now: new Date(),
+          budget: { ...TRIAL_BUDGET, promptCharacterCount },
+        }
+      );
+    });
+    return build._unsafeUnwrap().buildable;
+  }
+
+  it('builds on a count the cap covers and refuses on one it does not', async () => {
+    expect(await buildWith(400)).toBe(true);
+    expect(await buildWith(400 + 5000)).toBe(false);
   });
 });

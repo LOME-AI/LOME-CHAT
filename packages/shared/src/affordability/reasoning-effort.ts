@@ -52,6 +52,23 @@ export const ReasoningEffortSelection = z.enum(REASONING_EFFORT_SELECTIONS);
 export type ReasoningEffortSelection = z.infer<typeof ReasoningEffortSelection>;
 
 /**
+ * What a turn can RESOLVE to: a canonical rung, or {@link REASONING_OFF}.
+ * `auto` never appears — it is a selection, and by the time a level is resolved
+ * the classifier (or the deterministic single-choice pick) has already answered
+ * it.
+ *
+ * This is the domain of the level recorded per generation and surfaced on the
+ * answer (`docs/BILLING.md` §Reasoning Effort 9), so the persisted enum, the
+ * decision envelope, and the dimension's choice type all read it here rather
+ * than re-spelling the ladder-plus-off tuple.
+ */
+export const RESOLVED_REASONING_EFFORTS = [...CANONICAL_REASONING_EFFORTS, REASONING_OFF] as const;
+
+export const ResolvedReasoningEffort = z.enum(RESOLVED_REASONING_EFFORTS);
+
+export type ResolvedReasoningEffort = z.infer<typeof ResolvedReasoningEffort>;
+
+/**
  * THE id→label mapping, and the only one: ids appear on the wire and in
  * storage, labels appear everywhere a human or the classifier reads an option
  * (`docs/BILLING.md` §Reasoning Effort 1). `medium` displays as "Mid" and

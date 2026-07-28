@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { PolicyHooks, nanoUSD, textTag, usdToNanoUsd } from '@hushbox/shared';
+import { PolicyHooks, jsonTag, nanoUSD, optionalTag, textTag, usdToNanoUsd } from '@hushbox/shared';
 import { providerUsdToBillableNanoUsd } from '../../billing/index.js';
 import { ok } from '../../../lib/result/index.js';
+import { fanIn } from '../builder/fan-in.js';
+import { modelCall } from '../builder/model-call.js';
 import { smartModel } from '../builder/smart-model.js';
 import { workflowInputs } from '../builder/workflow-inputs.js';
 import { buildWorkflow } from '../builder/build-workflow.js';
@@ -14,6 +16,8 @@ import {
   reducerCode,
 } from './workflow-capabilities.js';
 import { setupIntegrationProvider } from '../../models/adapters/integration-setup.js';
+import { portsAccepting } from './model-ports.js';
+import { TURN_DECISION_SCHEMA_NAME } from '../nodes/turn-decision.js';
 import type {
   InferenceEvent,
   ModelDescriptor,
@@ -66,6 +70,18 @@ const RUN_TIMEOUT_MS = 60_000;
 const CLASSIFIER_MODEL_ID = 'openai/gpt-4o-mini';
 const ANSWER_MODEL_ID = 'openai/gpt-4o';
 
+/** The classifier's own output cap — one labelled line is all it may emit. */
+const CLASSIFIER_TEST_OUTPUT_CAP = 32;
+
+/**
+ * The turn prompt. It doubles as the classifier's instruction here because the
+ * real classifier prompt is the wiring layer's, not this seam's: what this test
+ * proves is that ONE labelled line crossing the wire routes the slot to the
+ * OTHER candidate, so the answer generation must be observably a different
+ * model from the classifier's.
+ */
+const TURN_PROMPT = `Reply with exactly this line and nothing else:\nmodel: ${ANSWER_MODEL_ID}`;
+
 function makeTelemetry(): Telemetry {
   return {
     debug: vi.fn(),
@@ -107,7 +123,15 @@ function bindingFor(id: string): ModelBinding {
 /** Test-local compile node registry double: text→text ports for every node. */
 const nodes: NodeRegistryContext = {
   hasNode: (_type, version) => version === 1,
-  resolveValuePorts: () => ({ in: [textTag()], out: textTag() }),
+  // Text→text for every model, except that a node declaring an input schema
+  // takes that named json tag instead — the same derivation the live registry
+  // applies, so the decision edge type-checks at compile exactly as it does in
+  // production.
+  resolveValuePorts: (node) =>
+    portsAccepting(
+      { in: [textTag()], out: textTag() },
+      'inputSchema' in node ? node.inputSchema : undefined
+    ),
 };
 
 const constraints = createConstraintRegistry(DEFAULT_WORKFLOW_CAPABILITIES);
@@ -133,9 +157,31 @@ function grant(limit: bigint): EngineAdmissionDecision {
 /** No sub-workflows in the smart-model turn — every ref misses. */
 const NO_SUB_WORKFLOWS: Record<string, SubWorkflowBinding | undefined> = {};
 
-/** One smartModel node: cheapest candidate classifies, routes among two. */
+/**
+ * The turn-level shape: an ORDINARY `modelCall` classifies, the registered
+ * `decideTurn` reducer joins its answer to the prompt as the decision envelope,
+ * and the Smart Model slot consumes that envelope and binds one candidate. The
+ * slot makes no call of its own, so the two generations that cross the wire are
+ * two separate NODES — which is what puts the classifier's charge under its own
+ * top-level key, with no content of its own.
+ */
 function smartModelDefinition(): WorkflowDefinition {
   const inputs = workflowInputs({ prompt: textTag() });
+  const classify = modelCall({
+    id: 'classify',
+    model: CLASSIFIER_MODEL_ID,
+    accepts: textTag(),
+    produces: textTag(),
+    params: { maxOutputTokens: CLASSIFIER_TEST_OUTPUT_CAP },
+    in: inputs.ports.prompt,
+  });
+  const decide = fanIn({
+    id: 'decide',
+    reducer: 'decideTurn',
+    accepts: [textTag(), optionalTag(textTag())],
+    ins: [inputs.ports.prompt, classify.out],
+    produces: jsonTag(TURN_DECISION_SCHEMA_NAME),
+  });
   const smart = smartModel({
     id: 'answer',
     classifierModelId: CLASSIFIER_MODEL_ID,
@@ -143,13 +189,14 @@ function smartModelDefinition(): WorkflowDefinition {
       { id: CLASSIFIER_MODEL_ID, description: 'A small, fast, cheap general model.' },
       { id: ANSWER_MODEL_ID, description: 'A larger, more capable general model.' },
     ],
-    in: inputs.ports.prompt,
+    accepts: jsonTag(TURN_DECISION_SCHEMA_NAME),
+    in: decide.out,
   });
   return buildWorkflow({
     deadlineClass: 'text',
     hooks: HOOKS,
     inputs,
-    nodes: [smart],
+    nodes: [classify, decide, smart],
     registries,
   })._unsafeUnwrap().definition;
 }
@@ -198,7 +245,7 @@ async function runSmartModelTurn(provider: ModelProvider): Promise<LiveRun> {
   });
   const handle = executor.start({
     definition: smartModelDefinition(),
-    inputs: { prompt: { kind: 'text', text: 'Reply with a single short word.' } },
+    inputs: { prompt: { kind: 'text', text: TURN_PROMPT } },
     hooks: {
       admission: () => Promise.resolve(grant(1_000_000_000n)),
       settlement: (request) => {
@@ -240,16 +287,22 @@ describe('smart-model turn — factory-resolved classifier + answer', () => {
     const answer = settlement.outputs['answer'];
     expect(answer?.kind === 'text' ? answer.text.length : 0).toBeGreaterThan(0);
 
-    // (a) TWO calls crossed the wire — the answer charge plus the classifier's
-    // `<node>#classifier` auxiliary charge. Two candidates force the classifier
-    // to run; its charge stands whether or not its routing output resolved.
+    // (a) TWO calls crossed the wire, as TWO nodes: the classifier under its own
+    // TOP-LEVEL key — no suffix, and no content of its own — and the answer under
+    // the slot's key. The classifier's line routed the slot to the OTHER
+    // candidate, which is the decision path proven end to end.
     const charges = settlement.charges;
     expect(charges).toHaveLength(2);
     const answerCharge = charges.find((c) => c.key === 'answer');
-    const classifierCharge = charges.find((c) => c.key === 'answer#classifier');
+    const classifierCharge = charges.find((c) => c.key === 'classify');
     expect(answerCharge).toBeDefined();
     expect(classifierCharge).toBeDefined();
     expect(classifierCharge?.modelId).toBe(CLASSIFIER_MODEL_ID);
+    expect(answerCharge?.modelId).toBe(ANSWER_MODEL_ID);
+    // The classifier's value was CONSUMED by the reducer, so it is not a sink:
+    // the run's only output is the slot's answer, and the classifier's charge
+    // therefore has no content of its own to anchor to.
+    expect(Object.keys(settlement.outputs)).toEqual(['answer']);
 
     // (c) usage/cost captured for BOTH — the gateway's authoritative inline
     // cost, not an estimate, and real per-generation ids.
@@ -283,9 +336,7 @@ describe('smart-model turn — factory-resolved classifier + answer', () => {
     // The conversion is the only fee application: billable strictly exceeds
     // the raw nano conversion of the same figure.
     expect(providerUsdToBillableNanoUsd(inlineUsd)).toBeGreaterThan(usdToNanoUsd(inlineUsd));
-    const classifierCharge = settlement.charges.find(
-      (charge) => charge.key === 'answer#classifier'
-    );
+    const classifierCharge = settlement.charges.find((charge) => charge.key === 'classify');
     // The classifier runs emit-free (invisible to the stream), so its raw
     // inline cost is unobservable here; the port unit pins cover the
     // conversion, and the first test asserts it billed a positive inline cost.

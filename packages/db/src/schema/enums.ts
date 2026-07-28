@@ -12,6 +12,7 @@ import {
   NEWSLETTER_STATUSES,
   NEWSLETTER_SUPPRESS_REASONS,
   PAYMENT_STATUSES,
+  RESOLVED_REASONING_EFFORTS,
   USER_LOCK_REASONS,
 } from '@hushbox/shared';
 
@@ -87,6 +88,13 @@ export const verificationPurposeEnum = pgEnum('verification_purpose', ['email_ve
  * per-reason breakdown counts — one authority, no second list.
  */
 export const modelExcludeReasonEnum = pgEnum('model_exclude_reason', EXCLUDE_REASONS);
+
+/**
+ * The level a generation actually reasoned at. Derives from the single shared
+ * RESOLVED_REASONING_EFFORTS const (same pattern as modality), so `auto` — a
+ * selection, never a resolution — is unrepresentable in storage.
+ */
+export const reasoningEffortEnum = pgEnum('reasoning_effort', RESOLVED_REASONING_EFFORTS);
 
 /** Derives from the single shared FEEDBACK_KINDS const (same pattern as modality). */
 export const feedbackKindEnum = pgEnum('feedback_kind', FEEDBACK_KINDS);

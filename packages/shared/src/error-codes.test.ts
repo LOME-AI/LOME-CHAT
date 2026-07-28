@@ -7,6 +7,7 @@ import {
   errorCodeSchema,
   errorResponseSchema,
 } from './error-codes.js';
+import { noticeText } from './affordability/notices.js';
 import type { ErrorCode } from './error-codes.js';
 
 describe('ERROR_CODES', () => {
@@ -401,5 +402,52 @@ describe('newsletter error codes', () => {
       expect(message.length).toBeGreaterThan(0);
       expect(message).not.toBe(fallback);
     }
+  });
+});
+
+describe('wire refusals read the same as their pre-send notices', () => {
+  // §Notices 2: a pre-send notice and a wire refusal describing the same
+  // condition read the same. The mapping is asserted here so a divergence is a
+  // failing test rather than a copy review.
+  const SHARED_CONDITIONS = [
+    ['MODEL_TIER_LOCKED', 'premium_requires_credit'],
+    ['PREMIUM_REQUIRES_ACCOUNT', 'premium_requires_account'],
+    ['GROUP_BUDGET_EXHAUSTED', 'guest_no_group_budget'],
+    ['TRIAL_MESSAGE_TOO_EXPENSIVE', 'trial_message_cap_exceeded'],
+    ['CONCURRENT_RUN', 'run_already_in_progress'],
+    ['CONTEXT_LENGTH_EXCEEDED', 'prompt_too_long'],
+  ] as const;
+
+  it('words each shared condition once', () => {
+    for (const [code, reason] of SHARED_CONDITIONS) {
+      expect(friendlyErrorMessage(code)).toBe(noticeText(reason));
+    }
+  });
+
+  // INSUFFICIENT_ADMISSION stays condition-neutral because it still answers for
+  // a cost-circuit trip as well — a run that STARTED and was killed, which is
+  // neither of the refusal conditions below. Wording it as the balance case
+  // would put a payment action on that path too.
+  it('keeps the collapsed admission refusal out of the per-condition wordings', () => {
+    expect(friendlyErrorMessage('INSUFFICIENT_ADMISSION')).toBe(noticeText('send_cannot_start'));
+    expect(friendlyErrorMessage('INSUFFICIENT_ADMISSION')).not.toBe(
+      noticeText('insufficient_funds')
+    );
+  });
+
+  // The three admission conditions differ in the ACTION they leave the user,
+  // which is what §Notices 2 makes them separate wordings for: paying fixes an
+  // empty balance, only waiting fixes runs already in flight, and only the
+  // conversation owner fixes an exhausted budget.
+  it('gives the run-cap refusal its own wording, not the balance one', () => {
+    expect(friendlyErrorMessage('RUN_CAPACITY_REACHED')).toBe(noticeText('funds_held_by_run'));
+    expect(friendlyErrorMessage('RUN_CAPACITY_REACHED')).not.toBe(
+      friendlyErrorMessage('INSUFFICIENT_ADMISSION')
+    );
+  });
+
+  it('offers no payment action on a run-cap refusal, because paying cannot help', () => {
+    expect(friendlyErrorMessage('RUN_CAPACITY_REACHED').toLowerCase()).not.toContain('add credit');
+    expect(friendlyErrorMessage('RUN_CAPACITY_REACHED').toLowerCase()).not.toContain('balance');
   });
 });

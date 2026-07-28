@@ -1,4 +1,3 @@
-import { outputCharsPerTokenForTier } from '@hushbox/shared/affordability/estimate/pre-adapters';
 import {
   admitSmartModel,
   classifierReserveLineItems,
@@ -135,14 +134,10 @@ export function classifierWorstCaseNanoUsd(
   classifier: ModelDescriptor,
   textCatalog: readonly { readonly id: string; readonly description?: string | undefined }[]
 ): bigint | undefined {
-  // The output-storage ratio is irrelevant to the marked-up token cost, so the
-  // conservative trial ratio is passed to satisfy the core; its storage item is
-  // discarded here. Storage-aware callers use classifierReserveLineItems.
-  const items = classifierReserveLineItems(
-    classifier,
-    textCatalog,
-    outputCharsPerTokenForTier('trial')
-  );
+  // The reserve has one item and it is the provider leg — the classifier's prompt
+  // and answer never rest, so no storage is priced for them on any tier. The
+  // selection stays positive so a future item cannot join this figure silently.
+  const items = classifierReserveLineItems(classifier, textCatalog);
   return items?.find((item) => item.kind === 'provider')?.fixedNano;
 }
 
@@ -173,9 +168,10 @@ export interface EffortClassifierPick {
   /** The cheapest priceable engine-text model — the effort classifier. */
   readonly classifierModelId: string;
   /**
-   * The classifier call's worst-case billable reserve, with the prompt
-   * overhead rendered against the single pinned candidate — the same basis
-   * admission's smartModel reserve prices the node at.
+   * The classifier call's worst-case billable reserve, with the prompt overhead
+   * rendered against NO model list — the same basis admission's smartModel
+   * reserve prices an effort-only node at, and the same list the prompt will
+   * actually carry.
    */
   readonly classifierWorstCaseNanoUsd: bigint;
 }
@@ -190,14 +186,15 @@ export interface EffortClassifierPick {
  * effort itself.
  */
 export function pickEffortClassifier(
-  descriptors: readonly ModelDescriptor[],
-  pinned: ModelDescriptor
+  descriptors: readonly ModelDescriptor[]
 ): EffortClassifierPick | null {
   const classifier = descriptors
     .filter((descriptor) => isEngineTextModel(descriptor))
     .toSorted(ascendingByPrice)[0];
   if (classifier === undefined) return null;
-  const reserve = classifierWorstCaseNanoUsd(classifier, [pinned]);
+  // Effort-only: the model dimension is closed, so the classifier's prompt names
+  // no model and the reserve prices none.
+  const reserve = classifierWorstCaseNanoUsd(classifier, []);
   if (reserve === undefined) return null;
   return { classifierModelId: classifier.id, classifierWorstCaseNanoUsd: reserve };
 }

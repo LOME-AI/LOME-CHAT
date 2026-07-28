@@ -11,7 +11,7 @@ import {
   historyCharacterCount,
   imageConfigSchema,
   promptCharacterCount,
-  resolveFundingDecision,
+  resolveFunding,
   userOnlyMessageSchema,
   videoConfigSchema,
 } from '@hushbox/shared';
@@ -55,6 +55,7 @@ import {
   trialEligibility,
   trialMessageBillableNanoUsd,
   trialReasoningSelection,
+  turnInputs,
 } from './domain/index.js';
 import type { Context, Env } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
@@ -66,6 +67,7 @@ import type {
   WorkflowDefinition,
 } from '@hushbox/shared';
 import type { RunStartBody } from '@hushbox/realtime';
+import type { MultiModelTurnBuild } from './domain/index.js';
 import type { AppEnv } from '../../middleware/pipeline-manifest.js';
 import type {
   ChatRouteDeps,
@@ -340,17 +342,11 @@ function regenerateRejection(c: Context<AppEnv>, decision: RegenerateDecision): 
  * absent from the exposed catalog (`target === undefined`): the gate is a no-op
  * and the compile step refuses it as an unknown model.
  */
-/** The full send being priced: the prompt plus every resent history turn. */
-interface TrialSendMessage {
-  readonly prompt: string;
-  readonly history: readonly ChatHistoryMessage[];
-}
-
 function trialGateRejection(
   c: Context<AppEnv>,
   target: ModelDescriptor | undefined,
   exposedCatalog: readonly ModelDescriptor[],
-  message: TrialSendMessage
+  promptCharacterCount: number
 ): Response | null {
   if (target === undefined) return null;
   const verdict = trialEligibility(target, exposedCatalog, Date.now());
@@ -359,9 +355,11 @@ function trialGateRejection(
       ? c.json(createErrorResponse(ERROR_CODES.MEDIA_TRIAL_BLOCKED), 403)
       : c.json(createErrorResponse(ERROR_CODES.PREMIUM_REQUIRES_ACCOUNT), 403);
   }
-  // The actual message priced on a minimum basis (history + prompt tokens + a
-  // fixed minimum output allocation), BILLABLE (all-in) cost against the 1¢ cap.
-  const cost = trialMessageBillableNanoUsd(target, message.prompt, message.history);
+  // Priced on the SAME character count the compiled turn is budgeted against —
+  // system prompt and custom instructions included, not history-plus-prompt alone.
+  // The gate has to dominate the definition's own floor, and the system prompt is
+  // the term that made the two differ.
+  const cost = trialMessageBillableNanoUsd(target, promptCharacterCount);
   if (cost.isErr()) return respondDomainError(c, cost.error);
   if (cost.value > TRIAL_MESSAGE_COST_CAP_NANO_USD) {
     return c.json(createErrorResponse(ERROR_CODES.TRIAL_MESSAGE_TOO_EXPENSIVE), 402);
@@ -420,6 +418,10 @@ const RUN_REFUSAL_STATUS: Partial<Record<ErrorCode, ContentfulStatusCode>> = {
   [ERROR_CODES.CONCURRENT_RUN]: 409,
   [ERROR_CODES.IDEMPOTENCY_BODY_MISMATCH]: 409,
   [ERROR_CODES.INSUFFICIENT_ADMISSION]: 402,
+  // The run cap is a distinct CONDITION with its own copy, but the same
+  // refusal class and therefore the same status the collapsed code answered:
+  // splitting the wording must not silently move a client's status handling.
+  [ERROR_CODES.RUN_CAPACITY_REACHED]: 402,
   [ERROR_CODES.ADMISSION_UNAVAILABLE]: 503,
   [ERROR_CODES.TRIAL_CAPACITY_REACHED]: 429,
 };
@@ -535,13 +537,13 @@ async function tierGateRejection(
   // whether the caller can access premium. An owner-funded turn (payer 'owner')
   // is exempt, and a caller who can access premium is unlocked — both short out
   // before the catalog is read, keeping it off the paid hot path.
-  const baseline = resolveFundingDecision({ ...fundingInputs, isPremiumModel: false });
+  const baseline = resolveFunding({ ...fundingInputs, isPremiumModel: false });
   if (baseline.payer !== 'self' || baseline.premiumAllowed) return null;
   const catalog = await listDescriptors({ db: c.var.db, telemetry: c.var.logger });
   if (catalog.isErr()) return respondDomainError(c, catalog.error);
   const anyPremium = findTierLockedModel(models, catalog.value, false, Date.now()) !== undefined;
   // The refusal itself comes from the SAME core, now told the selection's tier.
-  const decision = resolveFundingDecision({ ...fundingInputs, isPremiumModel: anyPremium });
+  const decision = resolveFunding({ ...fundingInputs, isPremiumModel: anyPremium });
   if (decision.payer === 'refuse' && decision.refusalCode === 'MODEL_TIER_LOCKED') {
     return c.json(createErrorResponse(ERROR_CODES.MODEL_TIER_LOCKED), 403);
   }
@@ -735,35 +737,53 @@ async function turnDefinitionOrRefusal(
   // every text path (single, multi, smart model). Media turns price
   // deterministically per generation and take no token ceiling.
   turn: { readonly userId: string; readonly budget: TurnBudget }
-): Promise<WorkflowDefinition | Response> {
+): Promise<MultiModelTurnBuild | Response> {
   const reasoningRefusal = engagedReasoningRefusal(c, body);
   if (reasoningRefusal !== null) return reasoningRefusal;
   if (body.modality === 'image' || body.modality === 'video') {
-    return mediaDefinitionOrRefusal(c, body, body.modality, turn.budget);
+    return asTurnBuild(await mediaDefinitionOrRefusal(c, body, body.modality, turn.budget));
   }
   if (body.model === SMART_MODEL_ID) {
-    return smartModelDefinitionOrRefusal(c, deps, body, turn);
+    return asTurnBuild(await smartModelDefinitionOrRefusal(c, deps, body, turn));
   }
   const webSearchEnabled = body.webSearchEnabled === true;
   if (body.models === undefined && body.reasoningEffort === 'auto' && !webSearchEnabled) {
     const auto = await pinnedAutoDefinitionOrNull(c, body.model, turn.budget);
-    if (auto !== null) return auto;
+    if (auto !== null) return asTurnBuild(auto);
   }
-  const definition = await (body.models === undefined
-    ? buildTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, body.model, {
+  if (body.models === undefined) {
+    const single = await buildTurnDefinition(
+      { db: c.var.db, telemetry: c.var.logger },
+      body.model,
+      {
         webSearchEnabled,
         budget: turn.budget,
         ...reasoningEffortOption(body.reasoningEffort),
-      })
-    : buildMultiModelTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, [...body.models], {
-        webSearchEnabled,
-        budget: turn.budget,
-        ...reasoningEffortOption(body.reasoningEffort),
-      }));
-  return definition.match(
-    (value) => value,
+      }
+    );
+    return single.match(
+      (definition): MultiModelTurnBuild | Response => ({ definition }),
+      (error) => respondDomainError(c, error)
+    );
+  }
+  const multi = await buildMultiModelTurnDefinition(
+    { db: c.var.db, telemetry: c.var.logger },
+    [...body.models],
+    {
+      webSearchEnabled,
+      budget: turn.budget,
+      ...reasoningEffortOption(body.reasoningEffort),
+    }
+  );
+  return multi.match(
+    (build): MultiModelTurnBuild | Response => build,
     (error) => respondDomainError(c, error)
   );
+}
+
+/** A path that yields a bare definition (or a refusal) as the shared build shape. */
+function asTurnBuild(value: WorkflowDefinition | Response): MultiModelTurnBuild | Response {
+  return value instanceof Response ? value : { definition: value };
 }
 
 /**
@@ -809,11 +829,7 @@ function trialReasoningOrRefusal(
  */
 async function trialSmartModelDefinitionOrRefusal(
   c: Context<AppEnv>,
-  body: {
-    readonly prompt: string;
-    readonly reasoningEffort?: ReasoningEffortSelection | undefined;
-  },
-  history: ChatHistoryMessage[],
+  body: { readonly reasoningEffort?: ReasoningEffortSelection | undefined },
   budget: TurnBudget
 ): Promise<WorkflowDefinition | Response> {
   if (reasoningEngaged(body.reasoningEffort) && body.reasoningEffort !== 'auto') {
@@ -822,8 +838,6 @@ async function trialSmartModelDefinitionOrRefusal(
   const build = await buildTrialSmartModelTurnDefinition(
     { db: c.var.db, telemetry: c.var.logger },
     {
-      prompt: body.prompt,
-      history,
       now: new Date(),
       budget,
       classifyEffort: body.reasoningEffort === 'auto',
@@ -856,7 +870,7 @@ async function trialTurnDefinitionOrRefusal(
     funding: { kind: 'free', remainingNanoUsd: TRIAL_MESSAGE_COST_CAP_NANO_USD },
   };
   if (body.model === SMART_MODEL_ID) {
-    return trialSmartModelDefinitionOrRefusal(c, body, history, budget);
+    return trialSmartModelDefinitionOrRefusal(c, body, budget);
   }
   // The MODEL/AFFORDABILITY gate runs BEFORE the compile: a non-text model is
   // refused as MEDIA_TRIAL_BLOCKED rather than falling through to the compile
@@ -865,11 +879,9 @@ async function trialTurnDefinitionOrRefusal(
   const catalog = await listDescriptors({ db: c.var.db, telemetry: c.var.logger });
   if (catalog.isErr()) return respondDomainError(c, catalog.error);
   const target = catalog.value.find((descriptor) => descriptor.id === body.model);
-  // The gate prices the full resent history (its honest cost).
-  const gateRejection = trialGateRejection(c, target, catalog.value, {
-    prompt: body.prompt,
-    history,
-  });
+  // The gate prices the identical character count the budget above carries, so
+  // the gate and the compiled definition measure one prompt.
+  const gateRejection = trialGateRejection(c, target, catalog.value, budget.promptCharacterCount);
   if (gateRejection !== null) return gateRejection;
   const trialReasoning = trialReasoningOrRefusal(c, target, budget, body.reasoningEffort);
   if ('response' in trialReasoning) return trialReasoning.response;
@@ -1082,8 +1094,8 @@ export function createChatManifest(deps: ChatRouteDeps) {
             mode: 'paid',
             runKey,
             bodyHash,
-            definition,
-            inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.userMessage.content } },
+            definition: definition.definition,
+            inputs: turnInputs(definition, body.userMessage.content, history),
             history,
             userId: context.value.payerUserId,
             senderId: context.value.senderId,
@@ -1171,8 +1183,8 @@ export function createChatManifest(deps: ChatRouteDeps) {
             mode: 'paid',
             runKey,
             bodyHash,
-            definition,
-            inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.userMessage.content } },
+            definition: definition.definition,
+            inputs: turnInputs(definition, body.userMessage.content, history),
             history,
             // The OWNER pays (payerUserId); the guest is the sender.
             userId: context.value.payerUserId,
@@ -1279,8 +1291,8 @@ export function createChatManifest(deps: ChatRouteDeps) {
             mode: 'paid',
             runKey,
             bodyHash,
-            definition,
-            inputs: { [CHAT_TURN_INPUT]: { kind: 'text', text: body.userMessage.content } },
+            definition: definition.definition,
+            inputs: turnInputs(definition, body.userMessage.content, history),
             history,
             userId: context.value.payerUserId,
             senderId: context.value.senderId,

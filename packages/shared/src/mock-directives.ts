@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { CLASSIFIER_EFFORT_LEVELS } from './affordability/smart-model/effort-dimension.js';
+import { EFFORT_OPTION_IDS } from './affordability/dimensions/effort.js';
 
 /**
  * The deterministic `x-mock-*` inference knobs the smart-model / multi-model
@@ -33,8 +33,13 @@ import { CLASSIFIER_EFFORT_LEVELS } from './affordability/smart-model/effort-dim
  */
 export const mockDirectivesSchema = z.object({
   classifierResolution: z.string().min(1).optional(),
-  /** The canonical effort level the mock classifier's effort line emits. */
-  classifierEffort: z.enum(CLASSIFIER_EFFORT_LEVELS).optional(),
+  /**
+   * The effort option the mock classifier's effort line emits, in the effort
+   * dimension's own option-id vocabulary (the wire and storage words). The mock
+   * renders it as the user-facing label, because that is what the classifier is
+   * presented and therefore what the answer parser matches on.
+   */
+  classifierEffort: z.enum(EFFORT_OPTION_IDS).optional(),
   classifierFailure: z.literal(true).optional(),
   failingModels: z.array(z.string().min(1)).min(1).optional(),
   classifierDelayMs: z.number().int().positive().optional(),

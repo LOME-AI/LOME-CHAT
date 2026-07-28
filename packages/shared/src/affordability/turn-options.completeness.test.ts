@@ -25,11 +25,15 @@ import { MINIMUM_OUTPUT_TOKENS } from './constants.js';
 import { DIMENSION_IDS } from './dimensions/index.js';
 import { dimensionSupportFor } from './dimensions/derive.js';
 import { EFFORT_DIMENSION } from './dimensions/effort.js';
+import { modelId } from './model-id.js';
 import { nanoUSD } from './nano-usd.js';
 import { reasoningBudgetTokens } from './turn-arithmetic.js';
 import { getTurnOptions } from './turn-options.js';
 import type { PriceableModel } from './priceable-model.js';
 import type { CandidateModelEntry, PromptBasis, Selection } from './turn-types.js';
+
+/** A fixed instant: premium classification takes its clock as an argument. */
+const NOW_MS = 1_800_000_000_000;
 
 interface ModelShape {
   readonly modelId: string;
@@ -42,17 +46,18 @@ interface ModelShape {
 
 function modelOf(shape: ModelShape): PriceableModel {
   return {
-    modelId: shape.modelId,
+    modelId: modelId(shape.modelId),
     inputRateNanoUsd: nanoUSD(shape.inputRate),
     outputRateNanoUsd: nanoUSD(shape.outputRate),
     contextLength: shape.contextLength,
     providerCap: shape.providerCap,
+    releasedAtMs: 0,
     reasoning: shape.reasoning,
   };
 }
 
 const LADDER = modelOf({
-  modelId: 'vendor/ladder',
+  modelId: modelId('vendor/ladder'),
   inputRate: 80n,
   outputRate: 200n,
   contextLength: 200_000,
@@ -62,7 +67,7 @@ const LADDER = modelOf({
   },
 });
 const BUDGET_NATIVE = modelOf({
-  modelId: 'vendor/budget-native',
+  modelId: modelId('vendor/budget-native'),
   inputRate: 500n,
   outputRate: 1500n,
   contextLength: 128_000,
@@ -70,7 +75,7 @@ const BUDGET_NATIVE = modelOf({
   reasoning: {},
 });
 const MANDATORY = modelOf({
-  modelId: 'vendor/mandatory',
+  modelId: modelId('vendor/mandatory'),
   inputRate: 2000n,
   outputRate: 6000n,
   contextLength: 40_000,
@@ -82,7 +87,7 @@ const MANDATORY = modelOf({
 });
 /** providerCap 1,200 clamps every rung to 1,200 — the plateau. */
 const PLATEAU = modelOf({
-  modelId: 'vendor/plateau',
+  modelId: modelId('vendor/plateau'),
   inputRate: 300n,
   outputRate: 700n,
   contextLength: 6000,
@@ -92,7 +97,7 @@ const PLATEAU = modelOf({
   },
 });
 const PLAIN = modelOf({
-  modelId: 'vendor/plain',
+  modelId: modelId('vendor/plain'),
   inputRate: 700n,
   outputRate: 1400n,
   contextLength: 100_000,
@@ -110,7 +115,7 @@ const BASIS: PromptBasis = {
 };
 
 const SMART_SELECTION: Selection = {
-  answerSources: { models: ['vendor/ladder'], smartSlot: true },
+  answerSources: { models: [modelId('vendor/ladder')], smartSlot: true },
   modality: 'text',
   pinned: {},
   webSearch: false,
@@ -148,7 +153,7 @@ describe('the fixture is non-degenerate', () => {
       },
       BASIS,
       SMART_SELECTION,
-      CATALOG
+      { models: CATALOG, nowMs: NOW_MS }
     );
     const turnDimensions = options.admissible.sendable ? options.admissible.turnDimensions : [];
     expect(turnDimensions.map((dimension) => dimension.dimensionId)).toEqual(['effort']);
@@ -215,7 +220,7 @@ describe('presented is exactly feasible, over the admissible set', () => {
         },
         BASIS,
         SMART_SELECTION,
-        CATALOG
+        { models: CATALOG, nowMs: NOW_MS }
       );
       if (!options.admissible.sendable) continue;
       for (const entry of options.admissible.all) {
@@ -243,7 +248,7 @@ describe('presented is exactly feasible, over the admissible set', () => {
       },
       BASIS,
       LADDER_AS_CANDIDATE,
-      CATALOG
+      { models: CATALOG, nowMs: NOW_MS }
     );
     const poor = getTurnOptions(
       {
@@ -254,7 +259,7 @@ describe('presented is exactly feasible, over the admissible set', () => {
       },
       BASIS,
       LADDER_AS_CANDIDATE,
-      CATALOG
+      { models: CATALOG, nowMs: NOW_MS }
     );
     const rungsOf = (
       set: typeof rich.admissible

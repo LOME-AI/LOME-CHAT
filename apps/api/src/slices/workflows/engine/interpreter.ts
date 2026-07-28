@@ -4,6 +4,7 @@ import {
   DEADLINE_CLASS_MS,
   END_NODE_ID,
   ERROR_CODES,
+  isTurnClassifierNode,
   VALUE_STORE_BYTE_BUDGET_BYTES,
   zodFor,
 } from '@hushbox/shared';
@@ -218,6 +219,17 @@ type ProducedValue =
   | { readonly kind: 'step'; readonly step: NodeStep }
   | { readonly kind: 'result'; readonly result: Result<NodeRunSuccess, NodeRunError> };
 
+/**
+ * The outcome of committing a produced value: whether it reached its channel,
+ * and the step that follows. The two are separate because they are separate
+ * facts — a `skip`-declared node that failed validation continues the run (`ok`)
+ * having committed nothing, and only `committed` distinguishes it.
+ */
+interface CommitOutcome {
+  readonly committed: boolean;
+  readonly step: NodeStep;
+}
+
 /** Everything the ordered apply of a value node needs, bundled to keep params low. */
 interface ValueTarget {
   readonly compiledNode: CompiledNode;
@@ -259,6 +271,8 @@ class RunExecution {
   private circuitTripped = false;
   private deadlineAtMs: number;
   private streamSequence = 0;
+  /** Memoized: the walk is over the whole compiled graph and never changes mid-run. */
+  private consumed: ReadonlySet<string> | undefined;
 
   constructor(
     private readonly deps: WorkflowExecutorDeps,
@@ -585,7 +599,23 @@ class RunExecution {
     if (execution === undefined) {
       return { kind: 'step', step: this.unregisteredDefect() };
     }
-    const context = this.nodeContext(node.id, execution.streaming);
+    // Streaming is withheld from any node whose output is CONSUMED rather than
+    // displayed (`docs/BILLING.md` §Reasoning Effort 6): a classifier is an
+    // ordinary model call, and without this it would emit its routing internals
+    // into the user's conversation. The disposition is derived from the graph —
+    // the same consumption walk that decides which values settlement persists —
+    // so it cannot contradict what the definition already fixes, the way a
+    // declared per-node flag could.
+    // The turn's classifier is derived from the graph the same way — the
+    // decision reducer reading this call's answer IS what makes it the
+    // classifier — and what follows from it is a withholding, not a flag: the
+    // client's conversation context never reaches a routing call, so the
+    // request cannot bill input the classifier reserve did not price.
+    const context = this.nodeContext(
+      node.id,
+      execution.streaming && !this.consumedProducers().has(node.id),
+      isTurnClassifierNode(node, this.request.definition.nodes)
+    );
     try {
       return { kind: 'result', result: await execution.run(node, resolved, context) };
     } catch (error) {
@@ -618,7 +648,7 @@ class RunExecution {
     }
   }
 
-  /** Accrues, charges, and commits a produced value — the only ordered mutation. */
+  /** Accrues, commits, and charges a produced value — the only ordered mutation. */
   private applyValueResult(
     target: ValueTarget,
     result: Result<NodeRunSuccess, NodeRunError>
@@ -634,32 +664,57 @@ class RunExecution {
       }
       return this.applyNodeFailure(node, scope, result.error.reason);
     }
+    // ACCRUAL STAYS ABOVE THE COMMIT. Only BILLING is gated on the value
+    // committing (below); the spend accrues whatever becomes of the value,
+    // because the money left the platform either way. Moving this line into the
+    // committed branch to match the charge looks like tidying and is not: a model
+    // returning malformed output would then cost real provider money on every
+    // attempt while contributing nothing to the circuit that exists to stop that,
+    // so exposure would stop being bounded by `hold × K`. Absorbed-but-counted is
+    // the intended asymmetry, and it is pinned in `interpreter.test.ts`
+    // ("counts an uncommitted generation's spend toward the circuit").
     this.accruedNanoUsd += result.value.costNanoUsd;
-    this.collectCharge(chargeKey ?? node.id, result.value);
-    return this.commitValue(compiledNode, node, scope, result.value.value);
+    // BILLABLE ⟺ THE VALUE WAS COMMITTED, and this ordering is the whole
+    // guarantee: charge after the commit, only on success. A generation whose
+    // provider call succeeded but whose value fails `commitValue`'s runtime
+    // `zodFor(out)` gate is not in the successful subset settlement bills
+    // (`docs/BILLING.md` §Multi-Model 4) — a rejected output is our schema or a
+    // malformed model return, so the spend is absorbed as platform loss like a
+    // cost-circuit trip. Charging first made that unbillable spend billable the
+    // moment a run-level anchor existed to attach it to, and a `skip`-declared
+    // sibling reaches it without failing the run.
+    const commit = this.commitValue(compiledNode, node, scope, result.value.value);
+    if (commit.committed) this.collectCharge(chargeKey ?? node.id, result.value);
+    return commit.step;
   }
 
   /**
    * Lifts a modelCall's per-generation facts into a keyed settlement charge.
    * Only modelCall executions carry `billing`; transform/control successes
-   * produce no billable generation, so this is a no-op for them. A failing
-   * generation produces no content and is never charged (saved ⟺ billed).
+   * produce no billable generation, so this is a no-op for them.
+   *
+   * Its caller invokes it only for a generation whose value committed, which is
+   * the invariant settlement's run-level anchor rests on: a charge reaching
+   * settlement always names a generation the run accepted, so anchoring one that
+   * persisted no content OF ITS OWN — a consumed value, such as the turn's
+   * classifier — onto the run's content bills real, accepted work.
    */
   private collectCharge(key: string, success: NodeRunSuccess): void {
     const billing = success.billing;
     if (billing !== undefined) {
       // Only the primary answer charge carries the smartModel chip signal; the
       // display chip reads "the routing pipeline ran", never "the classifier
-      // billed", so a failed-and-fell-back classifier still badges the answer.
+      // billed", so an unrouted fallback answer still badges.
       this.pushCharge(key, billing, {
         billableCostNanoUsd: success.costNanoUsd,
         isEstimated: success.isEstimated ?? false,
         smartModelRan: success.smartModelRan === true,
       });
     }
-    // Auxiliary generations (smartModel's classifier) charge under the node
-    // key plus their suffix, so their DB idempotency keys never collide with
-    // the node's own; their costs were accrued mid-node via ctx.accrue.
+    // An auxiliary generation charges under the node key plus its suffix, so its
+    // DB idempotency key never collides with the node's own. No node execution
+    // produces one today — the turn's classifier is its own node with its own
+    // top-level key — so this loop is the mechanism without a producer.
     for (const auxiliary of success.auxiliaryCharges ?? []) {
       this.pushCharge(`${key}#${auxiliary.keySuffix}`, auxiliary.billing, {
         billableCostNanoUsd: auxiliary.billableCostNanoUsd,
@@ -687,26 +742,39 @@ class RunExecution {
       isEstimated: facts.isEstimated,
       ...(billing.tokens === undefined ? {} : { tokens: billing.tokens }),
       ...(billing.media === undefined ? {} : { media: billing.media }),
+      ...(billing.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: billing.reasoningEffort }),
       ...(facts.smartModelRan === true ? { smartModelRan: true } : {}),
     });
   }
 
-  /** Output validation is THE runtime type check: zodFor over the declared tag. */
+  /**
+   * Output validation is THE runtime type check: zodFor over the declared tag.
+   *
+   * `committed` says whether the value reached its channel, which a `NodeStep`
+   * alone cannot: a `skip`-declared node whose output failed validation also
+   * yields `ok`, and telling those apart is what keeps an unaccepted
+   * generation's spend unbilled.
+   */
   private commitValue(
     compiledNode: CompiledNode,
     node: Node,
     scope: Scope,
     value: unknown
-  ): NodeStep {
+  ): CommitOutcome {
     if (!zodFor(compiledNode.out, this.schemaRegistry).safeParse(value).success) {
-      return this.applyNodeFailure(node, scope);
+      return { committed: false, step: this.applyNodeFailure(node, scope) };
     }
     const stored = this.store.store(value);
     if (stored.isErr()) {
-      return { kind: 'failed', failure: { kind: 'byte-budget-exceeded' } };
+      return {
+        committed: false,
+        step: { kind: 'failed', failure: { kind: 'byte-budget-exceeded' } },
+      };
     }
     scope.channels.set(node.id, stored.value);
-    return { kind: 'ok' };
+    return { committed: true, step: { kind: 'ok' } };
   }
 
   private applyNodeFailure(node: Node, scope: Scope, code?: ErrorCode): NodeStep {
@@ -766,7 +834,8 @@ class RunExecution {
     if (reducer === undefined) {
       return this.unregisteredDefect();
     }
-    return this.commitValue(compiledNode, node, scope, reducer(resolved));
+    // A fanIn produces no billable generation, so only its step matters here.
+    return this.commitValue(compiledNode, node, scope, reducer(resolved)).step;
   }
 
   private async runFanOut(
@@ -803,12 +872,14 @@ class RunExecution {
     }
     if (this.circuitTripped) return { kind: 'failed', failure: { kind: 'cost-circuit-tripped' } };
     if (failed !== undefined) return failed.step;
+    // A fanOut's own value is the joined branch list, not a billable generation
+    // (each branch charged inside its own body), so only its step matters here.
     return this.commitValue(
       compiledNode,
       node,
       scope,
       branches.map((outcome) => outcome.value)
-    );
+    ).step;
   }
 
   /** Branch completion is a circuit boundary: a crossing kills the siblings. */
@@ -950,7 +1021,7 @@ class RunExecution {
     return { kind: 'dead' };
   }
 
-  private nodeContext(nodeId: string, streaming: boolean): NodeRunContext {
+  private nodeContext(nodeId: string, streaming: boolean, routingOnly = false): NodeRunContext {
     const mapper = this.request.mapFilePartFor?.(nodeId);
     const base = {
       values: this.store,
@@ -967,10 +1038,7 @@ class RunExecution {
           this.controller.abort();
         }
       },
-      ...(this.request.history === undefined ? {} : { history: this.request.history }),
-      ...(this.request.customInstructions === undefined
-        ? {}
-        : { customInstructions: this.request.customInstructions }),
+      ...clientContextFor(this.request, routingOnly),
       ...(mapper === undefined ? {} : { mapFilePart: mapper }),
     };
     if (!streaming) return base;
@@ -1006,6 +1074,11 @@ class RunExecution {
   }
 
   private consumedProducers(): ReadonlySet<string> {
+    this.consumed ??= this.walkConsumedProducers();
+    return this.consumed;
+  }
+
+  private walkConsumedProducers(): ReadonlySet<string> {
     const consumed = new Set<string>();
     for (const compiledNode of this.compiled.nodes.values()) {
       for (const input of compiledNode.inputs.values()) {
@@ -1037,12 +1110,13 @@ class RunExecution {
       });
       return undefined;
     } catch (error) {
-      // An all-branches-failed turn (every sibling failed → zero charges) is a
-      // real "providers unavailable" outcome, not an engine defect: the chat
-      // settlement hook signals it by throwing the typed AllBranchesFailedError
-      // sentinel (imported intra-slice from ./failures — never from the chat
-      // slice, which depends on the engine). It reroutes to UNAVAILABLE and is
-      // never captured to Sentry; every other throw is a genuine defect.
+      // An all-branches-failed turn — no branch produced content the turn could
+      // persist — is a real "providers unavailable" outcome, not an engine
+      // defect: the chat settlement hook signals it by throwing the typed
+      // AllBranchesFailedError sentinel (imported intra-slice from ./failures —
+      // never from the chat slice, which depends on the engine). It reroutes to
+      // UNAVAILABLE and is never captured to Sentry; every other throw is a
+      // genuine defect.
       if (error instanceof AllBranchesFailedError) {
         return { kind: 'all-branches-failed' };
       }
@@ -1142,6 +1216,29 @@ class RunExecution {
     }
     return found;
   }
+}
+
+/**
+ * The run-scoped client context a node's execution is handed: the conversation
+ * history and the custom instructions, plus the routing disposition itself.
+ *
+ * A ROUTING-ONLY node — the turn's classifier, derived from the graph — is
+ * handed neither, so a routing call cannot bill input the classifier reserve
+ * did not price. The disposition also travels as a value, because its third
+ * consequence is one no withholding can express: the provider request must
+ * suppress the base system preamble the adapter would otherwise add.
+ */
+function clientContextFor(
+  request: FlowStartRequest,
+  routingOnly: boolean
+): Partial<Pick<NodeRunContext, 'history' | 'customInstructions' | 'routingOnly'>> {
+  if (routingOnly) return { routingOnly: true };
+  return {
+    ...(request.history === undefined ? {} : { history: request.history }),
+    ...(request.customInstructions === undefined
+      ? {}
+      : { customInstructions: request.customInstructions }),
+  };
 }
 
 async function runContained(

@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { toBase64 } from '@hushbox/shared';
 import { createWebPushSender } from './push-webpush.js';
+import {
+  decryptAes128GcmWebPushBody,
+  generateSubscriptionKeys,
+} from './webpush/__tests__/rfc8291-decryptor.js';
 import type { VapidKeys } from './webpush/index.js';
+import type { PushEventPayload } from '@hushbox/shared';
 import type { PushMessage, PushRecipient } from '../ports/index.js';
 
 const CONVERSATION_ID = '018f4e2a-1c3b-7d4e-9f0a-1b2c3d4e5f60';
@@ -37,9 +42,7 @@ function webRecipient(userId: string, endpoint: string): PushRecipient {
 function message(recipients: readonly PushRecipient[]): PushMessage {
   return {
     recipients,
-    title: 'New message',
-    body: 'You have a new message in a conversation.',
-    data: { category: 'message', conversationId: CONVERSATION_ID },
+    payload: { category: 'message', conversationId: CONVERSATION_ID },
     collapseKey: ALIAS,
   };
 }
@@ -122,13 +125,50 @@ describe('createWebPushSender', () => {
 
     const delivery = await sender.send({
       recipients: [webRecipient('u1', 'https://push.example/aaa')],
-      title: 'New message',
-      body: 'body',
-      data: { category: 'message', conversationId: CONVERSATION_ID },
+      payload: { category: 'message', conversationId: CONVERSATION_ID },
     });
     expect(delivery.isOk()).toBe(true);
 
     expect(sent[0]?.headers['Topic']).toBeUndefined();
+  });
+
+  it('encrypts the two generic fields and nothing a payload object smuggles alongside them', async () => {
+    const receiver = await generateSubscriptionKeys();
+    const { fetchImpl, sent } = capturingFetch(201);
+    const sender = createWebPushSender({ vapid, fetchImpl });
+
+    // A structurally typed value satisfies `PushEventPayload` while carrying
+    // extra properties: assignment through a variable skips TypeScript's
+    // excess-property check, so the compiler cannot be the last line here.
+    const smuggling = {
+      category: 'message',
+      conversationId: CONVERSATION_ID,
+      preview: 'the actual message text',
+    } satisfies PushEventPayload & { preview: string };
+
+    const delivery = await sender.send({
+      recipients: [
+        {
+          platform: 'web',
+          userId: 'u1',
+          endpoint: 'https://push.example/aaa',
+          p256dh: toBase64(receiver.publicKey),
+          auth: toBase64(receiver.authSecret),
+        },
+      ],
+      payload: smuggling,
+      collapseKey: ALIAS,
+    });
+    expect(delivery.isOk()).toBe(true);
+
+    const body = sent[0]?.body;
+    if (body === undefined) throw new Error('no web push request was captured');
+    const plaintext = await decryptAes128GcmWebPushBody(new Uint8Array(body), receiver);
+
+    expect(JSON.parse(new TextDecoder().decode(plaintext))).toEqual({
+      category: 'message',
+      conversationId: CONVERSATION_ID,
+    });
   });
 
   it('prunes a 404 subscription by its endpoint', async () => {
@@ -184,19 +224,5 @@ describe('createWebPushSender', () => {
       deliveredTokens: [],
       deadTokens: [],
     });
-  });
-
-  it('rejects a message missing the generic payload', async () => {
-    const { fetchImpl } = capturingFetch(201);
-    const sender = createWebPushSender({ vapid, fetchImpl });
-
-    const result = await sender.send({
-      recipients: [webRecipient('u1', 'https://push.example/aaa')],
-      title: 'x',
-      body: 'y',
-      collapseKey: ALIAS,
-    });
-
-    expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 });

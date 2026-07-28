@@ -266,6 +266,39 @@ describe('PaymentForm', () => {
     });
   });
 
+  describe('negative-balance disclosure', () => {
+    // BILLING §Fee Structure: a top-up clears the deficit before it adds
+    // spendable funds, and that is stated at the point of payment rather than
+    // discovered from a balance that does not match the amount paid.
+    it('states the deficit and the net credit before submit', async () => {
+      balanceState.current = '-500000000';
+      const user = userEvent.setup();
+      renderWithProviders(<PaymentForm />);
+
+      await user.type(screen.getByLabelText(/amount/i), '5');
+
+      const disclosure = await screen.findByRole('status');
+      expect(disclosure).toHaveTextContent('$0.50');
+      expect(disclosure).toHaveTextContent('$4.50');
+    });
+
+    it('states the deficit alone until the amount covers it', async () => {
+      balanceState.current = '-500000000';
+      renderWithProviders(<PaymentForm />);
+
+      const disclosure = await screen.findByRole('status');
+      expect(disclosure).toHaveTextContent('$0.50');
+      expect(disclosure).not.toHaveTextContent('adds');
+    });
+
+    it('says nothing when the balance is not negative', () => {
+      balanceState.current = '10000000000';
+      renderWithProviders(<PaymentForm />);
+
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+  });
+
   describe('amount validation', () => {
     it('shows error when amount is empty on submit', async () => {
       const user = userEvent.setup();

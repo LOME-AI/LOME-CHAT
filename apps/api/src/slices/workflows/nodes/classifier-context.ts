@@ -113,8 +113,44 @@ function consumePass(directions: readonly DirectionState[], remainingGlobal: num
   return consumedThisPass;
 }
 
+/** What sits around the captured text in the emitted message. */
+const SECTION_LABEL_SUFFIX = ': ';
+const SECTION_SEPARATOR = '\n\n';
+
+/**
+ * How many of the budget's characters the message's own structure will spend —
+ * one label and its suffix per section that can appear, plus the separators
+ * between them.
+ *
+ * It is derived from the very labels and joiners `formatSections` emits, so
+ * there is no second copy of the figure to drift: a renamed label or a changed
+ * separator moves this with it. It is an upper bound rather than the exact size:
+ * a direction whose source is non-empty is counted even when its partner ends up
+ * swallowing the whole source and it emits no section, which spends a few
+ * characters of budget on a section that never appears. That direction is
+ * deliberate — the amount priced must never be smaller than the amount emitted.
+ */
+function envelopeChars(directions: readonly DirectionState[]): number {
+  const possible = directions.filter((dir) => dir.source.length > 0);
+  if (possible.length === 0) return 0;
+  const labels = possible.reduce(
+    (total, dir) => total + dir.label.length + SECTION_LABEL_SUFFIX.length,
+    0
+  );
+  return labels + SECTION_SEPARATOR.length * (possible.length - 1);
+}
+
+/**
+ * Fill the direction buffers within the budget the classifier reserve prices.
+ *
+ * The budget bounds the whole emitted message, not just the text inside it, so
+ * the structure's own characters come out of it first. Sizing the content at the
+ * full budget instead put the message over the priced amount by the envelope's
+ * size — a priced quantity computed from a constant rather than from the thing
+ * being priced.
+ */
 function fillCaptureBuffers(directions: readonly DirectionState[]): void {
-  let remainingGlobal = MAX_CLASSIFIER_CONTEXT_CHARS;
+  let remainingGlobal = MAX_CLASSIFIER_CONTEXT_CHARS - envelopeChars(directions);
   while (remainingGlobal > 0) {
     const consumed = consumePass(directions, remainingGlobal);
     if (consumed === 0) return;
@@ -126,10 +162,10 @@ function formatSections(directions: readonly DirectionState[]): string {
   const sections: string[] = [];
   for (const dir of directions) {
     if (dir.captured.length > 0) {
-      sections.push(`${dir.label}: ${dir.captured}`);
+      sections.push(`${dir.label}${SECTION_LABEL_SUFFIX}${dir.captured}`);
     }
   }
-  return sections.join('\n\n');
+  return sections.join(SECTION_SEPARATOR);
 }
 
 export function truncateForClassifier(input: TruncationInput): string {

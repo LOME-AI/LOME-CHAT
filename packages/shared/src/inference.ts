@@ -57,6 +57,17 @@ export const InferenceRequest = z.object({
    * Absent leaves the base system prompt untouched.
    */
   customInstructions: z.string().max(5000).optional(),
+  /**
+   * True when this call is ROUTING INTERNALS rather than an answer — today, the
+   * turn's classifier. It suppresses the base system preamble: the classifier
+   * reserve prices its truncated context plus the classifier template, and the
+   * preamble is neither, so a routing call that carried it would bill input no
+   * reservation covered (`docs/BILLING.md` §Reasoning Effort 6/7).
+   *
+   * It rides the REQUEST rather than the run context because the preamble is
+   * ADDED at the adapter; there is nothing for a caller to withhold.
+   */
+  routingOnly: z.boolean().optional(),
 });
 
 export type InferenceRequest = z.infer<typeof InferenceRequest>;

@@ -42,6 +42,7 @@ import {
   SMART_MODEL_ID,
   buildTurnSystemPrompt,
   historyCharacterCount,
+  isTurnClassifierNode,
   promptCharacterCount,
   toBase64,
   utcDayKey,
@@ -1479,9 +1480,10 @@ describe('chat route: POST /chat', () => {
     expect(answer.params['reasoning']).toBeUndefined();
   });
 
-  it('keeps multi-model + auto as N modelCall siblings with no reasoning wire (no composite)', async () => {
-    // The fan-out has no classifier stage: if this turn ever became a
-    // smartModel composite, the sibling generations would be dropped.
+  it('classifies multi-model + auto through a turn-level call, keeping N modelCall siblings', async () => {
+    // The fan-out stays N siblings — a smartModel composite would drop all but
+    // one generation — and gains ONE turn-level classifier whose answer every
+    // sibling reads.
     const modelA = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
     const modelB = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
     await seedGateModel(modelA, {
@@ -1514,11 +1516,19 @@ describe('chat route: POST /chat', () => {
       }
     );
     expect(res.status).toBe(201);
-    expect(captured[0]?.nodes.some((node) => node.type === 'smartModel')).toBe(false);
-    const siblings = captured[0]?.nodes.filter((node) => node.type === 'modelCall') ?? [];
+    const nodes = captured[0]?.nodes ?? [];
+    expect(nodes.some((node) => node.type === 'smartModel')).toBe(false);
+    const calls = nodes.filter((node) => node.type === 'modelCall');
+    const classifiers = calls.filter((node) => isTurnClassifierNode(node, nodes));
+    const siblings = calls.filter((node) => !isTurnClassifierNode(node, nodes));
+    // ONE classifier for the whole turn — per-sibling classification would cost
+    // N× the reserve — and the two answer siblings it decides for.
+    expect(classifiers).toHaveLength(1);
     expect(siblings).toHaveLength(2);
-    // The fan-out has no classifier stage yet and no static preference order
-    // exists, so a multi-choice `auto` leaves every sibling reasoning-free.
+    expect(nodes.filter((node) => node.type === 'fanIn')).toHaveLength(1);
+    // No reasoning wire is BUILT into a sibling: the level arrives on the
+    // decision at runtime and is carved into the cap already reserved for it,
+    // which is what keeps the priced definition the executed one.
     expect(siblings.map((node) => node.params['reasoning'])).toEqual([undefined, undefined]);
   });
 

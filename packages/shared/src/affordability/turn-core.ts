@@ -15,6 +15,20 @@
  *    rates (§Sharing one budget across siblings), then clamps each sibling by its
  *    OWN `providerCap` and `contextHeadroom`. A small-context sibling therefore
  *    never caps a large-context one.
+ *
+ *    **The order of those two steps is the specification's, and it is
+ *    authoritative for what any surface presents.** Solving unclamped and clamping
+ *    afterwards guarantees `Σᵢ cost(mᵢ, ceiling(mᵢ)) ≤ funding` with room to
+ *    spare whenever a sibling saturates: the saturated sibling's unused funding is
+ *    left unspent rather than reallocated. A solve that clamped inside the sum
+ *    would satisfy the same inequality while finding a larger shared count, so the
+ *    two orders are distinguishable only by amount — which is why the amounts on a
+ *    saturating-sibling turn are pinned in this directory
+ *    (`turn-options.shared-ceiling.test.ts`) rather than described here. An
+ *    execution path that sizes its own wire cap by the other order delivers MORE
+ *    than was presented; that is safe for the reservation and visible as a
+ *    presentation difference, and it is the presented figure that this module
+ *    owns.
  * 3. The priced basis is `Σᵢ cost(mᵢ, ceiling(mᵢ))` plus the turn-level fixed
  *    terms — never `T × Σrates`, which §Multi-Model 2 forbids.
  * 4. The smart slot takes the `MAX` over candidate arrangements, never the `Σ`:
@@ -40,10 +54,16 @@
 import { classifierIsBought, dimensionSupportFor, resolveOption } from './dimensions/derive.js';
 import { cheapestEffortOption, EFFORT_DIMENSION, EFFORT_OPTION_IDS } from './dimensions/effort.js';
 import { classifierLineItems, classifierReserveChars } from './estimate/classifier-line-item.js';
-import { estimateTokensForTier, outputCharsPerTokenForTier } from './estimate/pre-adapters.js';
+import { estimateTokensForTier } from './estimate/pre-adapters.js';
 import { evaluateManifest } from './estimate/reducers.js';
 import { webSearchLineItem } from './estimate/search-reservation.js';
-import { combinedRateNanoUsd, exceedsTrialBudget } from './premium.js';
+import {
+  combinedRateNanoUsd,
+  exceedsTrialBudget,
+  isPremiumModel,
+  premiumPriceThresholdNanoUsd,
+} from './premium.js';
+import { tierCanAccessPremium } from './tiers.js';
 import {
   budgetBuysTokens,
   callCostBasisForTier,
@@ -63,6 +83,8 @@ import { promptCharsOf, refusalPrecedence } from './turn-types.js';
 import type { CallCostBasis, CostContext } from './turn-arithmetic.js';
 import type { DimensionOption, OptionId } from './dimensions/index.js';
 import type { NanoLineItem } from './estimate/types.js';
+import type { ModelId } from './model-id.js';
+import type { NanoUSD } from './nano-usd.js';
 import type { PriceableModel } from './priceable-model.js';
 import type {
   Availability,
@@ -86,6 +108,15 @@ export interface CoreInput {
   /** The priceable catalog pool — every model with a usable rate and cap. */
   readonly catalog: readonly PriceableModel[];
   readonly tier: UserTier;
+  /**
+   * The reference instant for premium classification's recency leg. An
+   * argument, never read from the platform: this module holds no clock, so a
+   * produced set is reproducible from its inputs alone (§Affordability:
+   * "nothing in it reads a clock, a database, or a random source"). The purity
+   * test in this directory greps for the reach, so the rule is enforced rather
+   * than merely stated here.
+   */
+  readonly nowMs: number;
 }
 
 export interface CoreResult {
@@ -123,6 +154,14 @@ interface PricingContext {
   readonly classifierReserveNanoUsd: bigint;
   readonly webSearch: boolean;
   readonly effortPin: OptionId | undefined;
+  /**
+   * The premium price threshold of the exposed pool, resolved once per pass.
+   * `undefined` when the pool is too small to have one, which disables the price
+   * leg alone. It is a property of the catalog, never of the payer, so both
+   * passes of one call classify identically.
+   */
+  readonly premiumThresholdNanoUsd: NanoUSD | undefined;
+  readonly nowMs: number;
 }
 
 /**
@@ -198,39 +237,50 @@ function classifierEngine(catalog: readonly PriceableModel[]): PriceableModel | 
 }
 
 /**
- * The classifier's worst-case reserve, PROVIDER LEG ONLY. The classifier's
- * prompt and output are mid-flow values that never rest, so no storage is
- * reserved or charged for them on any tier (§Cost, §Reasoning Effort 7) — the
- * `kind === 'provider'` filter below is the mechanism that drops it, and nothing
- * else.
+ * The classifier's worst-case reserve. It has a provider leg and nothing else:
+ * the classifier's prompt and output are mid-flow values that never rest, so no
+ * storage is reserved or charged for them on any tier (§Cost, §Reasoning Effort
+ * 7). That is enforced where the item list is BUILT — `classifierLineItems`
+ * emits no storage item at all — so this function has no tier term to take.
+ *
+ * Two different lists, deliberately. The ENGINE is the cheapest model in the
+ * whole priceable catalog (§Smart Model 1) and must stay so: it is
+ * prompt-independent, which is what keeps the two option sets from choosing
+ * different engines and breaking `admissible ⊆ affordable`. The PROMPTED list is
+ * only what the classifier's own prompt will carry, and it bounds the input leg's
+ * character count. The executor's list is a subset of the prompted list passed
+ * here (a candidate list is the affordability-narrowed pool, and it lists no
+ * models at all when the model dimension is not open), and the overhead is
+ * monotone in that list — so the reserve is an upper bound by construction
+ * rather than by measurement.
  */
-function classifierReserveNanoUsd(catalog: readonly PriceableModel[], tier: UserTier): bigint {
+function classifierReserveNanoUsd(
+  catalog: readonly PriceableModel[],
+  promptedModels: readonly PriceableModel[]
+): bigint {
   const engine = classifierEngine(catalog);
   /* v8 ignore next -- unreachable: a classifier is only bought when some model
      contributes an open dimension, so the pool this engine comes from is
      non-empty by the time anything asks for a reserve */
   if (engine === undefined) return 0n;
-  const reserveChars = classifierReserveChars(catalog.map((model) => ({ id: model.modelId })));
-  const items = classifierLineItems(
-    {
-      pricing: {
-        inputPerToken: BigInt(engine.inputRateNanoUsd),
-        outputPerToken: BigInt(engine.outputRateNanoUsd),
-      },
-      // The classifier reserve is tier-independent on its input leg and always
-      // uses the conservative ratio, matching the admission-side derivation.
-      inputTokens: BigInt(estimateTokensForTier('trial', reserveChars)),
-      inputChars: reserveChars,
-    },
-    outputCharsPerTokenForTier(tier)
+  const reserveChars = classifierReserveChars(
+    promptedModels.map((model) => ({ id: model.modelId }))
   );
+  const items = classifierLineItems({
+    pricing: {
+      inputPerToken: BigInt(engine.inputRateNanoUsd),
+      outputPerToken: BigInt(engine.outputRateNanoUsd),
+    },
+    // The classifier reserve is tier-independent on its input leg and always
+    // uses the conservative ratio, matching the admission-side derivation.
+    inputTokens: BigInt(estimateTokensForTier('trial', reserveChars)),
+  });
   /* v8 ignore next -- a PriceableModel always carries both per-token rates and
      the counts above are derived, so the fail-closed channel cannot open here */
   if (!items.ok) return 0n;
-  const providerItems = items.value.filter((item) => item.kind === 'provider');
   // The whole reserve is fixed — nothing about it scales with the turn's output —
   // so folding at zero output tokens through the canonical reducer yields it.
-  return evaluateManifest({ items: providerItems }, 0n, { scope: 'all-in' });
+  return evaluateManifest({ items: items.value }, 0n, { scope: 'all-in' });
 }
 
 /**
@@ -323,6 +373,32 @@ function priceArrangement(
 }
 
 /**
+ * The tier axis: what this payer's TIER forbids, regardless of funding. A
+ * premium row is marked rather than removed, so the reason travels with it and a
+ * surface greys it with copy instead of hiding a model the payer could unlock
+ * (§Model Classification, §Notices & Refusals 1).
+ *
+ * The two premium reasons are different ACTIONS, which is why they are two codes:
+ * a payer with no account signs up, a payer with an account adds credit.
+ */
+function tierAxisBlock(model: PriceableModel, context: PricingContext): RefusalCode | undefined {
+  if (
+    !tierCanAccessPremium(context.tier) &&
+    isPremiumModel({
+      model,
+      priceThresholdNanoUsd: context.premiumThresholdNanoUsd,
+      nowMs: context.nowMs,
+    })
+  ) {
+    return context.tier === 'free' ? 'premium_requires_credit' : 'premium_requires_account';
+  }
+  if (context.tier === 'trial' && exceedsTrialBudget(model, context.promptChars)) {
+    return 'trial_message_cap_exceeded';
+  }
+  return undefined;
+}
+
+/**
  * Which of the ceiling's three bounds refused a token requirement, in the
  * precedence §Notices & Refusals 4 fixes: money first, then the prompt, then the
  * model's own output cap. One ladder, read by both the entry verdict and every
@@ -352,10 +428,10 @@ function boundReason(
  * is `eligible(m)`, and `feasible(m, e)` on a resolved pin. One predicate either
  * way.
  *
- * The trial per-message cap is tested FIRST, in the precedence
- * {@link REFUSAL_CODES} declares: it is a tier fact, not a funding one, so no
- * balance and no shorter answer clears it and a money reason would name an action
- * that cannot help (§Notices & Refusals 3, §Trial Usage).
+ * The tier axis is tested FIRST, in the precedence {@link REFUSAL_CODES}
+ * declares: a tier fact is not a funding one, so no balance and no shorter answer
+ * clears it and a money reason would name an action that cannot help
+ * (§Notices & Refusals 3, §Trial Usage).
  */
 function siblingBlock(
   model: PriceableModel,
@@ -363,9 +439,8 @@ function siblingBlock(
   context: PricingContext,
   effort: OptionId | undefined
 ): RefusalCode | undefined {
-  if (context.tier === 'trial' && exceedsTrialBudget(model, context.promptChars)) {
-    return 'trial_message_cap_exceeded';
-  }
+  const tierBlock = tierAxisBlock(model, context);
+  if (tierBlock !== undefined) return tierBlock;
   const gate = effortGate(model, effort);
   if (!gate.resolvable) return 'option_not_offered';
   const ceiling = ceilingIn(arrangement, model, context);
@@ -597,7 +672,7 @@ function classifierIsBoughtForTurn(
  */
 interface SiblingPlan {
   readonly pinnedModels: readonly PriceableModel[];
-  readonly unpriceableIds: readonly string[];
+  readonly unpriceableIds: readonly ModelId[];
   readonly candidatePool: readonly PriceableModel[];
   readonly classifierPool: readonly PriceableModel[];
   /**
@@ -617,7 +692,7 @@ function planSiblings(
   const byId = new Map(catalog.map((model) => [model.modelId, model]));
   const pinnedIds = selection.answerSources.models;
   const pinnedModels: PriceableModel[] = [];
-  const unpriceableIds: string[] = [];
+  const unpriceableIds: ModelId[] = [];
   for (const modelId of pinnedIds) {
     const model = byId.get(modelId);
     if (model === undefined) unpriceableIds.push(modelId);
@@ -665,6 +740,9 @@ function pricingContextFor(input: CoreInput, plan: SiblingPlan): PricingContext 
     plan.smartSlot,
     plan.classifierPool.length
   );
+  // The classifier's prompt lists the classifier-selectable pool exactly when
+  // the model dimension is open; an effort-only turn's classifier names no model.
+  const prompted = plan.smartSlot ? plan.classifierPool : [];
   return {
     fundingNanoUsd: input.fundingNanoUsd,
     tier,
@@ -672,9 +750,11 @@ function pricingContextFor(input: CoreInput, plan: SiblingPlan): PricingContext 
     inputTokens,
     promptChars: promptCharsOf(basis),
     inputStorageNanoUsd: inputStorageNanoUsd(basis, persists),
-    classifierReserveNanoUsd: classifierBought ? classifierReserveNanoUsd(catalog, tier) : 0n,
+    classifierReserveNanoUsd: classifierBought ? classifierReserveNanoUsd(catalog, prompted) : 0n,
     webSearch: selection.webSearch,
     effortPin,
+    premiumThresholdNanoUsd: premiumPriceThresholdNanoUsd(catalog),
+    nowMs: input.nowMs,
   };
 }
 

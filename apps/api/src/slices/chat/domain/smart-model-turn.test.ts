@@ -256,9 +256,8 @@ describe('Smart Model per-candidate caps keep the reserve within the balance (mo
   // paid tier → output storage 2 chars/token; input storage = prompt chars.
   const STORAGE = { outputCharsPerToken: 2, inputChars: budget.promptCharacterCount };
 
-  /** Mirrors `buildSmartModelTurnDefinition`'s paid path: per-candidate caps
-   * (from the storage-aware admission), no single node cap, storage-stamped. */
-  function paidDefinition() {
+  /** The admission pick this catalog, prompt and wallet produce. */
+  function paidCandidates() {
     const picked = buildSmartModelCandidates({
       descriptors: CATALOG,
       balanceNanoUsd: HUNDRED_USD,
@@ -266,6 +265,13 @@ describe('Smart Model per-candidate caps keep the reserve within the balance (mo
       storage: STORAGE,
     });
     if (picked === null) throw new Error('expected a buildable smart-model turn');
+    return picked;
+  }
+
+  /** Mirrors `buildSmartModelTurnDefinition`'s paid path: per-candidate caps
+   * (from the storage-aware admission), no single node cap, storage-stamped. */
+  function paidDefinition() {
+    const picked = paidCandidates();
     const { nodes, constraints } = createTurnCompileRegistries(snapshotResolver(CATALOG));
     const built = buildSmartModelTurn({
       classifierModelId: picked.classifierModelId,
@@ -307,6 +313,68 @@ describe('Smart Model per-candidate caps keep the reserve within the balance (mo
       storage: STORAGE,
     });
     expect(picked).toBeNull();
+  });
+
+  /**
+   * The paid definition restricted to ONE of its candidates, keeping that
+   * candidate's own stamped cap. A one-candidate slot opens no model dimension,
+   * so its reserve is the answer leg alone — the direct-pick figure. That is what
+   * makes the pool's reserve decomposable without re-deriving any of the
+   * estimator's arithmetic here.
+   */
+  /** The larger of two nano-USD figures; `Math.max` cannot take bigints. */
+  function larger(a: bigint, b: bigint): bigint {
+    return a > b ? a : b;
+  }
+
+  function soloReserve(modelId: string): bigint {
+    const pooled = paidDefinition().nodes[0];
+    if (pooled?.type !== 'smartModel') throw new Error('expected a smartModel node');
+    const only = pooled.candidates.find((candidate) => candidate.id === modelId);
+    if (only === undefined) throw new Error(`expected ${modelId} among the candidates`);
+    const solo = { ...paidDefinition(), nodes: [{ ...pooled, candidates: [only] }] };
+    return createEstimateRun(snapshotResolver(CATALOG))(solo)._unsafeUnwrap();
+  }
+
+  it('reserves the MAX over candidates plus one classifier reserve, never the Σ', () => {
+    const pooled = createEstimateRun(snapshotResolver(CATALOG))(paidDefinition())._unsafeUnwrap();
+    const cheap = soloReserve('cheap/classifier');
+    const wide = soloReserve('wide/pro');
+    const max = larger(cheap, wide);
+    // Exactly one candidate answers, so the pool's own legs contribute their MAX.
+    // The remainder above that MAX is one classifier reserve — a positive amount,
+    // and strictly less than a second answer leg would be.
+    expect(pooled).toBeGreaterThan(max);
+    expect(pooled).toBeLessThan(cheap + wide);
+    expect(pooled - max).toBeGreaterThan(0n);
+  });
+
+  it('sizes a pooled candidate exactly as a direct pick minus the classifier cost', () => {
+    // BILLING §Smart Model 8. Both arms price the SAME catalog and the SAME
+    // prompt, and the per-candidate cap is the one the pool stamped, so the whole
+    // difference between "in the pool" and "picked directly" must be the one
+    // classifier reserve the pool buys.
+    //
+    // The delta is asserted against the reserve the ADMISSION side computed
+    // independently, never against itself: `pooled - max` compared to
+    // `max + (pooled - max)` is an identity over any three numbers, and it would
+    // hold just as well if the estimator priced the reserve TWICE. Pinning the
+    // independent figure is what makes a double-priced reserve fail here.
+    const pooled = createEstimateRun(snapshotResolver(CATALOG))(paidDefinition())._unsafeUnwrap();
+    const cheap = soloReserve('cheap/classifier');
+    const wide = soloReserve('wide/pro');
+    const max = larger(cheap, wide);
+    expect(pooled - max).toBe(paidCandidates().classifierWorstCaseNanoUsd);
+    // The literal, so a silent move in either the reserve formula or the
+    // estimator's fold shows up as a number rather than as a passing identity:
+    // 4,943 reserve characters at 2 chars/token = 2,472 input tokens at 2n, plus
+    // the 2,048-token output cap at 3n. Provider legs only — a storage term
+    // creeping into the classifier reserve would break this equality, which is
+    // the other property it pins.
+    expect(pooled - max).toBe(11_088n);
+    // And the classifier's leg is small next to an answer leg — it prices a
+    // truncated context and a capped output, not a full turn.
+    expect(pooled - max).toBeLessThan(max);
   });
 });
 

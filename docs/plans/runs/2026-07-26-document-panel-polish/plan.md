@@ -14,6 +14,16 @@ block. This single defect produces two of the reported symptoms:
   theme — the "large grey rectangle from left to right".
 - Documents **collapse to content height** inside the iframe, so they occupy only the top of the panel.
 
+> **WITHDRAWN — the paragraph below is wrong.** P2 measured the real chain in Playwright: Chromium,
+> WebKit and Firefox **all** fill the iframe (644px) and still scroll raw source with **no class on the
+> wrapper at all**. Its isolated repro shows `height:100%` resolving against the nearest *definite*
+> ancestor, walking past an auto-height in-flow block in all three engines — so the CSS 2.1 rule this
+> paragraph assumed no longer holds. My own pre-planning probe recorded `innerHeight: 520` beside a
+> zero-height `body`, which was already direct evidence the iframe was sized correctly and only its
+> contents collapsed; I failed to read it. **P1's frame CSS is the entire fix for the founder's symptom.**
+> P2 implemented the class, went red/green, then reverted it rather than ship an inert class under a false
+> comment. Kept here because the reasoning error is worth seeing.
+
 **The panel's sizing chain is broken independently.** `document-panel.tsx:371` is a `<div>` with no
 className and no style, between the `flex-1 overflow-auto` scroll container and `DocumentContent`. It is
 a plain block at `height: auto`, so every `h-full`/`flex-1` below it — `RenderSandboxView` at `:377`, the

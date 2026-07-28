@@ -71,7 +71,8 @@ describe('useTierInfo', () => {
     expect(result.current!.tier).toBe('free');
     expect(result.current!.canAccessPremium).toBe(false);
     expect(result.current!.purchasedBalanceNanoUsd).toBe(0n);
-    expect(result.current!.freeAllowanceNanoUsd).toBe(1_000_000_000n);
+    // Not read from the balance endpoint (see use-tier-info.ts).
+    expect(result.current!.freeAllowanceNanoUsd).toBe(0n);
   });
 
   it('returns paid tier when authenticated with positive balance', () => {
@@ -151,6 +152,6 @@ describe('useTierInfo', () => {
     const { result } = renderHook(() => useTierInfo());
 
     expect(result.current!.purchasedBalanceNanoUsd).toBe(123_450_000_000n);
-    expect(result.current!.freeAllowanceNanoUsd).toBe(500_000_000n);
+    expect(result.current!.freeAllowanceNanoUsd).toBe(0n);
   });
 });

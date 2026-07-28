@@ -2,19 +2,45 @@ import * as React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { nanoPricePer1k, TEST_ID_BUILDERS, type Model } from '@hushbox/shared';
+import {
+  nanoPricePer1k,
+  noticeText,
+  TEST_ID_BUILDERS,
+  type Availability,
+  type Model,
+} from '@hushbox/shared';
 import { TouchDeviceOverrideContext } from '@hushbox/ui';
 import { useModelStore } from '@/stores/model';
 import { ModelSelectorModal } from '@/components/chat/model-selector/model-selector-modal';
-import { MODEL_BELOW_FLOOR_REASON } from '@/components/chat/model-selector/model-list-item';
 
-const { mockUseModelFloor } = vi.hoisted(() => ({ mockUseModelFloor: vi.fn() }));
+const { mockUseTurnOptions } = vi.hoisted(() => ({ mockUseTurnOptions: vi.fn() }));
+
+/**
+ * A produced pair whose per-row verdicts come from `verdict`. The picker reads
+ * `affordable.all`, so that is the only branch these tests need to shape.
+ */
+function turnOptionsWith(verdict: (modelId: string) => Availability): {
+  isPending: boolean;
+  options: { affordable: { all: { modelId: string; availability: Availability }[] } };
+} {
+  return {
+    isPending: false,
+    options: {
+      affordable: {
+        all: mockModels.map((model) => ({
+          modelId: model.id,
+          availability: verdict(model.id),
+        })),
+      },
+    },
+  };
+}
 
 // The floor hook pulls the billing query stack (spendable, budgets, tier)
 // into the modal tree; the modal's own behavior under test only needs the
 // per-model verdict, so the hook is mocked at the module seam.
-vi.mock('@/hooks/billing/use-prompt-budget', () => ({
-  useModelFloor: (...args: unknown[]) => mockUseModelFloor(...args) as unknown,
+vi.mock('@/hooks/billing/use-turn-options', () => ({
+  useTurnOptions: (...args: unknown[]) => mockUseTurnOptions(...args) as unknown,
 }));
 
 function withTouchOverride(override: boolean | null, children: React.ReactNode): React.JSX.Element {
@@ -136,7 +162,7 @@ describe('ModelSelectorModal', () => {
     switchToSingle();
     // Reset isMobile to desktop default so per-test overrides don't bleed.
     await setIsMobile(false);
-    mockUseModelFloor.mockReturnValue({ isPending: false, isBelowFloor: () => false });
+    mockUseTurnOptions.mockReturnValue(turnOptionsWith(() => ({ available: true })));
   });
 
   it('renders all models when open', () => {
@@ -394,7 +420,6 @@ describe('ModelSelectorModal', () => {
           models={pinnedModels}
           selectedIds={new Set(['openai/gpt-4o'])}
           onSelect={vi.fn()}
-          canAccessPremium={true}
           isAuthenticated={true}
         />
       );
@@ -411,7 +436,6 @@ describe('ModelSelectorModal', () => {
           models={pinnedModels}
           selectedIds={new Set(['openai/gpt-4o'])}
           onSelect={vi.fn()}
-          canAccessPremium={true}
           isAuthenticated={true}
         />
       );
@@ -428,7 +452,6 @@ describe('ModelSelectorModal', () => {
           models={pinnedModels}
           selectedIds={new Set(['openai/gpt-4o'])}
           onSelect={vi.fn()}
-          canAccessPremium={true}
           isAuthenticated={true}
         />
       );
@@ -448,7 +471,6 @@ describe('ModelSelectorModal', () => {
           models={pinnedModels}
           selectedIds={new Set(['openai/gpt-4o'])}
           onSelect={vi.fn()}
-          canAccessPremium={true}
           isAuthenticated={true}
         />
       );
@@ -469,7 +491,6 @@ describe('ModelSelectorModal', () => {
           models={pinnedModels}
           selectedIds={new Set(['openai/gpt-4o'])}
           onSelect={vi.fn()}
-          canAccessPremium={true}
           isAuthenticated={true}
         />
       );
@@ -544,7 +565,6 @@ describe('ModelSelectorModal', () => {
           models={imageModels}
           selectedIds={new Set()}
           onSelect={vi.fn()}
-          canAccessPremium={true}
           isAuthenticated={true}
           activeModality="image"
         />
@@ -567,7 +587,6 @@ describe('ModelSelectorModal', () => {
           models={videoModels}
           selectedIds={new Set()}
           onSelect={vi.fn()}
-          canAccessPremium={true}
           isAuthenticated={true}
           activeModality="video"
         />
@@ -1113,6 +1132,13 @@ describe('ModelSelectorModal', () => {
     });
 
     it('shows lock icon on premium models for non-paid users', () => {
+      mockUseTurnOptions.mockReturnValue(
+        turnOptionsWith((modelId) =>
+          modelId === 'openai/gpt-4-turbo'
+            ? { available: false, reason: 'premium_requires_account' }
+            : { available: true }
+        )
+      );
       render(
         <ModelSelectorModal
           open={true}
@@ -1121,7 +1147,6 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['anthropic/claude-3.5-sonnet'])}
           onSelect={vi.fn()}
           premiumIds={premiumIds}
-          canAccessPremium={false}
           isAuthenticated={false}
         />
       );
@@ -1139,7 +1164,6 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['anthropic/claude-3.5-sonnet'])}
           onSelect={vi.fn()}
           premiumIds={premiumIds}
-          canAccessPremium={false}
           isAuthenticated={false}
         />
       );
@@ -1157,7 +1181,6 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['anthropic/claude-3.5-sonnet'])}
           onSelect={vi.fn()}
           premiumIds={premiumIds}
-          canAccessPremium={true}
           isAuthenticated={true}
         />
       );
@@ -1167,6 +1190,13 @@ describe('ModelSelectorModal', () => {
     });
 
     it('shows "Sign up to access" for trial users on premium models', () => {
+      mockUseTurnOptions.mockReturnValue(
+        turnOptionsWith((modelId) =>
+          modelId === 'openai/gpt-4-turbo'
+            ? { available: false, reason: 'premium_requires_account' }
+            : { available: true }
+        )
+      );
       render(
         <ModelSelectorModal
           open={true}
@@ -1175,17 +1205,23 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['anthropic/claude-3.5-sonnet'])}
           onSelect={vi.fn()}
           premiumIds={premiumIds}
-          canAccessPremium={false}
           isAuthenticated={false}
         />
       );
 
       const gpt4Item = screen.getByTestId('model-item-openai/gpt-4-turbo');
       expect(gpt4Item).toHaveTextContent('Sign up');
-      expect(gpt4Item).toHaveTextContent('to access');
+      expect(gpt4Item).toHaveTextContent('to chat with premium models');
     });
 
     it('renders "Sign up" as a clickable link for trial users', () => {
+      mockUseTurnOptions.mockReturnValue(
+        turnOptionsWith((modelId) =>
+          modelId === 'openai/gpt-4-turbo'
+            ? { available: false, reason: 'premium_requires_account' }
+            : { available: true }
+        )
+      );
       render(
         <ModelSelectorModal
           open={true}
@@ -1194,7 +1230,6 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['anthropic/claude-3.5-sonnet'])}
           onSelect={vi.fn()}
           premiumIds={premiumIds}
-          canAccessPremium={false}
           isAuthenticated={false}
         />
       );
@@ -1206,6 +1241,13 @@ describe('ModelSelectorModal', () => {
     });
 
     it('shows "Top up to unlock" for free users on premium models', () => {
+      mockUseTurnOptions.mockReturnValue(
+        turnOptionsWith((modelId) =>
+          modelId === 'openai/gpt-4-turbo'
+            ? { available: false, reason: 'premium_requires_credit' }
+            : { available: true }
+        )
+      );
       render(
         <ModelSelectorModal
           open={true}
@@ -1214,17 +1256,23 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['anthropic/claude-3.5-sonnet'])}
           onSelect={vi.fn()}
           premiumIds={premiumIds}
-          canAccessPremium={false}
           isAuthenticated={true}
         />
       );
 
       const gpt4Item = screen.getByTestId('model-item-openai/gpt-4-turbo');
-      expect(gpt4Item).toHaveTextContent('Top up');
-      expect(gpt4Item).toHaveTextContent('to unlock');
+      expect(gpt4Item).toHaveTextContent('Add credit');
+      expect(gpt4Item).toHaveTextContent('to unlock them');
     });
 
     it('renders "Top up" as a clickable link for free users', () => {
+      mockUseTurnOptions.mockReturnValue(
+        turnOptionsWith((modelId) =>
+          modelId === 'openai/gpt-4-turbo'
+            ? { available: false, reason: 'premium_requires_credit' }
+            : { available: true }
+        )
+      );
       render(
         <ModelSelectorModal
           open={true}
@@ -1233,17 +1281,23 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['anthropic/claude-3.5-sonnet'])}
           onSelect={vi.fn()}
           premiumIds={premiumIds}
-          canAccessPremium={false}
           isAuthenticated={true}
         />
       );
 
-      const topUpLink = screen.getByRole('link', { name: 'Top up' });
+      const topUpLink = screen.getByRole('link', { name: 'Add credit' });
       expect(topUpLink).toHaveAttribute('href', '/billing');
       expect(topUpLink).toHaveClass('text-primary');
     });
 
     it('shows tinted overlay on premium models for non-paid users', () => {
+      mockUseTurnOptions.mockReturnValue(
+        turnOptionsWith((modelId) =>
+          modelId === 'openai/gpt-4-turbo'
+            ? { available: false, reason: 'premium_requires_account' }
+            : { available: true }
+        )
+      );
       render(
         <ModelSelectorModal
           open={true}
@@ -1252,7 +1306,6 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['anthropic/claude-3.5-sonnet'])}
           onSelect={vi.fn()}
           premiumIds={premiumIds}
-          canAccessPremium={false}
           isAuthenticated={false}
         />
       );
@@ -1270,7 +1323,6 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['anthropic/claude-3.5-sonnet'])}
           onSelect={vi.fn()}
           premiumIds={premiumIds}
-          canAccessPremium={true}
           isAuthenticated={true}
         />
       );
@@ -1293,7 +1345,6 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['anthropic/claude-3.5-sonnet'])}
           onSelect={onSelect}
           premiumIds={premiumIds}
-          canAccessPremium={false}
           isAuthenticated={false}
           isLinkGuest={true}
           onPremiumClick={onPremiumClick}
@@ -1321,7 +1372,6 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['openai/gpt-3.5-turbo'])}
           onSelect={vi.fn()}
           premiumIds={new Set(['openai/gpt-4-turbo'])}
-          canAccessPremium={false}
           isAuthenticated={false}
           isLinkGuest={true}
         />
@@ -1344,7 +1394,6 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['anthropic/claude-3.5-sonnet'])}
           onSelect={onSelect}
           premiumIds={premiumIds}
-          canAccessPremium={true}
         />
       );
 
@@ -1361,6 +1410,13 @@ describe('ModelSelectorModal', () => {
     });
 
     it('calls onPremiumClick instead of onSelect when canAccessPremium is false', async () => {
+      mockUseTurnOptions.mockReturnValue(
+        turnOptionsWith((modelId) =>
+          modelId === 'openai/gpt-4-turbo'
+            ? { available: false, reason: 'premium_requires_account' }
+            : { available: true }
+        )
+      );
       const user = userEvent.setup();
       const onSelect = vi.fn();
       const onOpenChange = vi.fn();
@@ -1373,7 +1429,6 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['anthropic/claude-3.5-sonnet'])}
           onSelect={onSelect}
           premiumIds={premiumIds}
-          canAccessPremium={false}
           onPremiumClick={onPremiumClick}
         />
       );
@@ -1399,7 +1454,6 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['openai/gpt-4-turbo'])}
           onSelect={onSelect}
           premiumIds={premiumIds}
-          canAccessPremium={false}
           onPremiumClick={onPremiumClick}
         />
       );
@@ -1418,6 +1472,13 @@ describe('ModelSelectorModal', () => {
     });
 
     it('calls onPremiumClick when premium model is single-clicked by non-paid user', async () => {
+      mockUseTurnOptions.mockReturnValue(
+        turnOptionsWith((modelId) =>
+          modelId === 'openai/gpt-4-turbo'
+            ? { available: false, reason: 'premium_requires_account' }
+            : { available: true }
+        )
+      );
       const user = userEvent.setup();
       const onSelect = vi.fn();
       const onOpenChange = vi.fn();
@@ -1430,7 +1491,6 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set(['anthropic/claude-3.5-sonnet'])}
           onSelect={onSelect}
           premiumIds={premiumIds}
-          canAccessPremium={false}
           onPremiumClick={onPremiumClick}
         />
       );
@@ -1539,6 +1599,16 @@ describe('ModelSelectorModal', () => {
       const interlacePremiumIds = new Set(['premium-1', 'premium-2']);
 
       it('interlaces basic and premium models during sorting for non-paid users', async () => {
+        // "Non-paid" is now expressed through the produced set: a premium row
+        // marked unavailable is what tells the picker this payer cannot reach
+        // premium, and that is what orders reachable models first.
+        mockUseTurnOptions.mockReturnValue(
+          turnOptionsWith((modelId) =>
+            premiumIds.has(modelId)
+              ? { available: false, reason: 'premium_requires_credit' }
+              : { available: true }
+          )
+        );
         const user = userEvent.setup();
         render(
           <ModelSelectorModal
@@ -1548,7 +1618,6 @@ describe('ModelSelectorModal', () => {
             selectedIds={new Set(['basic-1'])}
             onSelect={vi.fn()}
             premiumIds={interlacePremiumIds}
-            canAccessPremium={false}
             isAuthenticated={false}
           />
         );
@@ -1572,7 +1641,6 @@ describe('ModelSelectorModal', () => {
             selectedIds={new Set(['basic-1'])}
             onSelect={vi.fn()}
             premiumIds={interlacePremiumIds}
-            canAccessPremium={true}
             isAuthenticated={true}
           />
         );
@@ -1587,6 +1655,16 @@ describe('ModelSelectorModal', () => {
       });
 
       it('interlaces in descending order when sort is descending for non-paid users', async () => {
+        // "Non-paid" is now expressed through the produced set: a premium row
+        // marked unavailable is what tells the picker this payer cannot reach
+        // premium, and that is what orders reachable models first.
+        mockUseTurnOptions.mockReturnValue(
+          turnOptionsWith((modelId) =>
+            premiumIds.has(modelId)
+              ? { available: false, reason: 'premium_requires_credit' }
+              : { available: true }
+          )
+        );
         const user = userEvent.setup();
         render(
           <ModelSelectorModal
@@ -1596,7 +1674,6 @@ describe('ModelSelectorModal', () => {
             selectedIds={new Set(['basic-1'])}
             onSelect={vi.fn()}
             premiumIds={interlacePremiumIds}
-            canAccessPremium={false}
             isAuthenticated={true}
           />
         );
@@ -1678,7 +1755,6 @@ describe('ModelSelectorModal', () => {
             selectedIds={new Set(['basic-cheap'])}
             onSelect={vi.fn()}
             premiumIds={quickSelectPremiumIds}
-            canAccessPremium={false}
             isAuthenticated={true}
           />
         );
@@ -1696,7 +1772,6 @@ describe('ModelSelectorModal', () => {
             selectedIds={new Set(['basic-cheap'])}
             onSelect={vi.fn()}
             premiumIds={quickSelectPremiumIds}
-            canAccessPremium={false}
             isAuthenticated={true}
           />
         );
@@ -1714,7 +1789,6 @@ describe('ModelSelectorModal', () => {
             selectedIds={new Set(['basic-cheap'])}
             onSelect={vi.fn()}
             premiumIds={quickSelectPremiumIds}
-            canAccessPremium={false}
             isAuthenticated={false}
           />
         );
@@ -3112,10 +3186,13 @@ describe('ModelSelectorModal', () => {
     const LLAMA_ID = 'meta-llama/llama-3.1-70b-instruct';
 
     function greyLlama(): void {
-      mockUseModelFloor.mockReturnValue({
-        isPending: false,
-        isBelowFloor: (model: Model) => model.id === LLAMA_ID,
-      });
+      mockUseTurnOptions.mockReturnValue(
+        turnOptionsWith((modelId) =>
+          modelId === LLAMA_ID
+            ? { available: false, reason: 'insufficient_funds' }
+            : { available: true }
+        )
+      );
     }
 
     it('greys a below-floor model with the reason exposed to assistive tech', () => {
@@ -3131,17 +3208,17 @@ describe('ModelSelectorModal', () => {
       );
 
       const row = screen.getByTestId(TEST_ID_BUILDERS.modelItem(LLAMA_ID));
-      expect(row).toHaveAttribute('data-below-floor', 'true');
+      expect(row).toHaveAttribute('data-unavailable', 'true');
       const button = row.querySelector('button[aria-disabled="true"]');
       expect(button).not.toBeNull();
       const reasonId = button?.getAttribute('aria-describedby') ?? '';
       expect(document.querySelector(`[id="${reasonId}"]`)?.textContent).toBe(
-        MODEL_BELOW_FLOOR_REASON
+        noticeText('insufficient_funds')
       );
       // Other rows stay untouched.
       expect(
         screen.getByTestId(TEST_ID_BUILDERS.modelItem('openai/gpt-4-turbo'))
-      ).not.toHaveAttribute('data-below-floor');
+      ).not.toHaveAttribute('data-unavailable');
     });
 
     it('blocks selecting a below-floor model', async () => {
@@ -3171,7 +3248,13 @@ describe('ModelSelectorModal', () => {
     });
 
     it('keeps the premium lock separate: a premium-locked model shows the paywall, never the floor grey', async () => {
-      mockUseModelFloor.mockReturnValue({ isPending: false, isBelowFloor: () => true });
+      mockUseTurnOptions.mockReturnValue(
+        turnOptionsWith((modelId) =>
+          modelId === 'openai/gpt-4-turbo'
+            ? { available: false, reason: 'premium_requires_credit' }
+            : { available: false, reason: 'insufficient_funds' }
+        )
+      );
       const user = userEvent.setup();
       const onPremiumClick = vi.fn();
       render(
@@ -3182,13 +3265,14 @@ describe('ModelSelectorModal', () => {
           selectedIds={new Set()}
           onSelect={vi.fn()}
           premiumIds={new Set(['openai/gpt-4-turbo'])}
-          canAccessPremium={false}
           onPremiumClick={onPremiumClick}
         />
       );
 
       const premiumRow = screen.getByTestId(TEST_ID_BUILDERS.modelItem('openai/gpt-4-turbo'));
-      expect(premiumRow).not.toHaveAttribute('data-below-floor');
+      // Marked, not removed — and marked for the PREMIUM reason, which is what
+      // routes the click to the paywall below.
+      expect(premiumRow).toHaveAttribute('data-unavailable', 'true');
       await user.click(screen.getByText('GPT-4 Turbo'));
       expect(onPremiumClick).toHaveBeenCalledWith('openai/gpt-4-turbo');
     });
@@ -3259,7 +3343,7 @@ describe('ModelSelectorModal', () => {
       expect(onOpenChange).not.toHaveBeenCalledWith(false);
     });
 
-    it('threads the group funding context into the floor hook', () => {
+    it('threads the conversation that names the payer into the producer', () => {
       render(
         <ModelSelectorModal
           open={true}
@@ -3267,14 +3351,13 @@ describe('ModelSelectorModal', () => {
           models={mockModels}
           selectedIds={new Set()}
           onSelect={vi.fn()}
-          floorGroup={{ conversationId: 'conv-1', currentUserPrivilege: 'write' }}
+          floorGroup={{ conversationId: 'conv-1' }}
         />
       );
 
-      expect(mockUseModelFloor).toHaveBeenCalledWith({
-        isAuthenticated: true,
-        group: { conversationId: 'conv-1', currentUserPrivilege: 'write' },
-      });
+      expect(mockUseTurnOptions).toHaveBeenCalledWith(
+        expect.objectContaining({ conversationId: 'conv-1' })
+      );
     });
   });
 });

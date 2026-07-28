@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   CLASSIFIER_OUTPUT_TOKEN_CAP,
   MAX_CLASSIFIER_CONTEXT_CHARS,
-  STORAGE_COST_PER_CHARACTER_NANO,
+  buildTurnSystemPrompt,
   computeClassifierPromptOverhead,
   nanoUSD,
 } from '@hushbox/shared';
-import { outputCharsPerTokenForTier } from '@hushbox/shared/affordability/estimate/pre-adapters';
 import { applyMarkup } from '@hushbox/shared';
 import { callBillableNanoUsd } from './estimate.js';
 import { CLASSIFIER_CHARS_PER_TOKEN } from './smart-model-candidates.js';
@@ -22,6 +21,14 @@ const OLD_RELEASE_SECONDS = 1_600_000_000;
 
 /** A fixed reference clock (ms) well past the old releases. */
 const NOW_MS = 1_760_000_000_000;
+
+/**
+ * The built system prompt the send carries, which the candidate builder prices as
+ * part of every candidate's message base — the same characters the route measures
+ * the turn budget with. The boundary solves below therefore spend this many
+ * characters before the caller's own prompt buys a single input token.
+ */
+const SYSTEM_PROMPT_CHARS = buildTurnSystemPrompt({ now: new Date(NOW_MS) }).length;
 
 function descriptorOf(params: {
   readonly id: string;
@@ -113,17 +120,13 @@ function classifierReserveBase(
   );
   const reserveChars = MAX_CLASSIFIER_CONTEXT_CHARS + overheadChars;
   const inputTokens = Math.ceil(reserveChars / CLASSIFIER_CHARS_PER_TOKEN);
-  const provider = callBillableNanoUsd(classifier.pricing, {
+  // Provider cost and nothing else: the classifier's prompt and answer never
+  // rest, so the reserve carries no storage on any tier.
+  return callBillableNanoUsd(classifier.pricing, {
     kind: 'tokens',
     inputTokens,
     outputTokens: CLASSIFIER_OUTPUT_TOKEN_CAP,
   })._unsafeUnwrap();
-  const storage =
-    BigInt(reserveChars) * STORAGE_COST_PER_CHARACTER_NANO +
-    BigInt(CLASSIFIER_OUTPUT_TOKEN_CAP) *
-      BigInt(outputCharsPerTokenForTier('trial')) *
-      STORAGE_COST_PER_CHARACTER_NANO;
-  return provider + storage;
 }
 
 describe('buildTrialSmartModelCandidates', () => {
@@ -135,8 +138,7 @@ describe('buildTrialSmartModelCandidates', () => {
     const result = buildTrialSmartModelCandidates({
       descriptors: [MID, CHEAP, RECENT, IMAGE, VISION_INPUT, ...dearDecoys()],
       nowMs: NOW_MS,
-      prompt: 'hi',
-      history: [],
+      promptCharacterCount: SYSTEM_PROMPT_CHARS + 2,
     });
     expect(result?.classifierModelId).toBe('vision/model');
     expect(result?.candidates.map((candidate) => candidate.id)).toEqual([
@@ -156,8 +158,7 @@ describe('buildTrialSmartModelCandidates', () => {
         descriptorOf({ id: 'low/model', inputRate: 1n, outputRate: 1n }),
       ],
       nowMs: NOW_MS,
-      prompt: 'hi',
-      history: [],
+      promptCharacterCount: SYSTEM_PROMPT_CHARS + 2,
     });
     expect(result?.candidates.map((candidate) => candidate.id)).not.toContain('dear/model');
   });
@@ -166,8 +167,7 @@ describe('buildTrialSmartModelCandidates', () => {
     const result = buildTrialSmartModelCandidates({
       descriptors: [CHEAP, MID, ...dearDecoys()],
       nowMs: NOW_MS,
-      prompt: 'hi',
-      history: [],
+      promptCharacterCount: SYSTEM_PROMPT_CHARS + 2,
     });
     expect(result?.candidates[0]).toEqual({ id: 'cheap/model', description: 'cheap and fast' });
     expect(result?.candidates[1]).toEqual({ id: 'mid/model' });
@@ -185,8 +185,7 @@ describe('buildTrialSmartModelCandidates', () => {
     const result = buildTrialSmartModelCandidates({
       descriptors: [CHEAP, partial, ...dearDecoys()],
       nowMs: NOW_MS,
-      prompt: 'hi',
-      history: [],
+      promptCharacterCount: SYSTEM_PROMPT_CHARS + 2,
     });
     expect(result?.candidates.map((candidate) => candidate.id)).toEqual(['cheap/model']);
   });
@@ -198,52 +197,58 @@ describe('buildTrialSmartModelCandidates', () => {
     // the input token count: a fixed base at zero input plus a fixed increment per
     // input token (2 chars). Measure both from the real pricer, then solve for the
     // largest whole-token send whose reserve + message base still fits the 1¢ cap.
-    const base0 = trialMessageBillableNanoUsd(CHEAP, '', [])._unsafeUnwrap();
-    const perInputToken = trialMessageBillableNanoUsd(CHEAP, 'xx', [])._unsafeUnwrap() - base0;
+    const base0 = trialMessageBillableNanoUsd(CHEAP, 0)._unsafeUnwrap();
+    const perInputToken = trialMessageBillableNanoUsd(CHEAP, 2)._unsafeUnwrap() - base0;
     const maxTokens = Number((TRIAL_MESSAGE_COST_CAP_NANO_USD - reserve - base0) / perInputToken);
+    const promptCharacterCount = maxTokens * 2;
 
     const kept = buildTrialSmartModelCandidates({
       descriptors: [CHEAP, ...decoys],
       nowMs: NOW_MS,
-      prompt: 'x'.repeat(maxTokens * 2),
-      history: [],
+      promptCharacterCount,
     });
     expect(kept?.candidates.map((candidate) => candidate.id)).toEqual(['cheap/model']);
 
     const dropped = buildTrialSmartModelCandidates({
       descriptors: [CHEAP, ...decoys],
       nowMs: NOW_MS,
-      prompt: 'x'.repeat((maxTokens + 1) * 2),
-      history: [],
+      promptCharacterCount: promptCharacterCount + 2,
     });
     expect(dropped).toBeNull();
   });
 
-  it('prices the full resent history into each candidate’s message base', () => {
+  it('prices EVERY character the route counted, custom instructions included', () => {
+    // The gate's basis is the route's own `promptCharacterCount`, which folds in
+    // the system prompt, custom instructions, history and the input. A send that
+    // fits without instructions and not with them must be refused WITH them —
+    // this is the arm that admitted a 1.192¢ turn while pricing 0.98¢.
     const decoys = dearDecoys();
     const reserve = classifierReserveBase(CHEAP, [CHEAP]);
-    const base0 = trialMessageBillableNanoUsd(CHEAP, '', [])._unsafeUnwrap();
-    const perInputToken = trialMessageBillableNanoUsd(CHEAP, 'xx', [])._unsafeUnwrap() - base0;
+    const base0 = trialMessageBillableNanoUsd(CHEAP, 0)._unsafeUnwrap();
+    const perInputToken = trialMessageBillableNanoUsd(CHEAP, 2)._unsafeUnwrap() - base0;
     const maxTokens = Number((TRIAL_MESSAGE_COST_CAP_NANO_USD - reserve - base0) / perInputToken);
-    // The same cap-boundary send, split across history and the prompt (each side
-    // maxTokens chars → maxTokens input tokens total): still kept at the boundary,
-    // dropped once the history adds one more input token (two chars).
-    const sideChars = maxTokens;
-    const kept = buildTrialSmartModelCandidates({
-      descriptors: [CHEAP, ...decoys],
-      nowMs: NOW_MS,
-      prompt: 'x'.repeat(sideChars),
-      history: [{ role: 'user', content: 'x'.repeat(sideChars) }],
-    });
-    expect(kept?.candidates.map((candidate) => candidate.id)).toEqual(['cheap/model']);
+    const withoutInstructions = maxTokens * 2;
+    // 5,000 characters is `InferenceRequest.customInstructions`' current schema
+    // maximum, i.e. the worst case. The figure is not load-bearing: the property
+    // is that ANY character the route counted is priced here, so a smaller one
+    // would pin the same thing less sharply.
+    const withInstructions = withoutInstructions + 5000;
 
-    const dropped = buildTrialSmartModelCandidates({
-      descriptors: [CHEAP, ...decoys],
-      nowMs: NOW_MS,
-      prompt: 'x'.repeat(sideChars),
-      history: [{ role: 'user', content: 'x'.repeat(sideChars + 2) }],
-    });
-    expect(dropped).toBeNull();
+    expect(
+      buildTrialSmartModelCandidates({
+        descriptors: [CHEAP, ...decoys],
+        nowMs: NOW_MS,
+        promptCharacterCount: withoutInstructions,
+      })?.candidates.map((candidate) => candidate.id)
+    ).toEqual(['cheap/model']);
+
+    expect(
+      buildTrialSmartModelCandidates({
+        descriptors: [CHEAP, ...decoys],
+        nowMs: NOW_MS,
+        promptCharacterCount: withInstructions,
+      })
+    ).toBeNull();
   });
 
   it('returns null when the classifier reserve alone meets the cap, even with a free answer leg', () => {
@@ -254,8 +259,7 @@ describe('buildTrialSmartModelCandidates', () => {
     const result = buildTrialSmartModelCandidates({
       descriptors: [steep, ...dearDecoys()],
       nowMs: NOW_MS,
-      prompt: 'hi',
-      history: [],
+      promptCharacterCount: SYSTEM_PROMPT_CHARS + 2,
     });
     expect(result).toBeNull();
   });
@@ -264,15 +268,14 @@ describe('buildTrialSmartModelCandidates', () => {
     const result = buildTrialSmartModelCandidates({
       descriptors: [RECENT, IMAGE],
       nowMs: NOW_MS,
-      prompt: 'hi',
-      history: [],
+      promptCharacterCount: SYSTEM_PROMPT_CHARS + 2,
     });
     expect(result).toBeNull();
   });
 
   it('returns null for an empty catalog', () => {
     expect(
-      buildTrialSmartModelCandidates({ descriptors: [], nowMs: NOW_MS, prompt: 'hi', history: [] })
+      buildTrialSmartModelCandidates({ descriptors: [], nowMs: NOW_MS, promptCharacterCount: 2 })
     ).toBeNull();
   });
 
@@ -284,8 +287,7 @@ describe('buildTrialSmartModelCandidates', () => {
     const result = buildTrialSmartModelCandidates({
       descriptors: [rateless, MID, ...dearDecoys()],
       nowMs: NOW_MS,
-      prompt: 'hi',
-      history: [],
+      promptCharacterCount: SYSTEM_PROMPT_CHARS + 2,
     });
     expect(result?.classifierModelId).toBe('mid/model');
     expect(result?.candidates.map((candidate) => candidate.id)).not.toContain('free/model');
@@ -295,8 +297,7 @@ describe('buildTrialSmartModelCandidates', () => {
     const result = buildTrialSmartModelCandidates({
       descriptors: [CHEAP, ...dearDecoys()],
       nowMs: NOW_MS,
-      prompt: 'hi',
-      history: [],
+      promptCharacterCount: SYSTEM_PROMPT_CHARS + 2,
     });
     expect(result?.classifierModelId).toBe('cheap/model');
     expect(result?.candidates).toHaveLength(1);
@@ -306,8 +307,7 @@ describe('buildTrialSmartModelCandidates', () => {
     const result = buildTrialSmartModelCandidates({
       descriptors: [CHEAP, MID, ...dearDecoys()],
       nowMs: NOW_MS,
-      prompt: 'hi',
-      history: [],
+      promptCharacterCount: SYSTEM_PROMPT_CHARS + 2,
     });
     const expected = classifierReserveBase(CHEAP, [CHEAP, MID]);
     expect(result?.classifierWorstCaseNanoUsd).toBe(expected);

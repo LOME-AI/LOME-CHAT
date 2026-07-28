@@ -21,15 +21,16 @@ export interface UseResolveBillingInput {
  * Hook that resolves billing for the current message.
  *
  * Delegates the who-pays + premium decision to the shared
- * `resolveClientBilling()`, which routes through the same `resolveFundingDecision`
+ * `resolveClientBilling()`, which routes through the same `resolveFunding`
  * core the server uses — the same rule, not necessarily the same verdict: this
  * path feeds the core the turn's estimate and the server's payer freeze feeds it
  * none, so a group member whose headroom is positive but below the estimate
  * resolves to personal funds here while the server resolves the owner and
  * admission refuses the send. It layers the
- * client-only affordability / trial vocabulary on top. The paid affordability
- * input is the SERVED spendable (`useSpendable`) — cushion- and hold-aware,
- * never re-derived from the raw balance; the raw balance feeds only the
+ * client-only affordability / trial vocabulary on top. The affordability input
+ * for every authenticated tier is the SERVED spendable (`useSpendable`) —
+ * cushion- and hold-aware, never re-derived from the raw balance and never
+ * composed with a second figure; the raw balance feeds only the
  * negative-balance hard block and tier derivation.
  *
  * Returns a `ResolveBillingResult` — either a `fundingSource` or `{ fundingSource: 'denied', reason }`.
@@ -45,7 +46,6 @@ export function useResolveBilling(input: UseResolveBillingInput): ResolveBilling
         tier: tierInfo.tier,
         purchasedBalanceNanoUsd: tierInfo.purchasedBalanceNanoUsd,
         spendableNanoUsd,
-        freeAllowanceNanoUsd: tierInfo.freeAllowanceNanoUsd,
         isPremiumModel: input.isPremiumModel,
         estimatedMinimumCostNanoUsd: input.estimatedMinimumCostNanoUsd,
         ...(input.group !== undefined && { group: input.group }),
@@ -53,7 +53,6 @@ export function useResolveBilling(input: UseResolveBillingInput): ResolveBilling
     [
       tierInfo.tier,
       tierInfo.purchasedBalanceNanoUsd,
-      tierInfo.freeAllowanceNanoUsd,
       spendableNanoUsd,
       input.isPremiumModel,
       input.estimatedMinimumCostNanoUsd,

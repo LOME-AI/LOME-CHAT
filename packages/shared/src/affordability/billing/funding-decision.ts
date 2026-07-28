@@ -170,7 +170,7 @@ function selfFunding(
  * falls a signed-in member through to self-funding, carrying the payer-switch
  * reason.
  */
-export function resolveFundingDecision(inputs: FundingInputs): FundingDecision {
+export function resolveFunding(inputs: FundingInputs): FundingDecision {
   if (!inputs.isSolo) {
     const effective = groupHeadroom(
       inputs.memberRemainingNanoUsd,

@@ -13,7 +13,13 @@
  */
 
 import { resolveClassifierOutput } from '../smart-model/resolve.js';
-import type { DimensionSpec, DimensionSupport, OptionId, ReserveContribution } from './types.js';
+import type {
+  DimensionOption,
+  DimensionSpec,
+  DimensionSupport,
+  OptionId,
+  ReserveContribution,
+} from './types.js';
 import type { PriceableModel } from '../priceable-model.js';
 
 /**
@@ -211,9 +217,12 @@ export function partitionCeiling(
  * label is what makes the parser dimension-agnostic: adding a dimension adds a
  * line, and cannot break the parsing of the lines already there.
  */
-export function renderDimensionSection(spec: DimensionSpec, support: DimensionSupport): string {
-  requireNonEmpty(spec, support);
-  const labels = support.options.map((option) => option.label).join(' | ');
+export function renderDimensionSection(
+  spec: DimensionSpec,
+  presented: readonly DimensionOption[]
+): string {
+  requireNonEmpty(spec, { options: presented, mandatory: false });
+  const labels = presented.map((option) => option.label).join(' | ');
   return [
     spec.promptDescription,
     `Choose exactly one of: ${labels}`,
@@ -222,37 +231,88 @@ export function renderDimensionSection(spec: DimensionSpec, support: DimensionSu
 }
 
 /**
- * The dimension's own labelled line out of the classifier's answer, or the whole
- * answer when the call classified a single dimension and no label was emitted.
+ * The dimension's own labelled line out of the classifier's answer, or
+ * `undefined` when the answer carries no line for it.
+ *
+ * A multi-dimension answer is read by label, never by position: that is what
+ * lets a dimension be added without breaking the parsing of the lines already
+ * there (§Derived, never declared). A caller that classified ONE dimension may
+ * treat the whole answer as that dimension's own — {@link parseDimensionAnswer}
+ * does — but the distinction has to stay visible here, because "no line for this
+ * dimension" and "the whole answer is this dimension's" are different facts.
  */
-function answerTextFor(spec: DimensionSpec, rawAnswer: string): string {
+export function dimensionAnswerText(spec: DimensionSpec, rawAnswer: string): string | undefined {
   for (const line of rawAnswer.split('\n')) {
     const separator = line.indexOf(':');
     if (separator === -1) continue;
     if (line.slice(0, separator).trim().toLowerCase() !== spec.id) continue;
     return line.slice(separator + 1).trim();
   }
-  return rawAnswer.trim();
+  return undefined;
+}
+
+function answerTextFor(spec: DimensionSpec, rawAnswer: string): string {
+  return dimensionAnswerText(spec, rawAnswer) ?? rawAnswer.trim();
 }
 
 /**
- * Resolve a classifier answer to a PRESENTED option, matching on labels through
- * the same closed-set matcher the model dimension has always used. `undefined`
- * when nothing matches confidently — the caller applies the declared fallback,
- * so an answer naming something outside the presented set can never bind.
+ * Surrounding quotes, backticks, markdown emphasis and sentence punctuation —
+ * decoration a model wraps a one-word answer in, never part of the word. No
+ * option label contains any of these characters, so stripping them cannot
+ * swallow content.
+ */
+const LABEL_NOISE = /^[\s"'`*_([]+|[\s"'`*_)\].,;:!?]+$/g;
+
+/**
+ * Resolve a classifier answer to a PRESENTED option, matching by whichever rule
+ * the dimension's DECLARED domain makes sound. `undefined` when the answer names
+ * no presented option — the caller then applies the declared fallback, the
+ * cheapest presented option, so failing to match is the cheap direction.
+ *
+ * A **fixed literal domain** is a closed set of short words (`Min`, `Mid`,
+ * `Low`, `Max`), so the answer has to NAME one: equality, case-insensitive,
+ * after stripping formatting noise. Accepting a label found anywhere inside the
+ * answer would bind a real reasoning budget off ordinary prose — "minimal
+ * effort", "midway", "turbo-max-overdrive" all contain a label and name none.
+ *
+ * A **catalog domain** is identifiers, which are long and distinctive, so the
+ * fuzzy closed-set matcher applies: finding one inside prose is evidence, and
+ * tolerating a dropped provider prefix or a typo is what it exists for.
+ *
+ * The rule follows the declaration rather than the call site, so the soundness
+ * condition cannot be got wrong one caller at a time.
  */
 export function parseDimensionAnswer(
   spec: DimensionSpec,
   support: DimensionSupport,
   rawAnswer: string
 ): OptionId | undefined {
+  return dimensionOptionNamedBy(spec, support.options, rawAnswer);
+}
+
+/**
+ * {@link parseDimensionAnswer} over a bare option list: the same matching rules,
+ * for a caller holding the options PRESENTED FOR A TURN rather than one model's
+ * own support. One implementation, so a turn-level resolution and a per-model one
+ * cannot disagree about what an answer named.
+ */
+export function dimensionOptionNamedBy(
+  spec: DimensionSpec,
+  presented: readonly DimensionOption[],
+  rawAnswer: string
+): OptionId | undefined {
   const text = answerTextFor(spec, rawAnswer);
-  const matched = resolveClassifierOutput(
-    text,
-    support.options.map((option) => option.label)
-  );
-  if (matched === null) return undefined;
-  return support.options.find((option) => option.label === matched)?.optionId;
+  if (optionDomain(spec) === undefined) {
+    const matched = resolveClassifierOutput(
+      text,
+      presented.map((option) => option.label)
+    );
+    if (matched === null) return undefined;
+    return presented.find((option) => option.label === matched)?.optionId;
+  }
+  const named = text.replaceAll(LABEL_NOISE, '').toLowerCase();
+  if (named.length === 0) return undefined;
+  return presented.find((option) => option.label.toLowerCase() === named)?.optionId;
 }
 
 /**

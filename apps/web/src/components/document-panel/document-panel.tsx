@@ -337,11 +337,13 @@ export function DocumentPanel({
       />
 
       <div data-testid={TEST_IDS.documentPanelScroll} className="flex-1 overflow-auto">
-        {/* `h-full` is what a rendered document sizes against: the percentage
-            heights below it — the sandbox view and its iframe — resolve against
-            this box, and an `auto` height here resolves them to nothing. Source
-            taller than the panel overflows it visibly and scrolls in the box
-            above, which is why nothing here clips. */}
+        {/* `h-full` is load-bearing, not cosmetic: the sandbox iframe is a
+            replaced element, so when this wrapper is auto-height the `h-full`
+            below it resolves to auto, the iframe's `flex-1` basis cannot
+            resolve against an indefinite main size, and the frame falls back to
+            its 300x150 intrinsic size — a rendered document ends up 150px tall
+            however tall the panel is. Taller content still scrolls, on the
+            `overflow-auto` above. */}
         <div className="h-full">
           {/* Keyed by the selection, not the document id: opening another
               document remounts the content, tearing the sandbox iframe down and

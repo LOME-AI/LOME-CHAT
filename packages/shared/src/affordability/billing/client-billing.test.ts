@@ -6,7 +6,7 @@ import {
   type ClientBillingInput,
   type ResolveBillingResult,
 } from './client-billing.js';
-import { resolveFundingDecision } from './funding-decision.js';
+import { resolveFunding } from './funding-decision.js';
 
 const NANO_PER_CENT = 10_000_000n;
 
@@ -16,7 +16,6 @@ function input(overrides: Partial<ClientBillingInput>): ClientBillingInput {
     purchasedBalanceNanoUsd: 1000n * NANO_PER_CENT,
     // Served spendable: balance + cushion − holds; defaults to balance + 50¢.
     spendableNanoUsd: 1050n * NANO_PER_CENT,
-    freeAllowanceNanoUsd: 0n,
     isPremiumModel: false,
     estimatedMinimumCostNanoUsd: 10n * NANO_PER_CENT,
     ...overrides,
@@ -78,8 +77,7 @@ describe('resolveClientBilling — self-funding vocabulary', () => {
         input({
           tier: 'free',
           purchasedBalanceNanoUsd: 0n,
-          spendableNanoUsd: 50n * NANO_PER_CENT,
-          freeAllowanceNanoUsd: 100n * NANO_PER_CENT,
+          spendableNanoUsd: 100n * NANO_PER_CENT,
           estimatedMinimumCostNanoUsd: 10n * NANO_PER_CENT,
         })
       )
@@ -94,8 +92,7 @@ describe('resolveClientBilling — self-funding vocabulary', () => {
         input({
           tier: 'free',
           purchasedBalanceNanoUsd: 0n,
-          spendableNanoUsd: 50n * NANO_PER_CENT,
-          freeAllowanceNanoUsd: 10n * NANO_PER_CENT - 1n,
+          spendableNanoUsd: 10n * NANO_PER_CENT - 1n,
           estimatedMinimumCostNanoUsd: 10n * NANO_PER_CENT,
         })
       )
@@ -111,8 +108,7 @@ describe('resolveClientBilling — self-funding vocabulary', () => {
         input({
           tier: 'free',
           purchasedBalanceNanoUsd: 0n,
-          spendableNanoUsd: 50n * NANO_PER_CENT,
-          freeAllowanceNanoUsd: 10n * NANO_PER_CENT,
+          spendableNanoUsd: 10n * NANO_PER_CENT,
           estimatedMinimumCostNanoUsd: 10n * NANO_PER_CENT,
         })
       )
@@ -125,9 +121,29 @@ describe('resolveClientBilling — self-funding vocabulary', () => {
         input({
           tier: 'free',
           purchasedBalanceNanoUsd: 0n,
-          spendableNanoUsd: 50n * NANO_PER_CENT,
-          freeAllowanceNanoUsd: 0n,
+          spendableNanoUsd: 0n,
           estimatedMinimumCostNanoUsd: 10n * NANO_PER_CENT,
+        })
+      )
+    ).toEqual<ResolveBillingResult>({
+      fundingSource: 'denied',
+      reason: 'insufficient_free_allowance',
+    });
+  });
+
+  it('free tier whose allowance is reserved by a run in flight → insufficient_free_allowance', () => {
+    // The served figure is hold-aware: 50¢ of allowance with 40¢ reserved by
+    // this payer's own run leaves 10¢, which cannot cover a 20¢ turn. A
+    // hold-blind reading offers a send admission then refuses — the free-tier
+    // half of the one-verdict rule, and the reason this arm reads the served
+    // number rather than a separately fetched allowance.
+    expect(
+      resolveClientBilling(
+        input({
+          tier: 'free',
+          purchasedBalanceNanoUsd: 0n,
+          spendableNanoUsd: 10n * NANO_PER_CENT,
+          estimatedMinimumCostNanoUsd: 20n * NANO_PER_CENT,
         })
       )
     ).toEqual<ResolveBillingResult>({
@@ -405,7 +421,7 @@ describe('deriveClientFundingInputs — routes through the shared core', () => {
   it('a solo positive-balance caller resolves to self/purchased with premium allowed', () => {
     const fundingInputs = deriveClientFundingInputs(input({ tier: 'paid' }));
     expect(fundingInputs.isSolo).toBe(true);
-    expect(resolveFundingDecision(fundingInputs)).toEqual({
+    expect(resolveFunding(fundingInputs)).toEqual({
       payer: 'self',
       walletKind: 'purchased',
       premiumAllowed: true,
@@ -425,7 +441,7 @@ describe('deriveClientFundingInputs — routes through the shared core', () => {
       })
     );
     expect(fundingInputs.isSolo).toBe(false);
-    expect(resolveFundingDecision(fundingInputs)).toEqual({
+    expect(resolveFunding(fundingInputs)).toEqual({
       payer: 'owner',
       walletKind: 'purchased',
       premiumAllowed: true,
@@ -442,7 +458,7 @@ describe('deriveClientFundingInputs — routes through the shared core', () => {
       })
     );
     expect(fundingInputs.isGuest).toBe(true);
-    expect(resolveFundingDecision(fundingInputs)).toEqual({
+    expect(resolveFunding(fundingInputs)).toEqual({
       payer: 'refuse',
       refusalCode: 'GROUP_BUDGET_EXHAUSTED',
     });
@@ -553,7 +569,6 @@ describe('payerSizingTier — owner-funded means owner-priced (BILLING §Group F
     const base = input({
       tier: 'free',
       purchasedBalanceNanoUsd: 0n,
-      freeAllowanceNanoUsd: 0n,
       group: {
         effectiveRemainingNanoUsd: 100n * NANO_PER_CENT,
         ownerBalanceNanoUsd: 1000n * NANO_PER_CENT,

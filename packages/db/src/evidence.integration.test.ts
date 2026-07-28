@@ -45,10 +45,6 @@ describe('evidence', () => {
       expect(SERVICE_NAMES.BILLING_MISMATCH).toBe('billing-mismatch');
     });
 
-    it('exports the resend email service name', () => {
-      expect(SERVICE_NAMES.RESEND).toBe('resend');
-    });
-
     it('exports the openrouter service name alongside the existing ai-gateway name', () => {
       expect(SERVICE_NAMES.OPENROUTER).toBe('openrouter');
       expect(SERVICE_NAMES.AI_GATEWAY).toBe('ai-gateway');

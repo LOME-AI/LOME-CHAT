@@ -1,5 +1,20 @@
 import { z } from 'zod';
 
+/**
+ * The on-device TTS voice ids, in display order. Single source of truth: the
+ * speech engine's voice union and its voice-metadata list both derive from
+ * this array, so a persisted preference and the engine cannot disagree.
+ */
+export const TTS_VOICE_IDS = [
+  'af_heart',
+  'am_michael',
+  'bf_emma',
+  'bm_george',
+  'af_nicole',
+] as const;
+
+export type TtsVoice = (typeof TTS_VOICE_IDS)[number];
+
 export const accessibilityPreferencesSchema = z.object({
   version: z.literal(1),
 
@@ -26,9 +41,7 @@ export const accessibilityPreferencesSchema = z.object({
 
   // Audio
   ttsEnabled: z.boolean().default(false),
-  ttsVoice: z
-    .enum(['af_heart', 'am_michael', 'bf_emma', 'bm_george', 'af_nicole'])
-    .default('af_heart'),
+  ttsVoice: z.enum(TTS_VOICE_IDS).default('af_heart'),
   streamChatAloud: z.boolean().default(false),
   muteSounds: z.boolean().default(false),
 

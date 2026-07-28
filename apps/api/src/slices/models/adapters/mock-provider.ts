@@ -2,13 +2,13 @@ import {
   CLASSIFIER_EFFORT_DIMENSION_MARKER,
   CLASSIFIER_MODEL_DIMENSION_MARKER,
   CLASSIFIER_SYSTEM_PROMPT_MARKER,
+  REASONING_EFFORT_LABELS,
   ReasoningWire,
   SMART_MODEL_ID,
   callShapeFamilyFor,
   getSupportedVideoDurations,
   mockDirectivesSchema,
 } from '@hushbox/shared';
-import { CHARS_PER_TOKEN_STANDARD } from '@hushbox/shared/affordability/constants';
 import {
   InferenceError,
   invalidRequestError,
@@ -54,9 +54,16 @@ export type { MockDirectives } from '@hushbox/shared';
  * conversation runtime selects this mock — with those directives — per run.
  */
 
-/** Coarse token estimate; deterministic and never zero (finish usage is > 0).
- * The shared standard constant is the single source (equals 4). */
-const CHARS_PER_TOKEN = CHARS_PER_TOKEN_STANDARD;
+/**
+ * This fake provider's own synthetic tokenization: deterministic and never zero
+ * (finish usage is > 0). It is NOT the money layer's tier estimation ratio and
+ * carries no obligation to track it — the tier ratio sizes a reservation against
+ * a real tokenizer, while this invents a plausible count for a provider that
+ * does not tokenize at all. Equal values today are a coincidence, not a
+ * contract. This mock prices itself through the inline cost below, never
+ * through this count.
+ */
+const CHARS_PER_TOKEN = 4;
 /** A tiny non-zero inline cost so settlement bills authoritative (not estimated). */
 const MOCK_GENERATION_COST_USD = 0.000_001;
 /**
@@ -458,16 +465,25 @@ async function* classifierStream(ctx: MockContext): AsyncGenerator<InferenceEven
   // no-prompt-coupling contract as the base marker). A legacy prompt carrying
   // neither dimension marker is model routing.
   const { model, effort } = classifierDimensionsOf(request);
+  // One labelled line per dimension, exactly as the shared prompt instructs:
+  // the answer parser reads by label, never by position.
   const lines: string[] = [];
   if (model) {
     // The routing choice: the directive, else the classifier's own model id —
     // by construction the cheapest candidate, which the resolver matches
     // exactly, so the default deterministically routes to the cheapest.
-    lines.push(directives.classifierResolution ?? request.model);
+    lines.push(`model: ${directives.classifierResolution ?? request.model}`);
   }
-  // The effort choice: the directive, else the canonical middle level — the
-  // same value the real stage falls back to, keeping runs deterministic.
-  if (effort) lines.push(directives.classifierEffort ?? 'medium');
+  if (effort) {
+    // The effort choice: the directive, else the canonical middle rung. It is
+    // the MOCK's own deterministic answer, deliberately not the product's
+    // fallback — a mock that answered what the reducer falls back to could not
+    // tell "the classifier chose" from "nothing was chosen". Emitted as the
+    // user-facing LABEL, because the classifier is presented labels and the
+    // answer parser matches on them.
+    const option = directives.classifierEffort ?? 'medium';
+    lines.push(`effort: ${REASONING_EFFORT_LABELS[option]}`);
+  }
   const answer = lines.join('\n');
   yield* textDeltas(answer, 0);
   yield finishEvent(promptTextOf(request), answer, ctx.mintGenerationId());

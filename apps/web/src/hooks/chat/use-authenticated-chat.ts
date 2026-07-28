@@ -292,9 +292,23 @@ function attachModelErrorsToMessages(
   }
 }
 
-/** Refusal codes a user can immediately retry (transient admission/serialization). */
+/**
+ * Refusal codes a user can immediately retry (transient admission/serialization).
+ *
+ * Membership must agree with the code's own copy: every entry here renders a
+ * sentence telling the user to try again, and a code whose copy says that while
+ * sitting outside this set removes the affordance it just promised. `CONCURRENT_RUN`
+ * and `RUN_CAPACITY_REACHED` are the pair to reason from — both resolve the moment
+ * a run in flight finishes.
+ *
+ * Nothing type-checks membership, so a code renamed or split upstream drops out
+ * of this set silently. That has now happened twice to code-keyed collections
+ * for one wording change; a sweep after any refusal-code change must read this
+ * set explicitly rather than trusting the compiler.
+ */
 const RETRYABLE_REFUSAL_CODES = new Set([
   'CONCURRENT_RUN',
+  'RUN_CAPACITY_REACHED',
   'INSUFFICIENT_ADMISSION',
   'ADMISSION_UNAVAILABLE',
   'RATE_LIMITED',

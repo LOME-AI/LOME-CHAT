@@ -135,6 +135,23 @@ describe('buildWorkflow — node construction', () => {
     });
   });
 
+  it('passes a declared reasoning level through to the node, never into params', () => {
+    const inputs = workflowInputs({ prompt: textTag() });
+    const answer = modelCall({
+      id: 'answer',
+      model: 'answer-model',
+      accepts: textTag(),
+      in: inputs.ports.prompt,
+      produces: textTag(),
+      params: { maxOutputTokens: 100 },
+      reasoningEffort: 'high',
+    });
+    expect(answer.node).toMatchObject({ reasoningEffort: 'high' });
+    expect(answer.node.type === 'modelCall' && answer.node.params).toEqual({
+      maxOutputTokens: 100,
+    });
+  });
+
   it('passes declared maxSteps and onError through to the node', () => {
     const inputs = workflowInputs({ prompt: textTag() });
     const agent = modelCall({
@@ -174,6 +191,7 @@ describe('buildWorkflow — node construction', () => {
       classifierModelId: 'answer-model',
       candidates: [{ id: 'answer-model', description: 'cheap' }, { id: 'hard-model' }],
       params: { temperature: 0.3 },
+      accepts: textTag(),
       in: inputs.ports.prompt,
     });
     expect(smart.node).toMatchObject({
@@ -200,6 +218,7 @@ describe('buildWorkflow — node construction', () => {
       classifierModelId: 'cheap-model',
       candidates: [{ id: 'pinned-model' }],
       classify: { model: false, effort: true },
+      accepts: textTag(),
       in: inputs.ports.prompt,
     });
     expect(smart.node).toMatchObject({

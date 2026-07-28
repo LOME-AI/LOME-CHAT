@@ -7,7 +7,6 @@ import { useModelStore, type SelectedModelEntry } from '@/stores/model';
 import { useWebSearch } from '@/hooks/chat/use-web-search';
 import { useSelectedModelCapabilities } from '@/hooks/models/use-selected-model-capabilities';
 import { useResolveDefaultModel } from '@/hooks/models/use-resolve-default-model';
-import { useStableBalance } from '@/hooks/billing/use-stable-balance';
 import { getInspirationLabel, getPromptPlaceholder } from '@/lib/modality-strings';
 import { ComparisonBar } from '@/components/chat/layout/comparison-bar';
 import { ChatHeader } from '@/components/chat/layout/chat-header';
@@ -120,10 +119,6 @@ export function ChatWelcome({
     setPickerOpen(true);
   }, []);
 
-  const { displayBalance } = useStableBalance();
-  const balance = Number.parseFloat(displayBalance);
-  const canAccessPremium = isAuthenticated && balance > 0;
-
   // Pick a stable greeting once auth state settles (prevents title flash on
   // auth changes).
   const greeting = React.useMemo(() => {
@@ -171,7 +166,6 @@ export function ChatWelcome({
         selectedModels={selectedModels}
         onModelSelect={handleModelSelect}
         premiumIds={premiumIds}
-        canAccessPremium={canAccessPremium}
         isAuthenticated={isAuthenticated}
         onPremiumClick={onPremiumClick}
         activeModality={activeModality}

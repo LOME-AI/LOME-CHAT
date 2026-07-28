@@ -6,23 +6,32 @@ import { resolve } from 'path';
 import { stripApiPrefix } from './src/lib/api-proxy.js';
 import { headersPlugin } from '../../scripts/lib/headers-vite-plugin';
 import { generateAdminHeaders } from '../../scripts/generate-headers';
+import { appBundleOptions, verifyBundle } from '../../scripts/verify-bundle';
 import type { Plugin } from 'vite';
 
-const envDir = resolve(__dirname, '../..');
+const rootDir = resolve(__dirname, '../..');
 const distDir = resolve(__dirname, 'dist');
 const headersFile = resolve(distDir, '_headers');
 
-// After `vite build`, emit dist/_headers so the assets-only admin Worker serves
-// the CSP + X-Frame-Options: DENY + HSTS stack on admin.hushbox.ai. Built here
+// After `vite build`, finish the dist: emit dist/_headers so the assets-only
+// admin Worker serves the CSP + X-Frame-Options: DENY + HSTS stack on
+// admin.hushbox.ai, then verify the finished bundle. Headers are built here
 // (not a separate script step like the web bundle's) because admin has no
 // marketing-merge to sequence around; `closeBundle` runs once the shell's inline
 // pre-paint scripts are written, which generateAdminHeaders hashes into the CSP.
-function adminHeadersPlugin(): Plugin {
+//
+// Verification lives in this hook, not a second plugin, because Rollup runs
+// `closeBundle` as a parallel hook — sibling plugins' hooks are started
+// together, so plugin order would not sequence them. The order is load-bearing:
+// `_headers` is an emitted file and the Cloudflare Pages file-count check
+// counts it.
+function finalizeAdminDistPlugin(): Plugin {
   return {
-    name: 'generate-admin-headers',
+    name: 'finalize-admin-dist',
     apply: 'build',
     async closeBundle() {
       await generateAdminHeaders({ distDir });
+      await verifyBundle(appBundleOptions(rootDir, 'apps/admin'));
     },
   };
 }
@@ -65,7 +74,7 @@ export default defineConfig(({ command }) => {
   };
 
   return {
-    envDir,
+    envDir: rootDir,
     plugins: [
       tailwindcss(),
       TanStackRouterVite({
@@ -74,7 +83,7 @@ export default defineConfig(({ command }) => {
         autoCodeSplitting: true,
       }),
       react(),
-      adminHeadersPlugin(),
+      finalizeAdminDistPlugin(),
       // Applies the generated _headers to `vite preview` responses, so the admin
       // E2E suite (which drives the preview build) enforces the production CSP —
       // the same mechanism the web bundle uses. Inert in dev (see plugin doc).

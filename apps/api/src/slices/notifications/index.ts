@@ -30,8 +30,6 @@ export type { AdminDigestAction, EmailContent, NewsletterIssueParams } from './d
 export { createDeviceTokenStore } from './adapters/device-token-store-db.js';
 export { purgeStaleDeviceTokens } from './adapters/device-token-retention.js';
 export { createNotificationPreferencesStore } from './adapters/notification-preferences-store-db.js';
-export { createWebPushSender } from './adapters/push-webpush.js';
-export type { WebPushSenderConfig } from './adapters/push-webpush.js';
 export { createCompositePushSender } from './adapters/push-composite.js';
 export type { CompositePushSenderDeps } from './adapters/push-composite.js';
 export { createCollapseAliasDeriver } from './adapters/collapse-alias.js';
@@ -48,8 +46,13 @@ export type { CapturedEmail } from './adapters/email-sender-factory.js';
 export { EMAIL_BATCH_MAX } from './ports/index.js';
 export { createMockPushSender } from './adapters/push-mock.js';
 export type { MockPushSender } from './adapters/push-mock.js';
-export { createFcmPushSender } from './adapters/push-fcm.js';
-export type { FcmPushSenderConfig } from './adapters/push-fcm.js';
+// The raw FCM and Web Push transports are deliberately absent from this barrel:
+// only the composite sender derives and stamps the per-conversation collapse
+// alias and validates the wire payload, and a directly-bound transport skips
+// both. `createPushSenderFromEnv` is the only construction site outside this
+// slice. That narrows the public surface rather than closing the bypass — the
+// composition root sits outside the boundaries lint's slice/lib/middleware
+// globs, so a deep import of an adapter module there is not rejected.
 export { createPushSenderFromEnv, listCapturedPushes } from './adapters/push-sender-factory.js';
 export type {
   BatchEmailSender,

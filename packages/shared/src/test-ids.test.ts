@@ -116,11 +116,15 @@ describe('TEST_ID_BUILDERS', () => {
   });
 
   it('builds budget message ids from an error id', () => {
-    expect(TEST_ID_BUILDERS.budgetMessage('trial_notice')).toBe('budget-message-trial_notice');
-    expect(TEST_ID_BUILDERS.budgetMessageIcon('trial_notice')).toBe(
-      'budget-message-icon-trial_notice'
+    expect(TEST_ID_BUILDERS.budgetMessage('trial_preview_pays')).toBe(
+      'budget-message-trial_preview_pays'
     );
-    expect(TEST_ID_BUILDERS.budgetDismiss('trial_notice')).toBe('budget-dismiss-trial_notice');
+    expect(TEST_ID_BUILDERS.budgetMessageIcon('trial_preview_pays')).toBe(
+      'budget-message-icon-trial_preview_pays'
+    );
+    expect(TEST_ID_BUILDERS.budgetDismiss('trial_preview_pays')).toBe(
+      'budget-dismiss-trial_preview_pays'
+    );
   });
 
   it('builds a kpi value id from a base kpi id', () => {

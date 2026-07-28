@@ -1,4 +1,5 @@
 import { test, expectConsoleErrors } from './fixtures.js';
+import { TIMEOUTS } from './config/timeouts.js';
 import { expect } from './helpers/expect.js';
 import { openMobileLandingMenuIfNeeded } from './helpers/marketing-nav.js';
 import {
@@ -107,5 +108,72 @@ test.describe('TTS model-download CSP', () => {
       () => (globalThis as unknown as { __cspBlocked: string[] }).__cspBlocked
     );
     expect(blocked.some((uri) => uri.includes('huggingface.co'))).toBe(false);
+  });
+});
+
+/**
+ * The one place anything clicks the blog's "Listen" control, and the only test
+ * that runs the BUILT text-to-speech worker. Unit tests inject a fake worker
+ * factory, so the real worker bundle never executes under them — which is how
+ * a bundler transform that rewrote `new.target` shipped: it killed the worker
+ * the moment its module evaluated, before a single model byte arrived, and
+ * surfaced only as an error line about half a second after the click. Nothing
+ * caught it because nothing had ever clicked. Only the built site can catch it
+ * either: the dev server hands the worker over as a native ES module and never
+ * applies the transform.
+ *
+ * The proof is a positive signal rather than an elapsed one. The worker's first
+ * model-file request can only be issued after the worker was constructed, its
+ * whole module graph (kokoro-js and the ONNX runtime) evaluated, and its
+ * message handler took delivery of the load — a worker that dies on load never
+ * reaches it. That request is then held open, so the ~90 MB model never
+ * downloads and the load stays in the one state under test: still running, not
+ * failed. Playback is deliberately out of scope; this guards the load, and
+ * waiting for audio would mean paying for the model on every run.
+ */
+test.describe('Blog Listen control', { tag: '@chromium-only' }, () => {
+  test('starts an on-device read from the built worker', async ({ page }) => {
+    // Hold the model request open — never fulfilled, never aborted. Aborting
+    // would fail the load and produce exactly the error this test asserts the
+    // absence of; fulfilling it would need the model. Page routes take priority
+    // over the network-allowlist guard's context route, so this also keeps the
+    // request off the wire and the test offline.
+    let modelRequested = false;
+    await page.route('https://huggingface.co/**', () => {
+      modelRequested = true;
+    });
+
+    await page.goto('/blog');
+    // Each post card is a link wrapping the post's title heading; which post is
+    // read aloud does not matter, so the first one keeps this off any slug.
+    const firstPost = page
+      .getByRole('link')
+      .filter({ has: page.getByRole('heading', { level: 3 }) })
+      .first();
+    await firstPost.click();
+
+    // The island renders its controls disabled in the server markup and enables
+    // them on hydration, so "enabled" is the readiness signal to wait on. A
+    // click before that lands on markup with no handler attached and does
+    // nothing, which would read here as a dead worker.
+    const listen = page.getByRole('button', { name: 'Listen to this post' });
+    await expect(listen).toBeEnabled();
+    await listen.click();
+
+    // Left idle: the transport is one button, relabelled per state.
+    const stop = page.getByRole('button', { name: 'Stop' });
+    await expect(stop).toBeVisible();
+
+    await expect.poll(() => modelRequested, { timeout: TIMEOUTS.TTS_WORKER_BOOT }).toBe(true);
+
+    // ...and no error status arrived on the way there. The load is now parked
+    // on the held request, so nothing further can fail it.
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await expect(stop).toBeVisible();
+
+    // End the read through the UI instead of leaving it to context teardown, so
+    // the control is shown to recover rather than merely to start.
+    await stop.click();
+    await expect(listen).toBeVisible();
   });
 });

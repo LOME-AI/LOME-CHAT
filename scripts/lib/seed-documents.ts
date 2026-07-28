@@ -670,7 +670,11 @@ function el(tag, className, text) {
 
 const style = el('style');
 style.textContent = \`
-  .lab { box-sizing: border-box; min-height: 100vh; padding: 24px; display: flex;
+  /* height, not min-height: the bars below are sized as a percentage of .track,
+     and a percentage height only resolves against a definite containing block.
+     With min-height the chain stays indefinite, every bar computes to 0px, and
+     the track renders as an empty box. */
+  .lab { box-sizing: border-box; height: 100vh; padding: 24px; display: flex;
     flex-direction: column; gap: 14px; color: #e6ecff; font-family: ui-sans-serif, system-ui, sans-serif;
     background: radial-gradient(circle at 15% 0%, #22305c 0%, #0b1020 62%); }
   .lab h1 { margin: 0; font-size: 1.2rem; letter-spacing: 0.01em; }

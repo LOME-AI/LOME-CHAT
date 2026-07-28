@@ -15,10 +15,14 @@ import { describe, expect, it } from 'vitest';
 
 import { REASONING_BUDGET_TOKENS_BY_EFFORT } from './estimate/reasoning-plan.js';
 import { MINIMUM_OUTPUT_TOKENS } from './constants.js';
+import { modelId } from './model-id.js';
 import { nanoUSD } from './nano-usd.js';
 import { getTurnOptions } from './turn-options.js';
 import type { PriceableModel } from './priceable-model.js';
 import type { FundingSnapshot, PromptBasis, Selection } from './turn-types.js';
+
+/** A fixed instant: premium classification takes its clock as an argument. */
+const NOW_MS = 1_800_000_000_000;
 
 /** 1,000 prompt characters exactly: 250 input tokens at the paid ratio. */
 const BASIS: PromptBasis = {
@@ -34,19 +38,20 @@ const RATES = {
   outputRateNanoUsd: nanoUSD(200n),
   contextLength: 200_000,
   providerCap: 64_000,
+  releasedAtMs: 0,
 } as const;
 
 /** One native effort word, mandatory: the model reasons or it does not run. */
 const SINGLE_RUNG: PriceableModel = {
   ...RATES,
-  modelId: 'vendor/single-rung',
+  modelId: modelId('vendor/single-rung'),
   reasoning: { supportedEfforts: ['high'], mandatory: true },
 };
 
 /** Its twin in every rate and cap, listing three words instead of one. */
 const THREE_RUNG: PriceableModel = {
   ...RATES,
-  modelId: 'vendor/three-rung',
+  modelId: modelId('vendor/three-rung'),
   reasoning: { supportedEfforts: ['high', 'medium', 'low'], mandatory: true },
 };
 
@@ -67,7 +72,8 @@ function autoTurn(model: PriceableModel, spendable: bigint) {
     pinned: {},
     webSearch: false,
   };
-  return getTurnOptions(fundingOf(spendable), BASIS, selection, [model]).admissible;
+  return getTurnOptions(fundingOf(spendable), BASIS, selection, { models: [model], nowMs: NOW_MS })
+    .admissible;
 }
 
 /**

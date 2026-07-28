@@ -5,9 +5,9 @@ import type { ModelDescriptor } from '@hushbox/shared';
  * The paid premium-tier gate (legacy `findTierLockedModel` / `isPremiumModel`).
  * "Premium" reuses the trial gate's fresh premium legs verbatim — a model is
  * premium exactly when {@link trialEligibility} would refuse it as `premium`:
- * the top price quartile ({@link trialPriceThresholdNanoUsd}), a release inside
- * the recency window, or a minimal-exchange unaffordability, plus the
- * un-priceable-is-premium fail-closed. Sharing the one predicate keeps the paid
+ * the top price quartile of the money layer's `premiumPriceThresholdNanoUsd`, a
+ * release inside its recency window, or a minimal-exchange unaffordability, plus
+ * the un-priceable-is-premium fail-closed. Sharing the one predicate keeps the paid
  * gate and the trial gate from ever disagreeing on what premium means. A
  * non-text model is never tier-premium (trial refuses it as `non-text`, a
  * separate class); the paid text single/multi-model paths are the only callers.

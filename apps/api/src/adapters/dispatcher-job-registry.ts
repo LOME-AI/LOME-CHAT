@@ -151,7 +151,7 @@ export function createDispatcherJobRegistry(env: Bindings, db: Database): JobReg
     createSessionRevokeJobRegistration({ redis, evictUser: buildEvictUserPort(env, redis) }),
     createNewsletterDispatchJobRegistration({
       store: createNewsletterDispatchStores(db),
-      sender: createEmailSenderFromEnv(env, db),
+      sender: createEmailSenderFromEnv(env),
       urls: requireIssueEmailUrls(env),
     }),
   ]);

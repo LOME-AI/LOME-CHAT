@@ -34,7 +34,6 @@ export type {
   AdminCatalogPage,
   CallShapeFamily,
   CallUsage,
-  DeclaredCeiling,
   EstimateRun,
   ListDescriptorsDeps,
   ModelPricingResolver,

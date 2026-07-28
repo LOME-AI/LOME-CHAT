@@ -21,6 +21,7 @@ import {
   epochs,
   idempotencyKeys,
   ledgerEntries,
+  llmCompletions,
   memberBudgets,
   messages,
   sharedLinks,
@@ -617,6 +618,59 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
     expect(content.costNanoUsd).toBe(applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE);
   });
 
+  it("lands a turn-level classifier charge on the run's content when the first sibling failed", async () => {
+    const fixture = await seedFixture();
+    const runKey = crypto.randomUUID();
+    const runId = crypto.randomUUID();
+    const fence = await claimFence(fixture.userId, runKey, runId);
+    const classifierBase = 40n;
+
+    const hook = createFencedSettlementHook({
+      db,
+      fence,
+      complete: keyRowCompletion({ runId }),
+      commit: commitFor(fixture, runId, createChatStores()),
+    });
+    // The shape that has no per-generation anchor: the turn-level classifier
+    // charges first and persists nothing, sibling A fails (producing no charge
+    // at all), and sibling B is the only generation that persisted. Naming a
+    // sibling would have lost the classifier's spend here.
+    await hook({
+      runKey,
+      outputs: { 'sibling-b': { kind: 'text', text: ANSWER } },
+      charges: [
+        {
+          key: 'classify',
+          modelId: 'chat-settle/classifier',
+          providerName: PROVIDER_NAME,
+          modality: 'text',
+          generationId: 'gen-cls',
+          billableCostNanoUsd: applyMarkup(classifierBase),
+          isEstimated: false,
+        },
+        { ...charge(), key: 'sibling-b' },
+      ],
+    });
+
+    const rows = await messagesInOrder(fixture.conversationId);
+    const assistant = rows.find((row) => row.senderType === 'assistant');
+    if (!assistant) throw new Error('expected an assistant message');
+    const content = first(
+      await db.select().from(contentItems).where(eq(contentItems.messageId, assistant.id)),
+      'assistant content'
+    );
+    // Display equals debit on the SAME item: sibling B's own marked-up cost plus
+    // the whole turn's storage plus the classifier's marked-up cost.
+    expect(content.costNanoUsd).toBe(
+      applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE + applyMarkup(classifierBase)
+    );
+    const usage = await db.select().from(usageRecords).where(eq(usageRecords.runId, runId));
+    expect(usage).toHaveLength(2);
+    for (const record of usage) expect(record.contentItemId).toBe(content.id);
+    const byModel = new Map(usage.map((record) => [record.modelId, record]));
+    expect(byModel.get('chat-settle/classifier')?.costNanoUsd).toBe(applyMarkup(classifierBase));
+  });
+
   it('chains a second turn onto the prior assistant tip with a fresh batch id', async () => {
     const fixture = await seedFixture();
     const firstRunId = crypto.randomUUID();
@@ -654,9 +708,9 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
   it('terminal-fails and persists nothing when no generation produced a charge', async () => {
     const fixture = await seedFixture();
     const runId = crypto.randomUUID();
-    // Zero charges is the all-failed signal: a succeeded generation always
-    // produces a charge, so no charges means every selected model failed. The
-    // commit throws to roll the settlement back — nothing saved, nothing billed.
+    // No persistable content is the all-failed signal. The commit throws to roll
+    // the settlement back — nothing saved, nothing billed, and the client is
+    // told the turn failed.
     const emptyRequest: SettlementRequest = { runKey: 'k', outputs: {}, charges: [] };
     await expect(
       runSettlement(db, (tx) => commitFor(fixture, runId, createChatStores())(tx, emptyRequest))
@@ -667,7 +721,7 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
     );
   });
 
-  it('skips a charge whose output is not text (no content, no charge)', async () => {
+  it('terminal-fails a run whose only charge carries no persistable content', async () => {
     const fixture = await seedFixture();
     const runId = crypto.randomUUID();
     const mediaRequest: SettlementRequest = {
@@ -686,9 +740,29 @@ describe('chat settlement commit (saved ⟺ billed, linear tree)', () => {
       },
       charges: [charge()],
     };
-    await runSettlement(db, (tx) =>
-      commitFor(fixture, runId, createChatStores())(tx, mediaRequest)
+    // A media output under a non-media charge persists nothing, so the run
+    // reached settlement having produced no content at all — the same outcome as
+    // every branch failing, and it must raise rather than commit an empty
+    // success.
+    await expect(
+      runSettlement(db, (tx) => commitFor(fixture, runId, createChatStores())(tx, mediaRequest))
+    ).rejects.toThrow(/no model produced content/);
+    expect(await db.select().from(usageRecords).where(eq(usageRecords.runId, runId))).toHaveLength(
+      0
     );
+    expect(await messagesInOrder(fixture.conversationId)).toHaveLength(0);
+  });
+
+  it('terminal-fails a run whose only charge is a generation that persisted nothing', async () => {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    // The shape a turn-level generation creates: one charge arrives, but the run
+    // surfaced no output for it. "A charge exists" is not evidence any branch
+    // succeeded, so the all-failed signal reads content, not charge count.
+    const classifierOnly: SettlementRequest = { runKey: 'k', outputs: {}, charges: [charge()] };
+    await expect(
+      runSettlement(db, (tx) => commitFor(fixture, runId, createChatStores())(tx, classifierOnly))
+    ).rejects.toThrow(/no model produced content/);
     expect(await db.select().from(usageRecords).where(eq(usageRecords.runId, runId))).toHaveLength(
       0
     );
@@ -1484,6 +1558,107 @@ function multiRequest(
   return { runKey, outputs, charges: entries.map((entry) => multiCharge(entry.key, entry.cost)) };
 }
 
+/**
+ * The reasoning level persisted per content item, read the way the history join
+ * reads it: usage records anchored to the item, joined to their completion rows.
+ */
+async function reasoningEffortsByContentItem(
+  contentItemIds: readonly string[]
+): Promise<Map<string, (string | null)[]>> {
+  const rows = await db
+    .select({
+      contentItemId: usageRecords.contentItemId,
+      reasoningEffort: llmCompletions.reasoningEffort,
+    })
+    .from(usageRecords)
+    .innerJoin(llmCompletions, eq(llmCompletions.usageRecordId, usageRecords.id))
+    .where(inArray(usageRecords.contentItemId, [...contentItemIds]));
+  const byItem = new Map<string, (string | null)[]>();
+  for (const row of rows) {
+    if (row.contentItemId === null) continue;
+    byItem.set(row.contentItemId, [...(byItem.get(row.contentItemId) ?? []), row.reasoningEffort]);
+  }
+  return byItem;
+}
+
+describe('chat settlement commit (the level each generation ran at)', () => {
+  it("records each sibling's own resolved level against its own persisted answer", async () => {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    const entries = [
+      { key: 'answer0', text: 'from-model-a', cost: 100n },
+      { key: 'answer1', text: 'from-model-b', cost: 200n },
+    ] as const;
+    const base = multiRequest('effort-siblings', entries);
+    // One turn-level choice, two ladders: the second sibling could not reach
+    // High and runs at Low, and its own answer is what says so.
+    const levels = ['high', 'low'] as const;
+    const request: SettlementRequest = {
+      ...base,
+      charges: base.charges.map((charge, index) => ({
+        ...charge,
+        tokens: { inputTokens: 1, outputTokens: 1, reasoningTokens: 9, cachedInputTokens: 0 },
+        ...(levels[index] === undefined ? {} : { reasoningEffort: levels[index] }),
+      })),
+    };
+
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, runId, createChatStores(), {
+        userMessage: { id: crypto.randomUUID(), content: PROMPT },
+      })(tx, request)
+    );
+
+    const rows = await messagesInOrder(fixture.conversationId);
+    const siblings = rows.filter((row) => row.senderType === 'assistant');
+    const siblingIds = siblings.map((row) => row.id);
+    const items = await db
+      .select({ id: contentItems.id, messageId: contentItems.messageId })
+      .from(contentItems)
+      .where(inArray(contentItems.messageId, siblingIds))
+      .orderBy(asc(contentItems.id));
+    const byItem = await reasoningEffortsByContentItem(items.map((item) => item.id));
+    const persisted = siblings.map(
+      (sibling) =>
+        byItem.get(items.find((item) => item.messageId === sibling.id)?.id ?? '')?.[0] ?? null
+    );
+    expect(persisted).toEqual(['high', 'low']);
+  });
+
+  it('gives every persisted assistant text answer a completion row to read', async () => {
+    const fixture = await seedFixture();
+    const runId = crypto.randomUUID();
+    const entries = [
+      { key: 'answer0', text: 'from-model-a', cost: 100n },
+      { key: 'answer1', text: 'from-model-b', cost: 200n },
+    ] as const;
+    const base = multiRequest('effort-totality', entries);
+    // Neither sibling reported usage and neither reasoned — the weakest case
+    // for the record existing at all.
+    const request: SettlementRequest = { ...base, charges: base.charges };
+
+    await runSettlement(db, (tx) =>
+      commitFor(fixture, runId, createChatStores(), {
+        userMessage: { id: crypto.randomUUID(), content: PROMPT },
+      })(tx, request)
+    );
+
+    const settled = await messagesInOrder(fixture.conversationId);
+    const assistantIds = settled
+      .filter((row) => row.senderType === 'assistant')
+      .map((row) => row.id);
+    const items = await db
+      .select({ id: contentItems.id, contentType: contentItems.contentType })
+      .from(contentItems)
+      .where(inArray(contentItems.messageId, assistantIds));
+    const textItems = items.filter((item) => item.contentType === 'text');
+    expect(textItems.length).toBe(2);
+    const byItem = await reasoningEffortsByContentItem(textItems.map((item) => item.id));
+    for (const item of textItems) {
+      expect(byItem.get(item.id)).toEqual([null]);
+    }
+  });
+});
+
 describe('chat settlement commit (multi-model siblings)', () => {
   it('persists one assistant sibling per charge under one user message, batched and consecutive', async () => {
     const fixture = await seedFixture();
@@ -2238,13 +2413,21 @@ describe('chat settlement commit (display-cost mirror invariant)', () => {
     });
   });
 
-  it('excludes a non-anchoring charge from display cost and leaves the item not smart', async () => {
+  it("anchors a consumed generation's charge to the run's content, display and debit together", async () => {
     const fixture = await seedFixture();
     const runId = crypto.randomUUID();
-    // A text answer plus a standalone MEDIA charge whose node surfaced no output
-    // (a media charge WITH an output now persists under its pre-minted plan): the
-    // outputless charge anchors to nothing, so it neither debits nor inflates the
-    // answer's display cost, and the answer item is not a Smart Model turn.
+    // A text answer plus a charge whose generation surfaced no run output of its
+    // own, because its value was CONSUMED by a later node rather than being a
+    // sink — the turn's classifier is the same class. Settlement anchors it to
+    // the run's content, moving display and debit by the same amount.
+    //
+    // What makes that safe is NOT anything settlement can see: a charge reaching
+    // here always names a generation whose value COMMITTED, because the
+    // interpreter charges after the commit and only on success. A generation
+    // whose output failed validation therefore never arrives, and its spend is
+    // absorbed — pinned in `interpreter.test.ts` ("bills nothing for a sibling
+    // whose value failed output validation"). The answer item is still not a
+    // Smart Model turn.
     await runSettlement(db, (tx) =>
       commitFor(fixture, runId, createChatStores(), {
         userMessage: { id: crypto.randomUUID(), content: PROMPT },
@@ -2274,11 +2457,11 @@ describe('chat settlement commit (display-cost mirror invariant)', () => {
       await db.select().from(contentItems).where(eq(contentItems.messageId, assistant.id)),
       'assistant content'
     );
-    // Only the text answer's own charge — the media charge contributes nothing.
-    expect(content.costNanoUsd).toBe(applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE);
+    // Both charges land on the one persisted item, so display equals debit.
+    const total = applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE + applyMarkup(500n);
+    expect(content.costNanoUsd).toBe(total);
     expect(content.isSmartModel).toBe(false);
-    // The debit path likewise skipped the non-anchoring media charge.
-    expect(await sumRunDebit(runId)).toBe(applyMarkup(BASE_COST) + PROMPT_ANSWER_STORAGE);
+    expect(await sumRunDebit(runId)).toBe(total);
   });
 });
 

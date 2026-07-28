@@ -1,5 +1,6 @@
-import { ResultAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
-import { unavailableError } from '../../../lib/errors/index.js';
+import { pushEventPayloadSchema } from '@hushbox/shared';
+import { ResultAsync, errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
+import { unavailableError, validationError } from '../../../lib/errors/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type {
   PushDelivery,
@@ -24,15 +25,24 @@ export interface CompositePushSenderDeps {
  * services never see the raw conversationId in a visible header), routes native
  * targets to FCM and web targets to the in-house Web Push transport, and folds
  * the two deliveries into one. The domain stays channel-blind.
+ *
+ * It is also where the wire payload is validated, because it is the sole
+ * construction site of a dispatched message and so covers both transports at
+ * once. The type system fixes `category` (a closed enum) but not
+ * `conversationId`, which is a bare string that reaches the push services and
+ * is interpolated into a deep link on the receiving side; the schema is the
+ * only check of its shape, and a rejection is fail-closed — nothing is sent.
  */
 export function createCompositePushSender(deps: CompositePushSenderDeps): PushSender {
   return {
     send(message: PushMessage): ResultAsync<PushDelivery, DomainError> {
-      const conversationId = message.data?.['conversationId'];
-      if (conversationId === undefined) {
-        return fanOut(deps, message);
+      const parsed = pushEventPayloadSchema.safeParse(message.payload);
+      if (!parsed.success) {
+        return errAsync(
+          validationError('push requires a generic {category, conversationId} payload')
+        );
       }
-      return fromPromise(deps.deriveCollapseKey(conversationId), (cause) =>
+      return fromPromise(deps.deriveCollapseKey(message.payload.conversationId), (cause) =>
         unavailableError('collapse alias derivation failed', cause)
       ).andThen((collapseKey) => fanOut(deps, { ...message, collapseKey }));
     },

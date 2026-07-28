@@ -31,7 +31,7 @@ import {
   createWebhookVerifier,
 } from './domain/index.js';
 import { spendableFundsNanoUsd } from '@hushbox/shared';
-import { BILLING_KEYS, admitRun } from './domain/index.js';
+import { BILLING_KEYS, DAILY_ALLOWANCE_NANO_USD, admitRun } from './domain/index.js';
 import { createConversationFundingReader } from '../../adapters/conversation-funding.js';
 import { createMockPaymentProvider } from './adapters/payment-mock.js';
 import { requiredIdempotencyKey } from './routes.js';
@@ -497,6 +497,21 @@ describe('GET /billing/spendable', () => {
     expect(body.payer).toBe('self');
     expect(body.tier).toBe('paid');
     await cleanupWalletKeys(walletId);
+  });
+
+  it("serves a free payer the day's remaining allowance, the figure their turn is gated on", async () => {
+    const userId = await createUser();
+    await seedPurchasedWallet(userId, 0n);
+    const res = await request('/billing/spendable', {
+      headers: { cookie: await sessionCookie(userId) },
+    });
+    expect(res.status).toBe(200);
+    const body = await spendableBody(res);
+    expect(body.tier).toBe('free');
+    // A free payer draws the daily allowance, never the paid cushion: this is
+    // the whole funding number the composer needs, from one endpoint.
+    expect(body.spendableNanoUsd).toBe(DAILY_ALLOWANCE_NANO_USD.toString(10));
+    expect(body.heldNanoUsd).toBe('0');
   });
 
   it("serves the OWNER's group figures to a free-tier member composing in the group", async () => {

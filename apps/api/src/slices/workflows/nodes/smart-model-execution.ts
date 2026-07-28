@@ -1,62 +1,60 @@
 import {
-  CLASSIFIER_OUTPUT_TOKEN_CAP,
-  parseReasoningText,
+  REASONING_OFF,
   ReasoningWire,
+  planReasoningOff,
   reasoningPlanModelFrom,
   smartModelClassifierDimensions,
   textTag,
 } from '@hushbox/shared';
-import { planReasoningOff } from '@hushbox/shared/affordability/estimate/reasoning-plan';
-import {
-  parseClassifierAnswer,
-  pickClassifiedEffortPlan,
-  resolveClassifiedEffort,
-} from '@hushbox/shared/affordability/smart-model/effort-dimension';
+import { pickClassifiedEffortPlan } from '@hushbox/shared/affordability/smart-model/effort-dimension';
 import { resolveClassifierOutput } from '@hushbox/shared/affordability/smart-model/resolve';
 import { err } from '../../../lib/result/index.js';
-import { truncateForClassifier } from './classifier-context.js';
-import { buildClassifierMessages } from './classifier-messages.js';
 import { streamModelCall } from './model-call-execution.js';
 import { validateNodeInput } from './node-input.js';
+import { callInputOf, decisionOf } from './turn-decision.js';
+import { portsAccepting } from '../engine/model-ports.js';
 import type {
-  ChatHistoryMessage,
   ClassifierEffortLevel,
   InferenceRequest,
   ModelDescriptor,
   Node,
   NodePortDeclaration,
+  ResolvedReasoningEffort,
   SchemaNameRegistry,
 } from '@hushbox/shared';
 import type { Result } from '../../../lib/result/index.js';
 import type {
   NodeExecution,
-  NodeGenerationCharge,
   NodeRunContext,
   NodeRunError,
   NodeRunSuccess,
 } from '../engine/execution-registry.js';
+import type { TurnDecision } from './turn-decision.js';
 import type { ModelBinding, ModelCallStreamDeps } from './model-call-execution.js';
 
 /**
- * The `smartModel` capability execution: a cheap classifier generation picks
- * the best candidate model for the latest exchange, then the answer streams
- * from it — two generations under one node, both settling in the run's single
- * fenced settlement (the classifier as an auxiliary charge keyed
- * `<node>#classifier`, anchored to the answer's content item).
+ * The `smartModel` capability execution: the slot that carries the MODEL
+ * dimension. It holds the candidate set — the only place a `MAX` over
+ * alternatives is expressible — binds the turn's decision to one of them, and
+ * streams the answer.
+ *
+ * It performs NO classification of its own. The decision arrives as a typed
+ * envelope on the node's ordinary single input port, produced by a registered
+ * reducer from an ordinary classifier `modelCall` (`docs/BILLING.md` §How the
+ * decision reaches the answer), which is what makes the definition that is
+ * priced the definition that executes.
  *
  * Semantics, stated exactly:
- * - a SINGLE candidate skips the classifier entirely (zero classifier charge);
- * - a classifier ERROR (no generation) falls back to the cheapest candidate
- *   with no classifier charge — the run still succeeds;
- * - an UNRESOLVABLE classifier output falls back the same way, but the
- *   classifier's charge STANDS (it produced a generation);
- * - candidates arrive sorted ascending by price, so the cheapest — the
- *   fallback — is the first entry, and it doubles as the classifier model.
- *
- * The classifier's cost accrues toward the run's cost circuit through
- * `ctx.accrue` BEFORE the answer call; an accrual that trips the circuit
- * aborts the run signal, and the execution refuses to start the answer.
- * Classifier tokens never ride `ctx.emit` — only the answer streams.
+ * - a decision naming a candidate binds that candidate;
+ * - anything else — no decision on the port, or an answer naming nothing in the
+ *   list — binds the node's FIRST candidate as the declared fallback. This node
+ *   never resolves outside its own candidate list, and every candidate's cost was
+ *   priced into the reservation's `MAX`, so no arm of this function can bind a
+ *   model the hold did not cover. Which entry is cheapest is the candidate
+ *   producer's ordering guarantee, not this node's;
+ * - the effort axis takes the decision's own level, and nothing when no
+ *   decision arrived: the axis's ONE declared fallback lives in the reducer,
+ *   which is the only place that knows the axis's cheapest option.
  */
 
 type SmartModelNode = Extract<Node, { type: 'smartModel' }>;
@@ -64,8 +62,6 @@ type SmartModelNode = Extract<Node, { type: 'smartModel' }>;
 const SMART_MODEL_PORTS: NodePortDeclaration = { in: [textTag()], out: textTag() };
 
 export interface SmartModelExecutionDeps extends Omit<ModelCallStreamDeps, 'binding'> {
-  /** The classifier model's binding (by construction the cheapest candidate). */
-  readonly classifier: ModelBinding;
   /** Every candidate's binding, keyed by model id — resolved with the node. */
   readonly candidates: ReadonlyMap<string, ModelBinding>;
   readonly schemas: SchemaNameRegistry;
@@ -84,236 +80,85 @@ async function runSmartModel(
   input: readonly unknown[],
   ctx: NodeRunContext
 ): Promise<Result<NodeRunSuccess, NodeRunError>> {
-  const validated = validateNodeInput(SMART_MODEL_PORTS, deps.schemas, input);
+  const validated = validateNodeInput(
+    portsAccepting(SMART_MODEL_PORTS, node.inputSchema),
+    deps.schemas,
+    input
+  );
   if (validated.isErr()) return err(validated.error);
-  const prompt = input[0] as string;
+  // The slot reads the turn's prompt off the decision envelope when its port
+  // declares one, and off the raw text otherwise — one input port either way.
+  const decision = decisionOf(input[0]);
+  const prompt = callInputOf(input[0]) as string;
 
-  // The dimensions this node's classifier call actually classifies — derived
-  // through the ONE shared authority admission's classifier-reserve condition
-  // also reads, so a generation happens exactly when a reserve was held.
+  // Which axes this node is the resolver for — derived through the ONE shared
+  // authority admission's classifier-reserve condition also reads.
   const dimensions = smartModelClassifierDimensions(node);
   // Only a MODEL-routing turn is badged Smart Model; a pinned-model
   // auto-effort turn (`classify.model === false`) keeps the user's own pick
-  // unbadged. Legacy parity holds for the declared-model shapes: the
-  // single-eligible short-circuit still badges (the Smart pipeline ran).
+  // unbadged.
   const badged = node.classify?.model ?? true;
   const cheapest = node.candidates[0];
   /* v8 ignore next -- the node schema requires at least one candidate */
   if (cheapest === undefined) return err({});
-  // Short-circuit: no active dimension means nothing to classify — zero
-  // classifier generations, zero classifier charge; the answer streams
-  // straight from the only candidate.
-  if (!dimensions.model && !dimensions.effort) {
-    return answerCall(deps, { node, modelId: cheapest.id, prompt, ctx, smartModelRan: badged });
-  }
 
-  const classified = await classifierCall(deps, { node, prompt, ctx, dimensions });
-  // A trip of the cost circuit (or a stop) during the classifier phase aborts
-  // the run signal; refuse the answer call rather than spend more.
-  if (ctx.signal.aborted) return err({});
+  const effort = decidedEffort(dimensions, decision);
   return answerCall(deps, {
     node,
-    modelId: classified.resolvedId ?? cheapest.id,
+    modelId: decidedCandidateId(node, dimensions, decision) ?? cheapest.id,
     prompt,
     ctx,
     smartModelRan: badged,
-    ...classifiedAnswerExtras(classified),
+    ...(effort === undefined ? {} : { effort }),
   });
 }
 
-/** The classified outcome's optional answer-call fields, spread when present. */
-function classifiedAnswerExtras(
-  classified: ClassifierOutcome
-): Pick<AnswerCallArgs, 'effort' | 'classifierCharge'> {
-  return {
-    ...(classified.effort === undefined ? {} : { effort: classified.effort }),
-    ...(classified.charge === undefined ? {} : { classifierCharge: classified.charge }),
-  };
-}
-
-interface ClassifierOutcome {
-  /** The candidate the classifier picked, or undefined for the fallback. */
-  readonly resolvedId?: string;
-  /**
-   * The classified canonical effort level — present iff the effort dimension
-   * was requested. Unresolvable output AND classifier error both fall back to
-   * `medium` (the classifier stage's documented auto fallback); only the
-   * charge differs (a generation that ran bills, an error does not).
-   */
-  readonly effort?: ClassifierEffortLevel;
-  /**
-   * The classifier generation's charge — present whenever it actually ran
-   * (even when its routing output was discarded); absent on classifier error,
-   * which produced no generation.
-   */
-  readonly charge?: NodeGenerationCharge;
-}
-
-/** The last assistant turn in the run history, or '' on a first turn. */
-function latestAssistantMessage(history: readonly ChatHistoryMessage[] | undefined): string {
-  if (history === undefined) return '';
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const message = history[index];
-    if (message?.role === 'assistant') return message.content;
-  }
-  return '';
-}
-
 /**
- * The classifier generation: the truncated latest exchange plus the candidate
- * list, NO conversation history (the truncated context IS the input), output
- * capped, and never emitted to the client stream. Its cost accrues toward the
- * circuit immediately — before the answer call spends anything.
+ * The candidate the decision names, resolved WITHIN this node's own list —
+ * `null` when the model axis is not this node's to resolve, no decision reached
+ * it, or the answer named nothing in the list. Every `null` means the caller
+ * applies the declared cheapest-presented fallback.
  */
-interface ClassifierDimensions {
-  readonly model: boolean;
-  readonly effort: boolean;
-}
-
-interface ClassifierCallArgs {
-  readonly node: SmartModelNode;
-  readonly prompt: string;
-  readonly ctx: NodeRunContext;
-  readonly dimensions: ClassifierDimensions;
-}
-
-/** The classifier generation's request: prompt composed from the requested dimensions. */
-function classifierRequest(
-  deps: SmartModelExecutionDeps,
-  args: ClassifierCallArgs
-): InferenceRequest {
-  const { node, prompt, ctx, dimensions } = args;
-  const messages = buildClassifierMessages({
-    truncatedContext: truncateForClassifier({
-      latestUserMessage: prompt,
-      latestAssistantMessage: latestAssistantMessage(ctx.history),
-    }),
-    ...(dimensions.model
-      ? {
-          eligibleModels: node.candidates.map((candidate) => ({
-            id: candidate.id,
-            description: candidate.description ?? '',
-          })),
-        }
-      : {}),
-    ...(dimensions.effort ? { classifyEffort: true } : {}),
-  });
-  return {
-    model: node.classifierModelId,
-    // InferenceRequest has no system role/channel: the classifier's system
-    // prompt rides as a leading plain-text part ahead of the user part. When
-    // the inference contract gains a system channel, this mapping is the seam
-    // to migrate.
-    inputs: messages.map((message) => ({ modality: 'text', text: message.content })),
-    parameters: { maxOutputTokens: CLASSIFIER_OUTPUT_TOKEN_CAP },
-    outputs: deps.classifier.descriptor.outputs,
-  };
-}
-
-/**
- * The per-dimension resolution of one classifier generation's value. A
- * reasoning-streaming classifier model yields a canonical-inline-prefixed
- * value (same-field doctrine); only the parsed ANSWER is routing output —
- * the raw value would resolve nowhere. The medium fallback applies whenever
- * the effort dimension gets no confident answer.
- */
-function resolveClassifierValue(
-  value: unknown,
+function decidedCandidateId(
   node: SmartModelNode,
-  dimensions: ClassifierDimensions
-): Pick<ClassifierOutcome, 'resolvedId' | 'effort'> {
-  const parts =
-    typeof value === 'string'
-      ? parseClassifierAnswer(parseReasoningText(value).answer, dimensions)
-      : null;
-  const resolvedId =
-    parts !== null && dimensions.model
-      ? resolveClassifierOutput(
-          parts.modelText,
-          node.candidates.map((candidate) => candidate.id)
-        )
-      : null;
-  const effort =
-    parts !== null && dimensions.effort ? resolveClassifiedEffort(parts.effortText) : null;
-  return {
-    ...(resolvedId === null ? {} : { resolvedId }),
-    ...(effort === null ? mediumFallback(dimensions) : { effort }),
-  };
+  dimensions: { readonly model: boolean },
+  decision: TurnDecision | undefined
+): string | null {
+  if (!dimensions.model || decision === undefined) return null;
+  return resolveClassifierOutput(
+    decision.modelText,
+    node.candidates.map((candidate) => candidate.id)
+  );
 }
 
 /**
- * The effort dimension's fallback on EVERY non-answer (unresolvable output
- * and thrown classifier alike) — auto is the server's choice, and medium is
- * its documented fallback. Empty when effort was not requested.
+ * The effort the answer runs at: the decision's own already-resolved level.
+ * `undefined` when the axis is not open for this turn, or when the axis IS open
+ * and no decision reached the slot — the reducer owns the declared fallback (it
+ * is the one place that knows the axis's cheapest option), so a slot that was
+ * handed nothing rides its built params rather than inventing a second answer
+ * to the same question.
  */
-function mediumFallback(dimensions: ClassifierDimensions): Pick<ClassifierOutcome, 'effort'> {
-  return dimensions.effort ? { effort: 'medium' } : {};
-}
-
-async function classifierCall(
-  deps: SmartModelExecutionDeps,
-  args: ClassifierCallArgs
-): Promise<ClassifierOutcome> {
-  const { node, ctx, dimensions } = args;
-  const request = classifierRequest(deps, args);
-  // No emit: classifier tokens are routing internals, never client content.
-  // Legacy parity: the classifier stage catches ANY throw from the classifier
-  // generation — not just typed Result failures — and still reports the stage
-  // as having run. The catch is scoped to the provider call ALONE; a defect in
-  // the post-call routing below (accrual, output resolution) still propagates.
-  // A thrown classifier generation (any shape) is survivable: fall back to the
-  // cheapest candidate with no charge. This is an EXPECTED degrade, not a defect,
-  // so it emits a non-Sentry structured breadcrumb (model id only — never the
-  // error, prompt, or output) and never fires captureError.
-  let result: Result<NodeRunSuccess, NodeRunError>;
-  try {
-    result = await streamModelCall({ ...deps, binding: deps.classifier }, request, {
-      signal: ctx.signal,
-    });
-    // eslint-disable-next-line catch-swallow/no-silent-catch -- expected degrade: breadcrumb below, no Sentry (see note above)
-  } catch {
-    deps.telemetry?.warn('smartModel classifier failed; falling back to cheapest candidate', {
-      modelName: node.classifierModelId,
-    });
-    return { ...mediumFallback(dimensions) };
-  }
-  // Classifier failure is survivable by design: fall back to the cheapest
-  // candidate with no charge (no generation happened).
-  if (result.isErr()) return { ...mediumFallback(dimensions) };
-  const success = result.value;
-  ctx.accrue?.(success.costNanoUsd);
-  return {
-    ...resolveClassifierValue(success.value, node, dimensions),
-    /* v8 ignore start -- streamModelCall (a modelCall) always resolves billing and isEstimated on success; NodeRunSuccess types them optional only because the shape is shared with non-modelCall executions, so both the billing-absent arm and the isEstimated fallback are unreachable here */
-    ...(success.billing === undefined
-      ? {}
-      : {
-          charge: {
-            keySuffix: 'classifier',
-            billing: success.billing,
-            billableCostNanoUsd: success.costNanoUsd,
-            isEstimated: success.isEstimated ?? false,
-          },
-        }),
-    /* v8 ignore stop */
-  };
+function decidedEffort(
+  dimensions: { readonly effort: boolean },
+  decision: TurnDecision | undefined
+): ClassifierEffortLevel | undefined {
+  if (!dimensions.effort) return undefined;
+  return decision?.effort;
 }
 
 /**
- * The answer generation: the resolved candidate, the node's params, the FULL
- * run history, streaming through the node's emit seam. The classifier charge
- * (when one exists) rides the success as an auxiliary charge so both
- * generations settle together.
+ * The answer generation: the bound candidate, the node's params, the FULL run
+ * history, streaming through the node's emit seam.
  */
 interface AnswerCallArgs {
   readonly node: SmartModelNode;
   readonly modelId: string;
   readonly prompt: string;
   readonly ctx: NodeRunContext;
-  readonly classifierCharge?: NodeGenerationCharge;
-  /** The routing pipeline ran — badge the answer even if the classifier didn't bill. */
+  /** The routing pipeline ran — badge the answer. */
   readonly smartModelRan?: boolean;
-  /** The classified canonical effort to apply to the answer call (auto turns). */
+  /** The canonical effort to apply to the answer call (auto turns). */
   readonly effort?: ClassifierEffortLevel;
 }
 
@@ -332,47 +177,73 @@ function paramsRespectingHardOff(
   base: Readonly<Record<string, unknown>>,
   descriptor: ModelDescriptor
 ): Readonly<Record<string, unknown>> {
-  const wire = ReasoningWire.safeParse(base['reasoning']);
-  if (!wire.success || !('enabled' in wire.data)) return base;
+  if (!carriesOffWire(base)) return base;
   if (planReasoningOff(reasoningPlanModelFrom(descriptor), 1).feasible) return base;
   return Object.fromEntries(Object.entries(base).filter(([key]) => key !== 'reasoning'));
 }
 
+/** Whether these call parameters carry the hard-off wire — the one built shape. */
+function carriesOffWire(parameters: Readonly<Record<string, unknown>>): boolean {
+  const wire = ReasoningWire.safeParse(parameters['reasoning']);
+  return wire.success && 'enabled' in wire.data;
+}
+
+/** What the answer call sends, and the rung its wire was minted at. */
+interface DecidedCall {
+  readonly parameters: Readonly<Record<string, unknown>>;
+  readonly level?: ResolvedReasoningEffort;
+}
+
 /**
- * The answer call's parameters for the RESOLVED candidate: its OWN affordable
+ * The answer call's parameters for the BOUND candidate: its OWN affordable
  * cap (`cap(m)`, stamped per candidate at admission) becomes the completion
- * `maxOutputTokens`, and the classified effort is carved INTO that cap — the
+ * `maxOutputTokens`, and the decided effort is carved INTO that cap — the
  * shared positional pick maps the canonical level onto the model's offered
- * ladder and returns a plan whose `maxTokens` equals `cap(m)`, so the classified
- * choice can never spend past what admission reserved for THIS model. When no
- * effort was classified, delegates to `paramsRespectingHardOff` (forwards or
- * strips a built hard-off wire); the cap stays untouched when the model offers
- * no level or carries no integer cap (G2 — a reasoning budget never rides a call
- * without an explicit `max_tokens`).
+ * ladder and returns a plan whose `maxTokens` equals `cap(m)`, so the decided
+ * choice can never spend past what admission reserved for THIS model. With no
+ * decided effort, delegates to `paramsRespectingHardOff` (forwards or strips a
+ * built hard-off wire); the cap stays untouched when the model offers no level
+ * or carries no integer cap (a reasoning budget never rides a call without an
+ * explicit `max_tokens`).
  */
 function answerParamsWithEffort(
   node: SmartModelNode,
   descriptor: ModelDescriptor,
   effort: ClassifierEffortLevel | undefined,
   candidateMaxOutputTokens: number | undefined
-): Readonly<Record<string, unknown>> {
+): DecidedCall {
   const base =
     candidateMaxOutputTokens === undefined
       ? node.params
       : { ...node.params, maxOutputTokens: candidateMaxOutputTokens };
-  if (effort === undefined) return paramsRespectingHardOff(base, descriptor);
+  if (effort === undefined) return builtLevel(paramsRespectingHardOff(base, descriptor));
   const cap = base['maxOutputTokens'];
-  if (typeof cap !== 'number') return base;
+  if (typeof cap !== 'number') return builtLevel(base);
   const plan = pickClassifiedEffortPlan(reasoningPlanModelFrom(descriptor), effort, cap);
-  if (plan === undefined) return base;
-  return { ...base, reasoning: plan.wire, maxOutputTokens: plan.maxTokens };
+  if (plan === undefined) return builtLevel(base);
+  return {
+    parameters: { ...base, reasoning: plan.wire, maxOutputTokens: plan.maxTokens },
+    level: plan.level,
+  };
+}
+
+/**
+ * The level a BUILT (rather than classified) slot wire runs at. The build stamps
+ * exactly one wire shape here — the shared hard-off wire — and `off` is the rung
+ * it names, so a surviving off wire records `off` and a stripped one records
+ * nothing, per candidate. Any other pinned wire records no level: which rung a
+ * budget wire named is not recoverable from the wire, and an under-recorded
+ * level costs a badge where a guessed one would name the wrong rung.
+ */
+function builtLevel(parameters: Readonly<Record<string, unknown>>): DecidedCall {
+  return { parameters, ...(carriesOffWire(parameters) ? { level: REASONING_OFF } : {}) };
 }
 
 async function answerCall(
   deps: SmartModelExecutionDeps,
   args: AnswerCallArgs
 ): Promise<Result<NodeRunSuccess, NodeRunError>> {
-  const { node, modelId, prompt, ctx, classifierCharge, smartModelRan } = args;
+  const { node, modelId, prompt, ctx, smartModelRan } = args;
   const binding = deps.candidates.get(modelId);
   if (binding === undefined) {
     // The registry resolved every candidate binding when it resolved the node,
@@ -380,33 +251,33 @@ async function answerCall(
     throw new Error(`smartModel: no binding for resolved candidate '${modelId}'`);
   }
   const history = ctx.history;
-  // Custom instructions shape the ANSWER only — the classifier is routing
-  // internals. They ride the run-scoped ctx (never the definition), so the
-  // answer node picks them up with no per-builder wiring.
+  // Custom instructions shape the ANSWER only — they ride the run-scoped ctx
+  // (never the definition), so the answer node picks them up with no
+  // per-builder wiring.
   const customInstructions = ctx.customInstructions;
-  // The resolved candidate's OWN affordable cap (stamped per candidate at
+  // The bound candidate's OWN affordable cap (stamped per candidate at
   // admission) — the reservation held exactly this at this model's rate.
   const candidateMaxOutputTokens = node.candidates.find(
     (candidate) => candidate.id === modelId
   )?.maxOutputTokens;
+  const call = answerParamsWithEffort(
+    node,
+    binding.descriptor,
+    args.effort,
+    candidateMaxOutputTokens
+  );
   const request: InferenceRequest = {
     model: modelId,
     inputs: [{ modality: 'text', text: prompt }],
-    parameters: answerParamsWithEffort(
-      node,
-      binding.descriptor,
-      args.effort,
-      candidateMaxOutputTokens
-    ),
+    parameters: call.parameters,
     outputs: binding.descriptor.outputs,
     ...(history === undefined || history.length === 0 ? {} : { history: [...history] }),
     ...(customInstructions === undefined ? {} : { customInstructions }),
   };
-  const result = await streamModelCall({ ...deps, binding }, request, ctx);
-  if (classifierCharge === undefined && smartModelRan !== true) return result;
-  return result.map((success) => ({
-    ...success,
-    ...(smartModelRan === true ? { smartModelRan: true } : {}),
-    ...(classifierCharge === undefined ? {} : { auxiliaryCharges: [classifierCharge] }),
-  }));
+  const result = await streamModelCall({ ...deps, binding }, request, {
+    ...ctx,
+    ...(call.level === undefined ? {} : { resolvedEffort: call.level }),
+  });
+  if (smartModelRan !== true) return result;
+  return result.map((success) => ({ ...success, smartModelRan: true }));
 }

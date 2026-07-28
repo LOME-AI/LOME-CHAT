@@ -360,14 +360,24 @@ describe('buildSmartModelCandidates', () => {
 });
 
 describe('pickEffortClassifier', () => {
-  it('picks the cheapest engine-text model as the effort classifier, reserve priced over the pinned candidate', () => {
-    const pick = pickEffortClassifier([BIG, MID, CHEAP], BIG);
+  /**
+   * A pinned model on auto effort classifies the EFFORT dimension only — there
+   * is nothing to route between — so the classifier's prompt names no model and
+   * the reserve prices no model line. Pricing the pinned candidate here put this
+   * figure above the shared producer's, which is the wrong direction: the server
+   * would admit a turn the client had already priced as affordable.
+   */
+  it('picks the cheapest engine-text model, reserve priced over the empty model list it will prompt', () => {
+    const pick = pickEffortClassifier([BIG, MID, CHEAP]);
     expect(pick).toEqual({
       classifierModelId: 'cheap/model',
       // The reserve is the classifier line item's own billable figure — rates
       // are billable at ingestion, so no further fee math applies.
-      classifierWorstCaseNanoUsd: classifierReserve(CHEAP, [BIG]),
+      classifierWorstCaseNanoUsd: classifierReserve(CHEAP, []),
     });
+    // And that is genuinely below the model-listing figure, so the assertion
+    // cannot pass by the two happening to coincide.
+    expect(pick?.classifierWorstCaseNanoUsd).toBeLessThan(classifierReserve(CHEAP, [BIG]));
   });
 
   it('resolves a cheapest-price tie deterministically (stable sort keeps the first)', () => {
@@ -385,10 +395,10 @@ describe('pickEffortClassifier', () => {
       outputRate: 1n,
       contextLength: 1000,
     });
-    expect(pickEffortClassifier([tieA, tieB], BIG)?.classifierModelId).toBe('tie-a/model');
+    expect(pickEffortClassifier([tieA, tieB])?.classifierModelId).toBe('tie-a/model');
     // The same answer from the reversed read: the tiebreak is what makes the
     // engine independent of the order the catalog rows arrive in.
-    expect(pickEffortClassifier([tieB, tieA], BIG)?.classifierModelId).toBe('tie-a/model');
+    expect(pickEffortClassifier([tieB, tieA])?.classifierModelId).toBe('tie-a/model');
   });
 
   it('returns null when no priceable engine-text model exists to classify with', () => {
@@ -398,7 +408,7 @@ describe('pickEffortClassifier', () => {
       outputRate: 1n,
       outputs: ['image'],
     });
-    expect(pickEffortClassifier([imageModel], imageModel)).toBeNull();
+    expect(pickEffortClassifier([imageModel])).toBeNull();
   });
 
   it('returns null when the cheapest text model lacks a per-token rate', () => {
@@ -408,6 +418,6 @@ describe('pickEffortClassifier', () => {
     };
     // Two models so the comparator runs: the rate-less model sorts as combined 0,
     // becoming the cheapest classifier pick, whose reserve then fails closed.
-    expect(pickEffortClassifier([rateless, CHEAP], CHEAP)).toBeNull();
+    expect(pickEffortClassifier([rateless, CHEAP])).toBeNull();
   });
 });

@@ -18,13 +18,13 @@ const nano = (cents: number): bigint => BigInt(cents) * NANO_PER_CENT;
 const spendableFor = (cents: number): bigint => nano(cents + 50);
 import { generateNotifications, type NotificationInput } from '../budget.js';
 
-/** IDs of notifications that are billing-denial errors (block send) */
+/** The typed reasons a billing denial resolves to (each blocks the send). */
 const DENIAL_NOTIFICATION_IDS = new Set([
-  'premium_requires_balance',
-  'insufficient_balance',
-  'insufficient_free_allowance',
-  'trial_limit_exceeded',
-  'guest_budget_exhausted',
+  'premium_requires_credit',
+  'insufficient_funds',
+  'free_allowance_exhausted',
+  'trial_message_cap_exceeded',
+  'guest_no_group_budget',
 ]);
 
 function isDenialNotification(id: string): boolean {
@@ -69,7 +69,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'paid',
         purchasedBalanceNanoUsd: nano(1000),
         spendableNanoUsd: spendableFor(1000),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(10),
       });
@@ -80,7 +79,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'paid',
         purchasedBalanceNanoUsd: nano(1000),
         spendableNanoUsd: spendableFor(1000),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: true,
         estimatedMinimumCostNanoUsd: nano(10),
       });
@@ -91,7 +89,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'paid',
         purchasedBalanceNanoUsd: nano(0),
         spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(200),
       });
@@ -102,7 +99,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'paid',
         purchasedBalanceNanoUsd: nano(0),
         spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: true,
         estimatedMinimumCostNanoUsd: nano(200),
       });
@@ -114,8 +110,9 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
       assertConsistency({
         tier: 'free',
         purchasedBalanceNanoUsd: nano(0),
-        spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(100),
+        // A free payer's served spendable IS the day-keyed allowance remaining,
+        // hold-aware and cushion-free — not a purchased balance plus cushion.
+        spendableNanoUsd: nano(100),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(10),
       });
@@ -125,8 +122,7 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
       assertConsistency({
         tier: 'free',
         purchasedBalanceNanoUsd: nano(0),
-        spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(0),
+        spendableNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(10),
       });
@@ -136,8 +132,9 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
       assertConsistency({
         tier: 'free',
         purchasedBalanceNanoUsd: nano(0),
-        spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(100),
+        // A free payer's served spendable IS the day-keyed allowance remaining,
+        // hold-aware and cushion-free — not a purchased balance plus cushion.
+        spendableNanoUsd: nano(100),
         isPremiumModel: true,
         estimatedMinimumCostNanoUsd: nano(10),
       });
@@ -150,7 +147,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'trial',
         purchasedBalanceNanoUsd: nano(0),
         spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(1),
       });
@@ -161,7 +157,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'trial',
         purchasedBalanceNanoUsd: nano(0),
         spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(10),
       });
@@ -172,7 +167,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'trial',
         purchasedBalanceNanoUsd: nano(0),
         spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: true,
         estimatedMinimumCostNanoUsd: nano(1),
       });
@@ -185,7 +179,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'guest',
         purchasedBalanceNanoUsd: nano(0),
         spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(1),
       });
@@ -196,7 +189,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'guest',
         purchasedBalanceNanoUsd: nano(0),
         spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(1),
         group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(5000) },
@@ -208,7 +200,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'guest',
         purchasedBalanceNanoUsd: nano(0),
         spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(1),
         group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
@@ -221,7 +212,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
           tier: 'guest',
           purchasedBalanceNanoUsd: nano(0),
           spendableNanoUsd: spendableFor(0),
-          freeAllowanceNanoUsd: nano(0),
           isPremiumModel: false,
           estimatedMinimumCostNanoUsd: nano(1),
           group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(5000) },
@@ -230,13 +220,12 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
       );
     });
 
-    it('guest + delegated budget exhausted → denied, no stale delegated_budget_exhausted', () => {
+    it('guest + group budget exhausted → denied, with no payer-switch disclosure', () => {
       assertConsistency(
         {
           tier: 'guest',
           purchasedBalanceNanoUsd: nano(0),
           spendableNanoUsd: spendableFor(0),
-          freeAllowanceNanoUsd: nano(0),
           isPremiumModel: false,
           estimatedMinimumCostNanoUsd: nano(1),
           group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
@@ -251,8 +240,7 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
       assertConsistency({
         tier: 'free',
         purchasedBalanceNanoUsd: nano(0),
-        spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(0),
+        spendableNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(10),
         group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(5000) },
@@ -264,7 +252,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'paid',
         purchasedBalanceNanoUsd: nano(1000),
         spendableNanoUsd: spendableFor(1000),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: true,
         estimatedMinimumCostNanoUsd: nano(10),
         group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(0) },
@@ -276,7 +263,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'paid',
         purchasedBalanceNanoUsd: nano(1000),
         spendableNanoUsd: spendableFor(1000),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(10),
         group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
@@ -288,7 +274,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'paid',
         purchasedBalanceNanoUsd: nano(0),
         spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(200),
         group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
@@ -303,7 +288,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
           tier: 'paid',
           purchasedBalanceNanoUsd: nano(1000),
           spendableNanoUsd: spendableFor(1000),
-          freeAllowanceNanoUsd: nano(0),
           isPremiumModel: false,
           estimatedMinimumCostNanoUsd: nano(10),
         },
@@ -317,7 +301,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
           tier: 'paid',
           purchasedBalanceNanoUsd: nano(0),
           spendableNanoUsd: spendableFor(0),
-          freeAllowanceNanoUsd: nano(0),
           isPremiumModel: false,
           estimatedMinimumCostNanoUsd: nano(200),
         },
@@ -331,7 +314,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
           tier: 'free',
           purchasedBalanceNanoUsd: nano(0),
           spendableNanoUsd: spendableFor(0),
-          freeAllowanceNanoUsd: nano(0),
           isPremiumModel: false,
           estimatedMinimumCostNanoUsd: nano(10),
           group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(5000) },
@@ -346,7 +328,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
           tier: 'free',
           purchasedBalanceNanoUsd: nano(0),
           spendableNanoUsd: spendableFor(0),
-          freeAllowanceNanoUsd: nano(0),
           isPremiumModel: false,
           estimatedMinimumCostNanoUsd: nano(10),
           group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
@@ -362,7 +343,6 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         tier: 'paid',
         purchasedBalanceNanoUsd: nano(1000),
         spendableNanoUsd: spendableFor(1000),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(10),
       };
@@ -376,16 +356,15 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
       });
 
       // Has capacity error but NOT billing denial
-      expect(notifications.some((n) => n.id === 'capacity_exceeded')).toBe(true);
+      expect(notifications.some((n) => n.id === 'prompt_too_long')).toBe(true);
       expect(notifications.some((n) => isDenialNotification(n.id))).toBe(false);
     });
 
-    it('denied billing + over capacity → both denial and capacity errors present', () => {
+    it('denied billing + over capacity → the funding reason alone, per §Notices 4', () => {
       const input: ClientBillingInput = {
         tier: 'paid',
         purchasedBalanceNanoUsd: nano(0),
         spendableNanoUsd: spendableFor(0),
-        freeAllowanceNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(200),
       };
@@ -398,8 +377,10 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
         maxOutputTokens: 0,
       });
 
-      expect(notifications.some((n) => n.id === 'capacity_exceeded')).toBe(true);
+      // Both bind, so the precedence picks one: the funding floor is tested
+      // first, and a length demand alongside it would contradict its action.
       expect(notifications.some((n) => isDenialNotification(n.id))).toBe(true);
+      expect(notifications.some((n) => n.id === 'prompt_too_long')).toBe(false);
     });
   });
 });

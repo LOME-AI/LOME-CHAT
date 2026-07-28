@@ -1072,6 +1072,16 @@ describe('wire message assembly (system + history)', () => {
     expect(messages).toEqual([systemMessage(BASE_SYSTEM), { role: 'user', content: 'and now?' }]);
   });
 
+  it('sends no system message at all on a routing-only call', async () => {
+    // The classifier's reserve prices its truncated context and the classifier
+    // template — the base preamble is neither, so a call that carried it would
+    // bill input no reservation covered. Measured at 1,739 characters against a
+    // 4,708-character reserve basis whose worst-case emitted input already uses
+    // all but 317 of it, so the preamble alone would overrun the headroom.
+    const messages = await wireMessages({ ...textRequest('and now?'), routingOnly: true });
+    expect(messages).toEqual([{ role: 'user', content: 'and now?' }]);
+  });
+
   it('orders messages system → history → current user', async () => {
     const messages = await wireMessages({ ...textRequest('and now?'), history: HISTORY });
     expect(messages).toEqual([
