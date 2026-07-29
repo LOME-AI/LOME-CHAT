@@ -79,6 +79,7 @@ export function ModelSelectorButton({
   );
 
   const handleClick = (): void => {
+    /* v8 ignore next -- the Button carries `disabled`, so React never fires onClick while disabled; this guard is defence for a caller that invokes the handler directly */
     if (!disabled) {
       setIsOpen(true);
     }

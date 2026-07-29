@@ -10,7 +10,21 @@ import { fromBase64, toBase64 } from '@hushbox/shared';
  * legacy path exists here by design.
  */
 
-/** RFC 8188 header record size. A single small record fits well under this. */
+/** RFC 8188 §2.1 header fields: salt(16) || rs(4) || idlen(1) || keyid(idlen). */
+const SALT_LENGTH = 16;
+const RECORD_SIZE_LENGTH = 4;
+const ID_LENGTH_LENGTH = 1;
+const HEADER_PREFIX_LENGTH = SALT_LENGTH + RECORD_SIZE_LENGTH + ID_LENGTH_LENGTH;
+
+/**
+ * RFC 8291 §4 requires the sender's ECDH public key, in X9.62 uncompressed point
+ * form (65 octets), to form the entirety of `keyid` — so a Web Push header is
+ * always exactly `HEADER_LENGTH` octets.
+ */
+const KEY_ID_LENGTH = 65;
+const HEADER_LENGTH = HEADER_PREFIX_LENGTH + KEY_ID_LENGTH;
+
+/** RFC 8188 header record size, written to the `rs` field. */
 const RECORD_SIZE = 4096;
 
 /** aes128gcm content encryption key length (bytes). */
@@ -19,15 +33,30 @@ const CEK_LENGTH = 16;
 /** aes128gcm nonce length (bytes). */
 const NONCE_LENGTH = 12;
 
-/** GcM authentication tag length plus the one-octet padding delimiter. */
-const GCM_OVERHEAD = 16 + 1;
+/** AEAD_AES_128_GCM authentication tag length (bytes). */
+const AUTH_TAG_LENGTH = 16;
+
+/** The single 0x02 last-record padding delimiter octet (RFC 8188 §2). */
+const PADDING_DELIMITER_LENGTH = 1;
+
+/** RFC 8030 §7.2: a push service need not accept a payload body larger than this. */
+const MAX_BODY_BYTES = 4096;
 
 /**
- * Largest plaintext a single-record message can carry: the record size less the
- * GCM tag and the 0x02 last-record delimiter. Payloads here are tiny generic
- * JSON, so a single record always suffices.
+ * Largest plaintext one interoperable Web Push message can carry, as stated by
+ * RFC 8291 §4: the 4096-octet body a push service must support, less the header,
+ * the padding delimiter and the AEAD expansion — "at most, 3993 octets of
+ * plaintext". Payloads here are tiny generic JSON, so a single record suffices.
+ *
+ * §4 imposes a second, independent constraint: `rs` MUST be greater than the sum
+ * of the plaintext, the padding delimiter and the tag. `RECORD_SIZE` (4096)
+ * exceeds that sum (4010) at this ceiling, so both hold. Deriving the ceiling
+ * from `RECORD_SIZE` instead would satisfy neither: it yields 4079, whose body is
+ * 86 octets over the limit and whose record exactly equals `rs` rather than
+ * being smaller.
  */
-export const MAX_PLAINTEXT_BYTES = RECORD_SIZE - GCM_OVERHEAD;
+export const MAX_PLAINTEXT_BYTES =
+  MAX_BODY_BYTES - HEADER_LENGTH - PADDING_DELIMITER_LENGTH - AUTH_TAG_LENGTH;
 
 const textEncoder = new TextEncoder();
 
@@ -184,11 +213,11 @@ export async function encryptWebPushPayload(params: EncryptWebPushParams): Promi
   );
 
   // RFC 8188 §2.1 header: salt(16) || rs(4, big-endian) || idlen(1) || keyid.
-  const header = new Uint8Array(21 + ephemeral.publicKey.length);
+  const header = new Uint8Array(HEADER_PREFIX_LENGTH + ephemeral.publicKey.length);
   header.set(salt, 0);
-  new DataView(header.buffer).setUint32(16, RECORD_SIZE, false);
-  header[20] = ephemeral.publicKey.length;
-  header.set(ephemeral.publicKey, 21);
+  new DataView(header.buffer).setUint32(SALT_LENGTH, RECORD_SIZE, false);
+  header[SALT_LENGTH + RECORD_SIZE_LENGTH] = ephemeral.publicKey.length;
+  header.set(ephemeral.publicKey, HEADER_PREFIX_LENGTH);
 
   return concatBytes(header, ciphertext);
 }

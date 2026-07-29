@@ -24,7 +24,13 @@ backend source trees — the demoted legacy reference corpus (`legacy_*` files,
 ## Contract for adding a rule
 
 - Add **one new file** named `<topic>.rule.ts` under `rules/`. Each file owns
-  exactly one rule; never edit the harness to add behavior.
+  exactly one rule; never edit the harness to add behavior. **"Behavior" means
+  rule logic** — a rule implemented as a special case inside the runner instead
+  of as a file. Widening `run.ts`'s glob list changes _which files the rules
+  see_, not what any rule does, and is the sanctioned way to change scope: this
+  README already names that list as the statement of scope, and rules are
+  contracted to receive every in-scope file and filter inside `check`. Measure
+  the blast radius when you widen it — every rule gains the new files at once.
 - Default-export an `ArchRule` (`{ name, check(project) }` from `../types.js`).
   A malformed rule file fails the whole run loudly — there is no silent skip.
 - Keep checks **syntactic** (no `getType()`) so the harness stays fast in CI.
@@ -35,6 +41,17 @@ backend source trees — the demoted legacy reference corpus (`legacy_*` files,
 
 ## Current rules
 
+This list is **illustrative, not exhaustive** — it has lagged the rule set more
+than once. `pnpm arch:check` prints the authoritative count; `rules/` is the
+authoritative list.
+
+- `money-internals-owners-only` — the affordability module's internals are
+  reachable only from **price owners** (code that _produces_ prices), never from
+  consumers. Two named path lists: `PRICE_OWNERS` (permanent) and
+  `PENDING_CONSUMER_CLOSURES` (annotated debt, capped and non-increasing, with a
+  duplicate guard so a repeated path cannot hide under the cap). The wall the
+  export map draws is over _paths_; this rule draws the one the export map
+  structurally cannot — over _importers_.
 - `do-classes-live-in-realtime` — seed of the thin-shell DO family:
   classes extending `DurableObject` must not be declared inside slices;
   `packages/realtime` owns the DO classes (platform glue). The family grows
@@ -120,8 +137,11 @@ isNotNull, like, ilike, between, sql, asc, desc`), by either route: an
   CI, which is the only thing standing between an integration going silently
   dark and a red build. So an adapter may record evidence **only where its real
   implementation actually executes in CI**. That holds for helcim (a real
-  sandbox charge), hookdeck, r2 (a real S3 PUT) and openrouter (a real,
-  cassette-backed catalog fetch), and those adapters record it themselves. It
+  sandbox charge), hookdeck, and openrouter (a real, cassette-backed catalog
+  fetch), and those adapters record it themselves. r2 records its own row after a
+  real S3 PUT, but in CI that PUT lands on local MinIO (`R2_S3_ENDPOINT` is
+  `http://localhost:9000` for `ciVitest`) — the write is real, the external
+  service is not, and no CI step requires `r2-storage`. It
   does **not** hold for fcm, webpush and resend: `push-sender-factory.ts` and
   `email-sender-factory.ts` deliberately return mock senders whenever
   `isLocalDev || isCI`, because FCM has no sandbox, a real adapter would fire
@@ -180,7 +200,9 @@ isNotNull, like, ilike, between, sql, asc, desc`), by either route: an
     the transport without ever naming a `fetch` slot.
 
   **Coverage limit:** `run.ts`'s `SOURCE_GLOBS` do not include
-  `apps/api/src/platform/**`, `apps/api/src/jobs/**` or `scripts/**`, so real
-  `recordServiceEvidence` callers living there (`linear-real.integration.test.ts`
-  is one) are never seen by this rule. Widening the globs changes the input to
-  every rule in the directory, so it is a deliberate decision, not a tidy-up.
+  `apps/api/src/adapters/**`, `apps/api/src/platform/**`, `apps/api/src/jobs/**`
+  or `scripts/**`, so real `recordServiceEvidence` callers living there
+  (`linear-real.integration.test.ts` is one) are never seen by this rule.
+  `adapters/**` is the composition root — the likeliest home for a future
+  violation. Widening the globs changes the input to every rule in the directory,
+  so it is a deliberate decision, not a tidy-up.

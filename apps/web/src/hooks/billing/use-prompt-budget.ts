@@ -29,6 +29,7 @@ import { useModels } from '@/hooks/models/models';
 import { useSession, useAuthStore } from '@/lib/auth';
 import { useWebSearch } from '@/hooks/chat/use-web-search';
 import { useTurnOptions } from '@/hooks/billing/use-turn-options.js';
+import type { ResolveBillingResult } from '@hushbox/shared';
 import type {
   DimensionAvailability,
   NoticeReason,
@@ -67,12 +68,9 @@ export interface PromptBudgetResult {
   hasBlockingError: boolean;
   /**
    * Why the send is refused, as a TYPED reason, or `undefined` when it may
-   * start. The send gate reads `admissible` — the hold-aware set — while the
-   * picker greys from `affordable`; THE PAIR derives which reason applies
-   * (BILLING §Data Structures): a selection outside `affordable` is a money
-   * problem, one inside `affordable` but outside `admissible` is a hold
-   * problem. Nothing sets this flag — it is which set the selection fell out
-   * of, so the block and its explanation cannot drift apart.
+   * start. It is the producer's own refusal — NOT an inference from the gap
+   * between the two sets, which cannot distinguish a hold from a long prompt
+   * because the sets differ in funding AND basis. See {@link sendRefusalOf}.
    */
   sendRefusal: NoticeReason | undefined;
   hasContent: boolean;
@@ -129,28 +127,20 @@ function buildBillingResolverInput(args: {
   estimatedCostNanoUsd: bigint;
   isPremiumModel: boolean;
   isAuthenticated: boolean;
-  groupContext: GroupBillingContext | undefined;
 }): {
   estimatedMinimumCostNanoUsd: bigint;
   isPremiumModel: boolean;
   isAuthenticated: boolean;
-  group?: GroupBillingContext;
 } {
-  const { estimatedCostNanoUsd, isPremiumModel, isAuthenticated, groupContext } = args;
-  if (groupContext === undefined) {
-    return { estimatedMinimumCostNanoUsd: estimatedCostNanoUsd, isPremiumModel, isAuthenticated };
-  }
-  return {
-    estimatedMinimumCostNanoUsd: estimatedCostNanoUsd,
-    isPremiumModel,
-    isAuthenticated,
-    group: groupContext,
-  };
-}
-
-interface GroupBillingContext {
-  effectiveRemainingNanoUsd: bigint;
-  ownerBalanceNanoUsd: bigint;
+  const { estimatedCostNanoUsd, isPremiumModel, isAuthenticated } = args;
+  // The GROUP dimension is deliberately NOT passed. `GET /billing/spendable`
+  // already applied §Group Funding 2 server-side and named the payer; feeding a
+  // hold-aware group remaining back into the client's funding decision was the
+  // same re-resolution removed one layer out, and inside the
+  // settle-then-release window it resolved `self` where the server resolves
+  // `owner` — telling a member they would be charged for a turn the owner pays,
+  // and refusing a link guest a turn admission would admit.
+  return { estimatedMinimumCostNanoUsd: estimatedCostNanoUsd, isPremiumModel, isAuthenticated };
 }
 
 /**
@@ -159,30 +149,6 @@ interface GroupBillingContext {
  */
 function conversationScope(conversationId: string | null | undefined): string | null {
   return conversationId ?? null;
-}
-
-/**
- * Build the group billing context that {@link useResolveBilling} expects from
- * the NanoUSD budgets response. Returns undefined for solo conversations and
- * non-member roles (owners), so the resolver falls back to the per-user balance
- * check. `effectiveRemainingNanoUsd` is the backend's own hold-aware effective
- * remaining (the figure admission gates on), never re-derived here — carried
- * through as an exact bigint. The owner balance drives the negative-balance
- * denial and, through the shared core, the owner-funded premium exemption.
- */
-function useGroupBillingContext(
-  isGroupMember: boolean,
-  data: ConversationBudgetsResponse | undefined
-): GroupBillingContext | undefined {
-  return React.useMemo(() => {
-    if (!isGroupMember || !data) return;
-    const memberRow = data.members[0];
-    return {
-      effectiveRemainingNanoUsd:
-        memberRow === undefined ? 0n : BigInt(memberRow.effectiveRemainingNanoUsd),
-      ownerBalanceNanoUsd: BigInt(data.ownerBalanceNanoUsd),
-    };
-  }, [isGroupMember, data]);
 }
 
 /**
@@ -240,6 +206,10 @@ interface PromptBudgetDisplayInputs {
   inputValue: string;
   /** The produced pair. `undefined` while its inputs load. */
   turnOptions: TurnOptions | undefined;
+  /** Active holds off the same snapshot — the only evidence a hold exists. */
+  heldNanoUsd: bigint;
+  /** Whether this turn is text; the produced verdict governs the text arm only. */
+  isTextTurn: boolean;
 }
 
 interface PromptBudgetDisplayResult {
@@ -247,12 +217,9 @@ interface PromptBudgetDisplayResult {
   hasBlockingError: boolean;
   /**
    * Why the send is refused, as a TYPED reason, or `undefined` when it may
-   * start. The send gate reads `admissible` — the hold-aware set — while the
-   * picker greys from `affordable`; THE PAIR derives which reason applies
-   * (BILLING §Data Structures): a selection outside `affordable` is a money
-   * problem, one inside `affordable` but outside `admissible` is a hold
-   * problem. Nothing sets this flag — it is which set the selection fell out
-   * of, so the block and its explanation cannot drift apart.
+   * start. It is the producer's own refusal — NOT an inference from the gap
+   * between the two sets, which cannot distinguish a hold from a long prompt
+   * because the sets differ in funding AND basis. See {@link sendRefusalOf}.
    */
   sendRefusal: NoticeReason | undefined;
   hasContent: boolean;
@@ -290,27 +257,61 @@ function readOnlyOverride(
 }
 
 /**
- * The reason a send is refused, taken from the REFUSAL the producer gave —
- * never inferred from the difference between the two sets.
+ * The reason a send is refused, taken from the REFUSAL the producer gave.
  *
- * `admissible` and `affordable` differ in TWO inputs, funding AND prompt basis
- * (see `turn-options.ts`), so "inside affordable, outside admissible" does not
- * imply a hold: a long history alone produces `prompt_too_long` there. Reading
- * the gap as a hold told a user with nothing running to wait for a reply that
- * did not exist, when their real action was to shorten the message.
+ * A hold is claimed ONLY on positive evidence that one exists — `heldNanoUsd`
+ * from the same snapshot. The difference between the two option sets cannot
+ * establish it: they differ in funding AND prompt basis, so with nothing held
+ * `affordable` sends purely because it is evaluated against the EMPTY basis.
+ * Reading that gap as a hold told a free user — whose entire daily allowance is
+ * 5¢ — to wait for a reply that was not running, on an ordinary long
+ * conversation. Waiting never helps there.
  *
- * A hold is a narrower claim: the turn is refused for FUNDING, and the same
- * funding hold-blind would have sent. That is the only shape where waiting is
- * the action and paying is not (BILLING §Notices 9).
+ * With nothing held, a funding refusal that the empty basis would have cleared
+ * is a LENGTH problem: the funding covers a minimum answer and the prompt is
+ * what makes the turn infeasible (§Notices 4 tests the minimum-answer floor
+ * first, then attributes to length).
+ *
+ * Residual, stated rather than hidden: when funds ARE held and the prompt is
+ * also long, both causes are live and this names the hold. The hold is the
+ * right choice, and the reason is what each notice ASKS THE USER TO DO — not
+ * that a hold clears itself, which is only the weaker half.
+ *
+ * "Wait" costs nothing, is reversible, and becomes true within seconds.
+ * "Shorten your message" asks for an irreversible destruction of the user's
+ * draft that would NOT unblock the send, because the hold is still there. A
+ * false "wait" self-corrects; a false "shorten" leaves the user with less text
+ * and the same block. That asymmetry is the whole argument, and it is why a
+ * future reader must not reverse this on the grounds that length is "more
+ * actionable".
+ *
+ * What is GUARANTEED, stated exactly: the hold claim is true in every case that
+ * reaches it — funds really are held — and it is transient. What is NOT
+ * guaranteed is that releasing the hold sends: at a small spendable with a long
+ * history, release yields `prompt_too_long` instead. So the notice self-corrects
+ * to the length wording rather than to a send. That is still categorically
+ * better than the state this replaced, where the claim was false and permanent.
+ *
+ * Cite §Notices 3 ("waiting is an action"), NOT §Notices 4 — that clause is
+ * written about money-versus-length precedence and does not cover
+ * hold-versus-length at all.
  */
-function sendRefusalOf(options: TurnOptions | undefined): NoticeReason | undefined {
+function sendRefusalOf(
+  options: TurnOptions | undefined,
+  heldNanoUsd: bigint,
+  isTextTurn: boolean
+): NoticeReason | undefined {
+  // E1 is the TEXT arm. The producer explicitly declines to price a non-text
+  // modality (`modality_not_priceable`), so consuming its verdict there would
+  // impose the text arm's gate on an arm that has no verdict yet — and this
+  // composer is the media composer, so it disabled image and video generation
+  // outright. Media keeps the path it had until G2 and E4 land.
+  if (!isTextTurn) return undefined;
   if (options === undefined) return undefined;
   if (options.admissible.sendable) return undefined;
   const refusal = options.admissible.refusal;
-  if (refusal === 'insufficient_funds' && options.affordable.sendable) {
-    return 'funds_held_by_run';
-  }
-  return refusal;
+  if (refusal !== 'insufficient_funds' || !options.affordable.sendable) return refusal;
+  return heldNanoUsd > 0n ? 'funds_held_by_run' : 'prompt_too_long';
 }
 
 function computePromptBudgetDisplay(inputs: PromptBudgetDisplayInputs): PromptBudgetDisplayResult {
@@ -318,7 +319,7 @@ function computePromptBudgetDisplay(inputs: PromptBudgetDisplayInputs): PromptBu
   const isDenied = inputs.fundingSource === 'denied';
   const isBillingLoading =
     inputs.isBalanceLoading || (inputs.isGroupMember && inputs.isGroupBudgetPending);
-  const sendRefusal = sendRefusalOf(inputs.turnOptions);
+  const sendRefusal = sendRefusalOf(inputs.turnOptions, inputs.heldNanoUsd, inputs.isTextTurn);
   const hasBlockingError =
     isDenied || isOverCapacity || isBillingLoading || sendRefusal !== undefined;
   const hasContent = inputs.inputValue.trim().length > 0;
@@ -413,6 +414,44 @@ function buildMediaCostInput(args: {
   return { modality: activeModality };
 }
 
+/**
+ * Restate the client's funding verdict in terms of the payer THE SERVER NAMED.
+ *
+ * Nothing here decides who pays — `GET /billing/spendable` already applied
+ * §Group Funding 2 and returned `payer` alongside the figures. This only picks
+ * which sentence describes that answer, which is what §Notices 5 requires:
+ * "A change of payer requires an affirmative pre-send disclosure … Switching
+ * who pays is not a detail to discover from a balance later."
+ *
+ * Both disclosures hang off it. An owner-funded turn must not tell a member
+ * their own allowance is paying — they are not charged at all — and a member
+ * who has fallen through to personal funds must be told so BEFORE sending.
+ */
+function withServedPayer(
+  result: ResolveBillingResult,
+  payer: 'self' | 'owner',
+  isGroupMember: boolean
+): ResolveBillingResult {
+  // ORDER IS THE RULE, not an optimisation. When the server says the owner
+  // pays, the owner-funded arm is the WHOLE answer, so it must sit ahead of
+  // every self-wallet verdict — including the denial early-return below.
+  // A patch applied AFTER that return cannot reach the arms that short-circuit
+  // into it, which is how the premium lock and the negative-balance block
+  // (both statements about the SELF wallet) blocked sends the server admits:
+  // §Funding Decision Matrix priority 1 is "Conversation owner pays, premium
+  // allowed", and the picker beside the composer already marks those rows
+  // available because the served tier is the owner's.
+  //
+  // The result is replaced rather than spread: a denial carries a `reason`
+  // about a wallet that is not paying, and it must not travel with the answer.
+  if (payer === 'owner') return { fundingSource: 'owner_balance' };
+  if (result.fundingSource === 'denied') return result;
+  // Self-funding inside a group conversation IS the fall-through §Notices 5
+  // exists for; a solo conversation is simply self-funded and discloses nothing.
+  if (!isGroupMember) return result;
+  return { ...result, payerSwitch: 'group_headroom_insufficient' };
+}
+
 export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
   const activeModality = useModelStore((state) => state.activeModality);
   const selectedModels = useModelStore((state) => state.selections[state.activeModality]);
@@ -466,8 +505,6 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
     ...reasoningBudgetInput(input.reasoningEffort, selectedModels, modelsData?.models),
   });
 
-  const groupContext = useGroupBillingContext(isGroupMember, groupBudgetData);
-
   // The send gate's own source. `admissible` is evaluated against the COMPOSED
   // basis and the hold-aware figure — the question "can this turn start right
   // now" — while the picker's `affordable` is neither. One call yields both.
@@ -477,12 +514,10 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
     conversationId: conversationScope(input.conversationId),
   });
 
-  // 2.5. Media cost — for image/video/audio modalities, the token-based budget
-  // result is irrelevant (token prices are 0). Use the same per-modality
-  // helpers the backend uses for reservation, so the displayed cost matches
-  // the value the server-side balance gate compares against. Returns 0 for
-  // text, in which case `estimatedCostNanoUsd` falls through to the token-based
-  // computation below.
+  // Media cost — image/video/audio only. It uses the same per-modality helpers
+  // the backend uses for reservation, so the displayed estimate matches what
+  // the server-side balance gate compares against. A text turn contributes no
+  // money estimate at all; there is no token-based fallback to fall through to.
   const mediaRates = buildMediaRateArrays(
     selectedModels,
     modelsData?.models,
@@ -504,14 +539,14 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
   // still needs one, and it keeps its own path until G2/E4 collapse it.
   const estimatedCostNanoUsd = activeModality === 'text' ? 0n : mediaCost.estimatedNanoUsd;
 
-  const billingResult = useResolveBilling(
+  const selfFundedResult = useResolveBilling(
     buildBillingResolverInput({
       estimatedCostNanoUsd,
       isPremiumModel,
       isAuthenticated,
-      groupContext,
     })
   );
+  const billingResult = withServedPayer(selfFundedResult, turnOptions.payer, isGroupMember);
 
   // 4. Generate notifications
   const hasDelegatedBudget = resolveHasDelegatedBudget(isGroupMember, groupBudgetData);
@@ -544,6 +579,8 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
     modelContextLength,
     inputValue: input.value,
     turnOptions: turnOptions.options,
+    heldNanoUsd: turnOptions.heldNanoUsd,
+    isTextTurn: activeModality === 'text',
   });
 
   const isReadOnly = input.currentUserPrivilege === 'read';

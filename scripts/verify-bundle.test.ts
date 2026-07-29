@@ -475,7 +475,7 @@ describe('appBundleOptions', () => {
     });
   });
 
-  it('expects no TTS in the crawler-view bundle, which has no build script yet', () => {
+  it('declares no TTS for crawler-view', () => {
     expect(appBundleOptions('/repo', 'apps/crawler-view').shipsTts).toBe(false);
   });
 

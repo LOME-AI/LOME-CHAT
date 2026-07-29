@@ -295,7 +295,10 @@ describe('useTurnOptions — the payer the SERVER named', () => {
   });
 
   it('greys when the served figure — whoever it describes — cannot fund the floor', () => {
-    mockSpendable.current = served('0', false, 'owner');
+    // Labelled `self`: the owner arm is only returned when hold-blind headroom
+    // is positive, so a zero figure with nothing held cannot describe an owner.
+    // The assertion is about the FIGURE, not the label.
+    mockSpendable.current = served('0', false, 'self');
 
     expect(render().result.current.options?.affordable.all[0]?.availability).toEqual({
       available: false,
@@ -524,7 +527,7 @@ describe('priceableFromWire — the fail-closed guards', () => {
 
   it('excludes a row with no release date, so recency cannot silently pass', () => {
     const noCreated = wireModel({ id: 'vendor/undated' });
-    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- the wire
+
     // field is optional; this reproduces a row that arrived without it.
     delete (noCreated as { created?: number }).created;
 

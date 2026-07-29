@@ -16,7 +16,8 @@ propose a new pnpm script instead of running it directly.
   `pnpm db:migrate` applies; `pnpm db:reset` wipes; `pnpm db:seed`; `pnpm db:studio`.
 - `pnpm lint` / `lint:fix` / `typecheck` / `format` — plus the standalone gates:
   `pnpm arch:check` (ts-morph structural rules), `pnpm lint:duplication` (jscpd),
-  `pnpm lint:unused` (knip).
+  `pnpm lint:unused` (knip), `pnpm verify:bundle` (an already-built `apps/web`
+  dist; name other dist directories as arguments).
 - `pnpm e2e` (full) / `e2e:quick` / `e2e:<suite>` — read `e2e/CLAUDE.md` before
   writing or debugging E2E tests.
 
@@ -43,16 +44,23 @@ single source of truth, so the test environment is identical locally and in CI.
 Gates: lint + `arch:check` · typecheck + migration drift (an uncommitted
 `packages/db/drizzle/` diff fails) · duplication (jscpd) · unused (knip) · gitleaks ·
 test (AI calls replay from cassettes while the request is unchanged; a changed or
-uncached request makes one real call and records it in the same run) · build.
-Prettier runs as an ESLint rule, so formatting is covered by the lint gate (CI and
-pre-push). Pre-commit regenerates derived files and re-stages them; pre-push runs
-ESLint, typecheck, and tests (husky).
+uncached request makes one real call and records it in the same run) · build +
+bundle verification. Bundle verification is invoked, never ambient: `apps/admin` and
+`apps/sandbox` verify themselves at build · the web dist is verified by workflow
+steps — the merged bundle before upload, the pre-merge dist Android packages, the
+three mobile OTA bundles. Presence in the guard's app map is a TTS declaration, not
+coverage. Prettier runs as an ESLint rule, so formatting is covered by the lint gate
+(CI and pre-push). Pre-commit regenerates derived files and re-stages them; pre-push
+runs ESLint, typecheck, and tests (husky).
 
 Real external services are exercised in CI with restricted credentials — OpenRouter
 in the vitest test job (`OPENROUTER_API_KEY_RESTRICTED`, record-on-miss cassettes),
-Helcim sandbox in the e2e job (`HELCIM_API_TOKEN_SANDBOX`) — and `pnpm verify:evidence`
-asserts each integration's code path ran (for OpenRouter a warm-cache cassette replay
-counts as evidence; it need not be a live call this run).
+FCM in the same job (`FCM_PROJECT_ID_CI` / `FCM_SERVICE_ACCOUNT_JSON_CI`, one
+`validate_only` send), Helcim sandbox in the e2e job (`HELCIM_API_TOKEN_SANDBOX`) — and
+`pnpm verify:evidence` asserts a real call happened, not merely that the code path ran.
+A mocked HTTP seam must never write a row; `arch:check` enforces that. OpenRouter is the
+deliberate exception: a warm-cache cassette replay counts, because the cassette holds
+bytes a real call produced.
 
 ## Environment
 

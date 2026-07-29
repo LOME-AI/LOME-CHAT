@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { fromBase64 } from '@hushbox/shared';
+import { MAX_PLAINTEXT_BYTES } from './encrypt.js';
 import { sendWebPush } from './send.js';
 import type { WebPushSendDeps, WebPushSubscription } from './send.js';
 
@@ -83,10 +84,16 @@ describe('sendWebPush — validation', () => {
     expect(result._unsafeUnwrapErr().code).toBe('validation');
   });
 
-  it('rejects a payload larger than a single record can hold', async () => {
-    const huge = new Uint8Array(4096);
-    const result = await sendWebPush(SUBSCRIPTION, huge, { ttl: 60 }, deps());
+  it('rejects a payload one octet past the interoperable plaintext ceiling', async () => {
+    const overLimit = new Uint8Array(MAX_PLAINTEXT_BYTES + 1);
+    const result = await sendWebPush(SUBSCRIPTION, overLimit, { ttl: 60 }, deps());
     expect(result._unsafeUnwrapErr().code).toBe('validation');
+  });
+
+  it('accepts a payload at exactly the interoperable plaintext ceiling', async () => {
+    const atLimit = new Uint8Array(MAX_PLAINTEXT_BYTES);
+    const result = await sendWebPush(SUBSCRIPTION, atLimit, { ttl: 60 }, deps());
+    expect(result.isOk()).toBe(true);
   });
 });
 

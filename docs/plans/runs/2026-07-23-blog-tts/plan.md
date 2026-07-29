@@ -2042,3 +2042,111 @@ clause, unchanged from HEAD, already states what the constants are. No replaceme
 `TTS_MODEL_CONNECT_SRC`, `TTS_ORT_WASM_PATH`) are byte-identical to HEAD, and comment-stripped
 diffs of all three files match their HEAD blobs. The defect this audit was most alert for — a
 changed constant hiding inside a comment-only cycle — is absent.
+
+---
+
+## AMENDMENT — 2026-07-29: Z-series (founder rulings on the open-item enumeration)
+
+Founder ruled every open item. **Do:** the `tts-hosts.ts` sentence deletion; the doc edits
+("durable, dense"); deduplicate the hardcoded model-host string in the marketing spec; remove
+that spec's browser-restriction tag so it runs on all projects; correct stale information about
+`apps/crawler-view` with no logic change. **Skip:** the host-pin test. **Ignore, permanently, do
+not re-raise:** the destroyed foreign workflow edit and the teardown hazard; the web/marketing
+cache-key gap; the `knip.jsonc` block risk; the other islands' hydration windows; the iPhone
+check; and all foreign breakage. **The Y5 correctness question is CLOSED with no changes** — the
+spec stays exactly as it is, and it is not to be re-opened or discussed.
+
+### Z1 — Delete the false drift claim in the shared package
+
+- **Objective:** remove a comment asserting a safety property that does not exist.
+- **The claim:** `packages/shared/src/tts-hosts.ts:3-4` — "Shared so the hosts the engine fetches
+  and the hosts the CSP allows cannot drift apart." Only one end reads the constant.
+  `scripts/generate-headers.ts` imports `TTS_MODEL_CONNECT_SRC` for the policy; the engine's host
+  is `@huggingface/transformers`' built-in default, read at runtime as
+  `'https://huggingface.co/'` through kokoro-js. No repo code assigns or reads it, and
+  `packages/ui/src/components/accessibility/lib/tts.worker.ts:28` imports only
+  `TTS_MODEL_DOWNLOAD_BYTES` and `TTS_ORT_WASM_PATH`, with `:38-40` stating outright that the
+  model host is not pinned there.
+- **Acceptance criteria:** delete the sentence. **Write nothing in its place.** The preceding
+  clause, unchanged from HEAD, already states what the constants are. Add no comment anywhere
+  else describing the gap — a warning is not a mechanism, and the founder declined the test that
+  would have been one. Exported values must be byte-identical.
+- **Files:** `packages/shared/src/tts-hosts.ts`. **Auditors: 1.**
+
+### Z2 — Documentation (founder-approved: "durable, dense")
+
+- **Objective:** `docs/DEVELOPMENT.md` records the CI gate and command this run added, and the
+  guard's real coverage.
+- **Acceptance criteria:**
+  1. Bundle verification appears in the enumerated CI gate list alongside lint, typecheck,
+     duplication, unused, gitleaks, test and build.
+  2. `pnpm verify:bundle` appears with the other standalone gate commands.
+  3. One line records which build outputs the guard covers and which it does not. **It must be
+     accurate:** covered today are the merged web bundle (a workflow step before upload), admin
+     (from its own build config, so every admin build), sandbox (from its build script), the
+     pre-merge web dist consumed by the Android app, and the three mobile OTA bundles. NOT
+     covered: nothing else. `apps/crawler-view` is listed in the guard's app map but has no build
+     script, so no build of it ever invokes the guard — do not imply otherwise.
+  4. **Dense and durable, per the founder.** Every line must earn its place: if removing it would
+     not cause a reader to make a mistake, cut it. State constraints, not inventories — this run
+     removed fifteen comments that listed what files contain or who imports them, and every one
+     rotted. Name no line numbers and no counts that will drift.
+- **Files:** `docs/DEVELOPMENT.md`. **Auditors: 1.**
+
+### Z3 — Deduplicate the model-host string; remove the browser restriction
+
+- **Objective:** two independent fixes in `e2e/marketing-roadmap.spec.ts`.
+- **Acceptance criteria:**
+  1. The `huggingface.co` host string is hardcoded twice in that file (around `:79` and `:142`).
+     Import the shared constant instead. This is the same value the CSP allowlist derives from;
+     a third restatement is exactly the drift risk the run has been eliminating. Verify the
+     imported form still matches what the interception needs — the shared constant has no
+     trailing slash, and a route pattern may.
+  2. Remove the `@chromium-only` tag so the spec runs on every configured project. **This is
+     safe and was measured:** an auditor confirmed that on this Playwright version a
+     module-worker's cross-origin fetch is intercepted in chromium, firefox AND webkit, and ran
+     the full path in all three with zero external bytes transferred. The tag's original
+     justification — that only Chromium intercepts, so other engines would download ~90 MB — was
+     false.
+  3. Behaviour otherwise unchanged; no new dependency; no assertion weakened.
+  4. Confirm by running the spec that it passes on all projects and that no external download
+     occurs on any of them.
+- **Files:** `e2e/marketing-roadmap.spec.ts` (+ its imports). **Auditors: 1.**
+
+### Z4 — Correct stale information about `apps/crawler-view` (no logic change)
+
+- **Objective:** `apps/crawler-view` is declared in the guard's app map, which reads as though it
+  is guarded. It is not: it has no build script, so nothing ever invokes the guard for it. Earlier
+  in this run a comment claiming the guard was "already in force the day it gets one" was found
+  false and deleted; the entry itself remained.
+- **Acceptance criteria:** correct any surviving text — comment, doc, or test name — that states
+  or implies `apps/crawler-view` is verified. **No logic change:** keep the map entry, change no
+  behaviour, add no build script, remove no declaration. If the accurate statement is short,
+  state it; if it cannot be stated in a clause a reader can check in seconds, delete the claim
+  rather than rewriting it.
+- **Files:** `scripts/verify-bundle.ts` and any other file carrying such a claim. **Auditors: 1.**
+
+### Z2 — result, and a correction to MY brief
+
+**My covered-artifact list was incomplete.** §Z2 enumerated five covered outputs and said "NOT
+covered: nothing else." The implementer found a sixth invocation I missed:
+`scripts/build-web-bundle.ts:106` calls the guard on the e2e bundle. It deliberately kept that
+out of the doc — nothing ships from a test-only bundle, and naming it would be inventory — but
+it refused to write my absolute "nothing else is verified" claim, because that claim was false.
+Instead it phrased coverage as **"invoked, never ambient."** That is the correct shape: a
+constraint that stays true as call sites come and go, rather than a list that rots the moment one
+is added.
+
+Had it written my sentence verbatim, the doc would have shipped the sixteenth false claim of this
+run — in the one file loaded into every agent's instructions.
+
+**Two other judgement calls, both right:** iOS packages the already-verified merged artifact
+(its workflow downloads it and never builds web), so it is covered transitively and was NOT named
+separately — avoiding inventory. And `docs/DEVELOPMENT.md` carried no `apps/crawler-view` claim at
+all, so rather than naming the app, it states the durable constraint: **"Presence in the guard's
+app map is a TTS declaration, not coverage."** That sentence is true regardless of which apps are
+listed, which is exactly the property the fifteen deleted comments lacked.
+
+**Recorded dependency:** that clause is only meaningful while the app map exists. The concurrent
+crawler-view task was scoped to no-logic-change and keeps it, so the clause holds today. If the
+map is ever removed, the clause goes vacuous and should go with it.

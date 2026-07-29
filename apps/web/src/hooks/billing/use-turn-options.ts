@@ -122,6 +122,19 @@ export interface UseTurnOptionsResult {
   readonly isPending: boolean;
   /** The produced pair, or `undefined` while `isPending`. */
   readonly options: TurnOptions | undefined;
+  /**
+   * What active holds took off the payer's spendable, from the same snapshot
+   * that produced `options`. It is the ONLY evidence a hold exists: the two
+   * option sets differ in funding AND basis, so their difference cannot
+   * distinguish a hold from a long prompt.
+   */
+  readonly heldNanoUsd: bigint;
+  /**
+   * WHO the served figures describe, straight from the wire. The server applied
+   * §Group Funding 2 and named the payer; this is that answer, carried through
+   * unchanged so a surface can say which wallet pays without deciding it.
+   */
+  readonly payer: 'self' | 'owner';
 }
 
 /** Which models the turn draws on, with the sentinel resolved to the smart slot. */
@@ -187,10 +200,12 @@ export function useTurnOptions(input: UseTurnOptionsInput): UseTurnOptionsResult
   const selectedIds = selected.map((entry) => entry.id).join(' ');
 
   return React.useMemo((): UseTurnOptionsResult => {
-    if (isPending || catalog === undefined) return { isPending: true, options: undefined };
+    if (isPending || catalog === undefined)
+      return { isPending: true, options: undefined, heldNanoUsd: 0n, payer: 'self' };
 
     const answerSources = answerSourcesOf(selected);
-    if (answerSources === undefined) return { isPending: false, options: undefined };
+    if (answerSources === undefined)
+      return { isPending: false, options: undefined, heldNanoUsd: 0n, payer: 'self' };
 
     const funding = fundingSnapshotOf(served, tierInfo.tier);
 
@@ -208,6 +223,8 @@ export function useTurnOptions(input: UseTurnOptionsInput): UseTurnOptionsResult
 
     return {
       isPending: false,
+      heldNanoUsd: BigInt(funding.heldNanoUsd),
+      payer: funding.payer,
       options: getTurnOptions(funding, input.basis, selection, {
         models,
         nowMs: CATALOG_INSTANT_MS,

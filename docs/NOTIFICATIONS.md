@@ -178,12 +178,14 @@ state machine exists once.
 
 All registry entries with values for every mode; production values are Workers secrets.
 
-| Variable                                 | Purpose                                                                                             |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY` | Web Push VAPID keypair (dev/CI use a committed throwaway pair — dev sends only ever reach the mock) |
-| `VITE_VAPID_PUBLIC_KEY`                  | The public key, exposed to the browser for `pushManager.subscribe`                                  |
-| `VAPID_SUBJECT`                          | VAPID `sub` claim (mailto/https)                                                                    |
-| `NOTIFICATION_TAG_SECRET`                | HMAC key for the conversation tag alias                                                             |
+| Variable                                            | Purpose                                                                                                                                                                                                                                                           |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY`            | Web Push VAPID keypair (dev/CI use a committed throwaway pair — dev sends only ever reach the mock)                                                                                                                                                               |
+| `VITE_VAPID_PUBLIC_KEY`                             | The public key, exposed to the browser for `pushManager.subscribe`                                                                                                                                                                                                |
+| `VAPID_SUBJECT`                                     | VAPID `sub` claim (mailto/https)                                                                                                                                                                                                                                  |
+| `NOTIFICATION_TAG_SECRET`                           | HMAC key for the per-conversation collapse alias (FCM `collapse_key`, APNs `apns-collapse-id`, Web Push `Topic`). Despite the name it does not key the Android notification tag, which carries the raw conversation id.                                           |
+| `FCM_PROJECT_ID` / `FCM_SERVICE_ACCOUNT_JSON`       | Production FCM credentials; production mode only                                                                                                                                                                                                                  |
+| `FCM_PROJECT_ID_CI` / `FCM_SERVICE_ACCOUNT_JSON_CI` | CI-only service account, custom IAM role holding `cloudmessaging.messages.create` alone — never the predefined admin role, never the production credential. Missing ⇒ `pnpm generate:env --mode=ciVitest` throws and the whole CI DAG fails before any test runs. |
 
 ## Development & testing
 
@@ -194,9 +196,15 @@ All registry entries with values for every mode; production values are Workers s
 - Playwright covers the prompt, settings, and — via Chromium CDP push injection into the
   real service worker — delivery, click, and deep-link. The Android Maestro harness
   covers the prompt and permission-grant flows on the emulator.
-- Deliberately untested in CI: the real server → push-service → device hop (it requires
-  live Google/Mozilla/Apple infrastructure and real credentials; it is non-hermetic by
-  nature). iOS device delivery is verified manually.
+- The FCM **send** path runs for real in CI: a live OAuth exchange with Google plus one
+  `validate_only` `messages:send`, gated by `pnpm verify:evidence --require=push-fcm`.
+  It proves RS256 JWT signing, project id, scope, request shape, and error
+  classification against Google — not delivery.
+- The Web Push ciphertext is proven decryptable by an independent RFC 8291/8188
+  implementation over randomized keys, not only against the fixed vector above.
+- Deliberately untested in CI: the push-service → device hop (live Google/Mozilla/Apple
+  delivery infrastructure and real devices; non-hermetic by nature). iOS device delivery
+  is verified manually.
 
 ## Deliberate limits
 

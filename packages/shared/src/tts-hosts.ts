@@ -1,7 +1,6 @@
 // Single source of truth for the network hosts the on-device Kokoro TTS model
 // download reaches, and the same-origin path its onnxruntime-web runtime is
-// self-hosted at. Shared so the hosts the engine fetches and the hosts the CSP
-// allows cannot drift apart.
+// self-hosted at.
 
 /**
  * The Hugging Face hub host the engine fetches model config, tokenizer, and

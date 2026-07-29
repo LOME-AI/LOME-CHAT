@@ -84,3 +84,8 @@ The rules below are the working knowledge specific to this tree.
   claimable rows, and only on the `default` shard; every other jobs integration test
   runs its shard-wide `FOR UPDATE` operations against the literal `'bulk'` shard
   (arch-enforced).
+- A test that mints a fake HTTP transport (`vi.fn`, `vi.mock`, `vi.spyOn`,
+  `vi.stubGlobal('fetch', …)`) must not also write a `service_evidence` row: a row
+  means a real call happened (arch-enforced). Evidence for fcm, webpush and resend
+  belongs in a CI-gated test that made the real call, never in an adapter the factory
+  mocks away in CI.

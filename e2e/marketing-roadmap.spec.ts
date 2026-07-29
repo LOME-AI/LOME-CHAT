@@ -1,3 +1,5 @@
+import { TTS_MODEL_HOST } from '@hushbox/shared';
+
 import { test, expectConsoleErrors } from './fixtures.js';
 import { TIMEOUTS } from './config/timeouts.js';
 import { expect } from './helpers/expect.js';
@@ -76,9 +78,7 @@ test.describe('TTS model-download CSP', () => {
     // the network-allowlist guard fails on real external requests. Fulfill it
     // locally (page routes take priority over the guard's context route) so the
     // probe stays offline and never depends on Hugging Face being reachable.
-    await page.route('https://huggingface.co/**', (route) =>
-      route.fulfill({ status: 204, body: '' })
-    );
+    await page.route(`${TTS_MODEL_HOST}/**`, (route) => route.fulfill({ status: 204, body: '' }));
 
     // Record every CSP violation the page raises, installed before navigation.
     await page.addInitScript(() => {
@@ -131,7 +131,7 @@ test.describe('TTS model-download CSP', () => {
  * failed. Playback is deliberately out of scope; this guards the load, and
  * waiting for audio would mean paying for the model on every run.
  */
-test.describe('Blog Listen control', { tag: '@chromium-only' }, () => {
+test.describe('Blog Listen control', () => {
   test('starts an on-device read from the built worker', async ({ page }) => {
     // Hold the model request open — never fulfilled, never aborted. Aborting
     // would fail the load and produce exactly the error this test asserts the
@@ -139,7 +139,7 @@ test.describe('Blog Listen control', { tag: '@chromium-only' }, () => {
     // over the network-allowlist guard's context route, so this also keeps the
     // request off the wire and the test offline.
     let modelRequested = false;
-    await page.route('https://huggingface.co/**', () => {
+    await page.route(`${TTS_MODEL_HOST}/**`, () => {
       modelRequested = true;
     });
 

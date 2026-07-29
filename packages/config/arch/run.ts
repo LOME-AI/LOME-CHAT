@@ -20,13 +20,17 @@ const REPO_ROOT = path.resolve(ARCH_DIR, '..', '..', '..');
  * app is scanned so `demo-isolation` sees production web code; every other rule
  * gates itself to backend paths and stays inert over web files. The quarantined
  * `/legacy/` corpus lives at the repo root, outside every glob below.
+ *
+ * The api tree is taken WHOLE rather than as a list of its directories. An
+ * enumerated list silently exempts whatever it does not name — `platform/**`,
+ * `adapters/**`, `jobs/**` and the root-level entry points sat outside it, so a
+ * rule could report a scope it did not actually inspect, and `platform/dev`
+ * writes ledger legs and wallet state. A rule that gates itself to a subtree
+ * filters inside `check`; the glob's job is to withhold nothing.
  */
 const SOURCE_GLOBS = [
-  'apps/api/src/slices/**/*.ts',
+  'apps/api/src/**/*.ts',
   '!apps/api/src/slices/_template/**',
-  'apps/api/src/lib/**/*.ts',
-  'apps/api/src/middleware/**/*.ts',
-  'apps/api/src/app.ts',
   'apps/web/src/**/*.{ts,tsx}',
   'packages/db/src/schema/**/*.ts',
   'packages/shared/src/**/*.ts',

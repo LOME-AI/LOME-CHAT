@@ -133,6 +133,34 @@ describe('Web Push bodies this sender produces', () => {
 
     expect(decrypted).toStrictEqual(plaintext);
   });
+
+  it('exactly fill the 4096-octet body limit at the maximum payload size', async () => {
+    // RFC 8291 §4 / RFC 8030 §7.2: "A push service is not required to support more
+    // than 4096 octets of payload body." A body that round-trips locally is still
+    // undeliverable if it exceeds this, so the size is asserted, not just the decrypt.
+    // Equality, not an upper bound: at the interoperable ceiling the body is exactly
+    // header(86) + plaintext(3993) + delimiter(1) + tag(16) = 4096, so `toBe` also
+    // catches an over-conservative ceiling, which would silently reject legitimate
+    // payloads. An upper-bound assertion passes for any ceiling that is too low.
+    const receiver = await generateSubscriptionKeys();
+
+    const body = await encryptTo(receiver, randomBytes(MAX_PLAINTEXT_BYTES));
+
+    expect(body.length).toBe(4096);
+  });
+
+  it('declare a record size larger than the record they carry', async () => {
+    // RFC 8291 §4: the "rs" parameter MUST be "greater than the sum of the lengths of
+    // the plaintext, the padding delimiter (1 octet), any padding, and the
+    // authentication tag (16 octets)" — strictly greater, so equality is a violation.
+    const receiver = await generateSubscriptionKeys();
+
+    const body = await encryptTo(receiver, randomBytes(MAX_PLAINTEXT_BYTES));
+
+    // Header layout (RFC 8188 §2.1): salt(16) || rs(4) || idlen(1) || keyid.
+    const recordSize = new DataView(body.buffer, body.byteOffset).getUint32(16, false);
+    expect(recordSize).toBeGreaterThan(MAX_PLAINTEXT_BYTES + 1 + 16);
+  });
 });
 
 describe('bodies an independent receiver must reject', () => {

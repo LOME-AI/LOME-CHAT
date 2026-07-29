@@ -6884,3 +6884,536 @@ payer:'owner'}` cannot be served: the owner arm returns only when hold-blind hea
   running on the price-owner relocation question — whether the boundary can become a PACKAGE boundary again, deleting
   the arch rule, both allowlists, the ratchet and the laundering hole rather than maintaining them. Its output is
   decision material for the founder, not a task.
+- 2026-07-28: **E1 remediation — both CRITICALS closed and Importants 3–5 with them; `pnpm test:web` UNVERIFIED and
+  E1 said so.** One short cycle dispatched to establish the gate and nothing else.
+  **IT REFUSED TO CLAIM ITS OWN GATE.** The run was still going when it ran out of context: zero FAIL lines and zero
+  coverage errors emitted, **but no exit status read** — and it applied its own standing rule against itself, _an
+  unfinished gate is not a passing gate_. It also disclosed that its **first** `test:web` failure was **self-inflicted**
+  — a scoped `--coverage` run against the same `reportsDirectory` — the very concurrency class §Known Breakage
+  documents, this time caused by the agent to itself.
+  **THE ROOT CAUSE ON CRITICAL 1 IS THE SHARPEST SELF-DIAGNOSIS OF THE RUN:** _"my report 3 named `0n` as the F1
+  defect class while fixing the TRANSIENT case, and I never asked what a PERMANENT absence meant."_ **The bug was not
+  missing the defect — it had already named it.** It was treating a value as a loading state without asking what the
+  same value meant as a steady state. Closing it with the shared `getEffectiveBalanceNano` also **collapsed Minor 7**:
+  one derivation of that tier's balance again.
+  **CRITICAL 2 CLOSED, AND THE FALSE DOCBLOCK WAS DELETED RATHER THAN CORRECTED**, for a reason that indicts my
+  plan-writing more than its code: _"a stated proof is worse than an unproven claim, because it invites the next
+  reader to trust the shape instead of re-deriving it."_ **I wrote that proof, and recording it in the plan is what
+  made it durable.** `sendRefusalOf` now reads the actual refusal and claims a hold only where one is true.
+  **IMPORTANT 3 — MY RULED DESIGN WAS REMOVED, NOT REPAIRED.** `resolvePayerFunding`, the second `useSpendable(null)`
+  and the budgets read are gone: **one read, and the server names the payer.** The four group pins were rebuilt on
+  **what the wire can actually serve**, the old fixture having been unreachable and its pairing inverting under real
+  data. What survives is the one genuinely client-side property — `affordable` reconstructs `spendable + held`, so a
+  held-out budget cannot grey a row.
+  **IMPORTANT 4 closed with a precise indictment of the old test:** the composer now folds the refusal into its one
+  notice list, refusal first, duplicates dropped, inversion reddening all three tests. The previous "certification"
+  compared two entries of the copy map — **a test about data pretending to be a test about rendering.**
+  **IMPORTANT 5 closed:** the text pricing branch, `smartModelMinimumNanoUsd` and `smartModelPoolFromCatalog` are
+  deleted, so **a text turn contributes no money estimate to the funding decision at all** and its `denied` can no
+  longer refuse a turn `admissible` admits. Walled imports under `hooks/`: **12 → 8** (3 are G2's media hook, 4 the
+  capacity bar). Seven tests removed and **stated as a reduction** — second time this task.
+  Follow-on noted, not assigned: `use-budget-calculation.ts` still runs an affordability solve whose only surviving
+  consumer is the context-capacity bar; it should shrink to a token-count helper.
+- 2026-07-28: **B9 fix DONE; both verifications dispatched.** Both findings closed, and the method is better than the
+  fix in each case.
+  **IT REPRODUCED THE HOLE BEFORE TOUCHING ANYTHING** — 1000 `.ts` under `apps/api/src` against 863 scanned, so 137
+  invisible. Confirming a finding from first principles before acting on it is the discipline this run has had to
+  learn repeatedly; here it was unprompted.
+  **THE FIX IS A REPLACEMENT, NOT AN ADDITION, and the equivalence is MEASURED.** The auditor proposed adding
+  `apps/api/src/**/*.ts`; B9 observed the three narrower api globs are **strict subsets** of it and collapsed them, so
+  no redundant entry survives. **It reached the auditor's 2183 file count by a different route** — two independent
+  edits agreeing on a number is stronger evidence than either alone.
+  **RED SHOWN IN THE PREVIOUSLY-BLIND REGION:** a walled import in `platform/dev/seed-billing-history.ts` now fails at
+  line 1, where under the old globs that path **matched nothing**. Reverted byte-exact by sha256 **and confirmed by
+  running that file's own suite** — revert verified by behaviour as well as hash, which is the stronger pair.
+  **THE DOCBLOCK WAS DEDUCED TO NEED NO CHANGE, not left alone by default:** "Scope is `apps/api`" was the **false
+  half** of the finding, so widening the globs makes the sentence true rather than requiring it to be narrowed. The
+  fix chose which half of a mismatch to move.
+  **ON THE MINOR, IT SWEPT RATHER THAN SPOT-FIXED, and named the irony precisely: "I stripped two `G1` labels from
+  `integration-setup.ts` in the same cycle that I wrote a fresh instance in a file I was authoring. Removing an
+  instance is a task; not writing one is a habit."** It then swept all ten files it authored or edited across B9 for
+  every run-identifier shape and found nothing else.
+  **A JUDGEMENT CALL DISCLOSED RATHER THAN BURIED:** `packages/config/arch/README.md` says never edit the harness to
+  add behaviour. B9 argues this adds none — it changes **which files the harness sees**, not what any rule does. I
+  agree with that reading and have routed it to the auditor that owns the mechanics lens rather than settling it
+  myself, since the sentence could be read as prohibiting the ruled fix.
+  Routed to the money auditor with the sharper question its own finding implies: the gate being green over 137
+  newly-scanned files **implies** no live violation, but **a green gate is a weaker statement than a sweep** in a
+  region nobody has ever looked at — so look.
+  Still open and untouched, correctly: the laundering gap, and `apps/web` having no rule enforcing its stricter
+  obligation. The arch README now under-describes two things and is `.md`, so it carries to the founder with the doc
+  batch.
+- 2026-07-28: **THE FOUNDER COMMITTED AGAIN MID-RUN — `HEAD` is now `f1d99703`, not `53daba72`, and the working tree
+  fell from ~341 entries to 20.** Third absorption of this run's work into a founder commit. Recorded immediately
+  because it silently changes what every future differential means: **a claim written "vs HEAD" earlier in this run
+  meant `53daba72`; the same words now mean `f1d99703`.** §git-baseline updated; the original record retained because
+  earlier reports cite it.
+  **A §KNOWN BREAKAGE ENTRY JUST WENT DORMANT, and its trigger is now stated rather than implied.** "`git diff HEAD`
+  cannot isolate your own edits" was true when ~341 uncommitted entries from several tasks shared the tree. With 20
+  left it is a usable read again — **and it returns the moment several tasks are uncommitted in flight**. The entry
+  stays; **its trigger is the entry count, not the calendar.**
+  Of the 20 survivors, only four are this run's: `model-selector-button.tsx` (E1) and `packages/config/arch/{run.ts,
+rules/money-internals-owners-only.rule.test.ts, README.md}` (B9's in-flight fix). The rest are readme hash caches,
+  two docs, another run's plan and ledger, and the seed-crypto cache. **Everything B1 through E1 produced is inside
+  `f1d99703`.**
+  **The no-git-writes rule held across the entire run** — the reflog shows only the founder's own commits, through
+  five abnormal terminations and one disclosed violation that reached nothing but its own author's uncommitted work.
+- 2026-07-28: **All four in-flight agents killed by a session limit and resumed from their transcripts** — E1 (mid
+  `pnpm test:web`, 39/393), both B9 verifiers, and the relocation analyst. E1's run will not have survived, so it
+  re-runs the gate alone; the others resume where they were. Nothing new dispatched, per the founder's standing
+  instruction.
+- 2026-07-28: **E1's gate cycle DONE — and it caught itself about to report a RED gate as green.** Both E1 auditors
+  now need to verify the remediation; dispatched.
+  **"A WRAPPER AROUND THE GATE IS NOT THE GATE" — a new instance of Global Constraint 9's trap, one level further
+  out.** The background notification said **"completed (exit code 0)"** — that is the **shell wrapper's** status,
+  because E1's command ended `; echo "TESTWEB_EXIT=$?"` and the `echo` succeeds regardless. **The captured gate status
+  was `TESTWEB_EXIT=1`.** E1 distrusted the notification, read the status from a file no wrapper can touch, and
+  reported red. Recorded as a standing entry: a harness, a wrapper, a `; echo`, a `| tee` each return their own
+  success and hide the one you asked for.
+  **A FILE CAN CROSS A COVERAGE GATE BECAUSE OF WHAT YOU DELETED — and this one is genuinely counter-intuitive.**
+  `model-selector-button.tsx` fell to 94.73% branches **without gaining a single uncovered branch.** Removing
+  `canAccessPremium` — **including its `= true` default parameter, which is itself a branch** — shrank the
+  **denominator**, lifting a pre-existing unreachable guard above the threshold. Deletion is the case nobody re-checks
+  coverage after, because the intuition is that removing code can only help. Fixed with the repo's `v8 ignore` idiom
+  **plus the mechanical reason** (the Button carries `disabled`, so React never fires `onClick`), and the guard kept
+  as defence against a direct caller.
+  **IT MET BOTH PRECONDITIONS BEFORE ATTRIBUTING THE REMAINING RED OUTWARD**, which is the standard §Known Breakage
+  sets and which this run has repeatedly seen skipped: (1) isolation re-run of `markdown-renderer.tsx` → **100%
+  branches, exit 0**, so load-dependence was **reproduced, not assumed**; (2) `git diff HEAD` empty for both the
+  component and its test — untouched across all thirteen slices.
+  **AND IT REFUSED TO CLAIM GREEN:** "the gate cannot exit 0 while that entry stands… an exit code I did not earn is
+  not mine to claim — the same rule that made me distrust the wrapper." **E1's own files all pass**: `use-turn-options.ts`
+  fully covered, `model-list-item.tsx` 100%/98.27%, both tier hooks 100%, **6,444 tests passed and zero failed.**
+- 2026-07-28: **B9 verification B → PASS, verdict revised from FAIL. Clean from the money and blast-radius lens.**
+  **THE SWEEP DELIVERED WHAT A GREEN GATE STRUCTURALLY CANNOT.** I asked for a look rather than a re-run, because a
+  region nobody has ever scanned makes a green gate a weak statement. It looked **four ways** across the 137
+  newly-visible files: walled specifiers in every syntactic route (imports, re-exports, `import()`, `vi.mock`) — zero;
+  the legal module barrel — zero; **a launder detector over walled symbol NAMES, independent of any specifier** —
+  zero; and relative reaches into money-owning directories — exactly two, both OpenRouter catalog fixtures with no
+  money in them. **That third check is the one the arch rule structurally cannot make, and it is the one that adds
+  information over the gate.**
+  **AND THE SWEEP IS PROVABLY NOT VACUOUS — it looked where the money actually is.** 39 of the 137 carry money
+  vocabulary (`nanoUsd`/`ledger`/`wallet`/`SettlementTx`/`billable`): the whole `platform/dev/**` seeding family,
+  `adapters/billing-bindings.ts`, `adapters/conversation-funding.ts`, `jobs/billing-auditor-entries.ts`,
+  `scheduled.ts`. **A materially money-handling region of 39 files sat unscanned for the life of the harness and
+  contained no breach.** The decisive measurement: across all 137 files the **only** `@hushbox/shared` specifier that
+  appears is the root barrel — 60 occurrences, **zero deep subpaths of any kind.** The region reaches the shared
+  package exclusively through its front door.
+  **THE COLLAPSE-VERSUS-ADD EQUIVALENCE WAS VERIFIED, NOT ASSUMED:** `slices ∪ lib ∪ middleware ∪ app.ts` is 863 of
+  1000 `.ts` under `apps/api/src`, so the union is **strictly contained** in the single glob that replaced it — and
+  the count moves **2046 → 2183, exactly +137**, with no `dist` contamination, all 13 rules green.
+  **NOTHING ELSE MOVED, checked rather than inferred:** the rule file holding the entire classification is
+  **byte-untouched**; the auditor re-derived 23 files / **55 owner / 11 consumer**, diff-identical to its pre-fix
+  list; the clamp-order pins (`12_281` / `22_562` / `8_225_200n` / `400n`) and the module-side pins still pass in a
+  file untouched since before B9 began; the ratchet sits at 8-of-8 with its uniqueness guard intact; and the boundary
+  pin kept **both** its cases, changing only its name.
+  It re-confirmed the laundering residual is currently harmless — every laundered name still lands only in owner
+  files, so **no consumer hides behind one today** — and carried forward the `BILLING.md` §What is enforced problem,
+  which the doc's own text confirms: bullet 1 ("deep imports do not resolve") is permanently false once 11 of 13
+  subpaths survive for owners, and bullet 2 promises `apps/web` enforcement that no arch rule provides against 6 live
+  reaches.
+- 2026-07-28: **THE ANALYST'S PROBE LANDED — its load-bearing assumption is now VERIFIED, and my recommendation is
+  formally refuted.** Full decision material recorded in §The long-term boundary decision.
+  **FOUR INDEPENDENT RESOLVERS, NINE SPECIFIERS, ZERO DISAGREEMENTS.** It probed from a virtual `apps/web` importer
+  through Node's resolver, TypeScript's `resolveModuleName`, **Vite with the real `apps/web/vite.config.ts` and its
+  full plugin chain**, and Vitest. `@hushbox/db`, `neverthrow` and `ts-pattern` **fail in all four**;
+  `@hushbox/shared/affordability/estimate/reducers` **resolves in all four** — the live breach. It also went looking
+  for the two things that could have invalidated the result and found neither applies: the root `tsconfig`'s wildcard
+  `paths` mapping does **not** reach `apps/web` (its own `paths` **replaces** rather than merges — parsed options
+  printed directly, not inferred), and Vite carries no workspace alias or dedupe.
+  **MY ERROR, PRECISELY STATED BY THE ANALYST AND ACCEPTED:** I proposed relocating the price **owners** on the
+  belief that the export map would then enforce the boundary for free. **The money layer is a subdirectory of
+  `@hushbox/shared`, not a package; the export map gates PATHS, not importers; and it is equally open to both apps
+  wherever the owners sit.** The mechanism I reached for never existed **as the export map** — but the analyst's
+  qualifier is the valuable half: **it does exist in this repo, as the package dependency graph**, proven by three
+  packages being unreachable from `apps/web` across all four resolvers. It can only be reached by moving the
+  **internals out**, not the **owners in**.
+  **B — my hypothesis — is disqualified four independent ways, any one fatal:** `turn-definition.ts` exports a
+  **history array** (content-freeness, hard ban); `estimate-run.ts` walks `definition.nodes`, which §Where the DAG
+  lives bans **verbatim**; two owners import `@hushbox/db`, `Telemetry` and three slice barrels (cycle); and 6 of 7
+  owners need `DomainError` — **1,265 references across 245 files** — or `neverthrow` inside `packages/shared`.
+  **Feasible fraction: 1 of 7 production owners, 238 of 8,953 lines.**
+  **THE SHARPEST JUDGEMENT IN THE REPORT: "A looks like zero steps and is a permanent follow-up in disguise."** Five
+  maintained mechanisms forever, a hand-maintained cap nothing forces down, the laundering hole open, and **B8b
+  unstartable for the life of the repo.** D+E is four steps to a genuine terminal state — conditional on one thing
+  that is measurable today.
+  **AND THE FIRST STEP NEEDS NO RULING:** closing the 15 walled specifier lines in 6 `apps/web` files is already
+  chartered work, and **every option is strictly better for it having landed** — A closes the only breach the
+  doctrine actually names, D becomes executable, E becomes safe.
+  **A CONSEQUENCE OF E NOBODY HAD NAMED:** the two consumer-only subpaths become deletable when 6 `apps/api`
+  `workflows/**` files move to `chooseFrom`/`wireFor` — **exactly the work step E stops tracking.** If E lands, those
+  six must close in the same change or the one-producer intent is silently dropped.
+  Two residuals the probe cannot close, and they defeat **every** option equally rather than favouring one: the
+  relative-path escape is **live** (`workflows/engine/{live-run,interpreter}.test.ts` reach
+  `packages/realtime/src/replay-buffer.js` past any export map), and **`apps/web` does not declare `@hushbox/shared`**
+  — it resolves through an **accidental** root devDeps hoist that any package-boundary guarantee would silently
+  depend on.
+- 2026-07-28: **B9 verification A → PASS. B9 IS CLEAN (19 of 29.)** Only E1's two verifications remain in flight.
+  **IT PROVED THE COLLAPSE SET-IDENTICAL RATHER THAN ARGUING IT:** built both file sets and diffed them — landed
+  2183, its own proposed form 2183, **`in PROPOSED not in LANDED: []` and `in LANDED not in PROPOSED: []`.** The
+  delta is exactly **137**, distributed `adapters 45 · platform 45 · jobs 22 · root 17 · smoke 7 ·
+workers-validation 1` — matching its original by-directory measurement **and** B9's 1000-vs-863 count **by a third
+  independent route.**
+  **IT READ ALL TWELVE OTHER RULES' GATES RATHER THAN TRUSTING THE GREEN RUN — and found one B9's report never
+  mentioned.** Seven have provably identical inputs (gates disjoint from the 137). Five widened and found nothing,
+  **including `admin-op-purity`, whose `check` has a FALLTHROUGH applied to every non-test file** — so it now verifies
+  that nothing in `platform/**`, `adapters/**`, `jobs/**` or the root entry points imports an admin op body. Its own
+  words: _"that is the one rule whose reach widened by fallthrough rather than by an explicit gate, and it is the one
+  I would have wanted checked by hand — it holds."_ **The widening is a small unadvertised hardening of five other
+  rules**, not a behaviour change to any.
+  **ON MY README JUDGEMENT CALL, IT SUPPORTED B9 MORE STRONGLY THAN B9 ARGUED IT — with four reasons, one of which
+  is decisive and neither of us had:** the README **already names the glob list in `run.ts` as the statement of
+  scope**, so _"a doc cannot both name that file as the scope declaration and forbid amending it"_; and README's own
+  line that rules receive **every** in-scope file and should filter inside `check` means the old enumerated globs
+  were performing **subset-filtering by omission — the job that line assigns to rules.** So the widening moves the
+  code **toward** the documented contract, not away from it. Its caveat is a process point I accept: because the glob
+  is shared surface, its blast radius must be **measured** rather than asserted — which it re-measured from scratch.
+  **THE REVERT WAS RE-VERIFIED BY BEHAVIOUR AS WELL AS HASH, and it said why that pair matters:** _"a hash proves the
+  bytes returned, a green suite proves nothing else moved while they were away."_
+  **IT CORRECTED ITS OWN PROCESS IN THE RECORD so a reader would not mistake it for evidence:** its first attempt at
+  the seeder's suite used a bare `vitest` and failed on `DATABASE_URL` — **its own invocation bypassing
+  `ensure-stack`, not a defect** — and the sanctioned path is green.
+  Its closing judgement on the fix: **"the fix is better than the one I proposed."** It suggested adding a pattern;
+  B9 noticed the three narrower globs were strict subsets and collapsed them, so the list carries no redundant
+  entries for a later reader to disturb — **same file set, less surface** — and **independently reaching the same 2183
+  by a different edit is the strongest available evidence that both measured the same thing.**
+- 2026-07-28: **E1 verification B → FAIL: one Critical HALF closed. Six of seven items verified closed and closed
+  well.** Fix dispatched; the surface auditor has not reported, so a small second batch may follow.
+  **THE HALF THAT REMAINS IS REACHABLE BY AN ORDINARY FREE USER, and the auditor measured all four cases against the
+  shipped code rather than reasoning about them.** With `held = 0`: a long history on a rich wallet now correctly
+  renders `prompt_too_long` (the half E1 fixed), a genuine hold renders the hold, genuine poverty renders funding —
+  **but low balance plus long history still renders `funds_held_by_run`.**
+  **AND IT IS NOT A CORNER: `FREE_ALLOWANCE_CENTS_VALUE = 5`, so a free user's ENTIRE daily allowance is $0.05.** The
+  auditor reproduced the wrong wording at 50m, 20m and 5m nano of remaining allowance with a long conversation, and
+  **at the full untouched $0.05** once history reaches ~250k chars on the cheapest possible model — sooner on any
+  realistic one. **A free user with nothing running is told to wait for a reply that does not exist, and waiting never
+  helps.**
+  **THE DOCBLOCK IS RIGHT AND THE CODE DOES NOT IMPLEMENT IT** — the stated rule is "refused for funding, and the same
+  funding hold-blind would have sent", but `affordable` differs from `admissible` in funding **and basis**, so with
+  `held = 0` the antecedent is about the **empty basis**, not a hold. §Notices 4 makes this state's reason **length**.
+  The discriminator was already on the snapshot: **`heldNanoUsd > 0`**. This is the second time this exact conflation
+  has shipped, and the first time was my closure argument.
+  **AN IMPORTANT OF THE SAME CLASS, ONE LAYER OUT:** the hold-aware group headroom still reaches `resolveFunding`
+  client-side, so inside the settle-then-release window it renders **`payer_switched_to_personal`** — telling a member
+  they will be charged for a turn the owner pays — and denies a **link guest** on a turn admission would admit. The
+  auditor explicitly asked me to name the owner "rather than E1 absorbing it silently": **E1 owns both halves**, since
+  `client-billing.ts` is in its grant.
+  Two Minors, both in the class the run's own rules exist for: **a comment this cycle's own edit falsified** (it still
+  describes a token computation E1 deleted this cycle), and **a fixture using the exact state its own file's docblock
+  declares unservable** sixteen lines above — the assertion is sound, but "a fixture contradicting its file's stated
+  reachability rule is how the next reader re-derives the wrong conclusion."
+  **WHAT IT VERIFIED CLOSED, including the one it pushed hardest on:** trial/guest sendable at the shared **$0.01**
+  ceiling with **positive** pins for both tiers; the payer re-derivation gone from the verdict path, repo-grep clean;
+  the notice rendering **structurally** rather than by a copy-map comparison; the text arm contributing **nothing** to
+  the funding decision; and `use-turn-options.ts` at **100/100/100/100** including eight new pins on the fail-closed
+  guards whose defaults price a turn as free.
+  **IT INDEPENDENTLY HIT THE WRAPPER TRAP E1 FOUND** — its own background notification said "exit code 0" while the
+  captured status said 1 — and said the entry is worth keeping "regardless of E1's outcome". Two agents, same trap,
+  one day.
+- 2026-07-28: **E1 verification A → FAIL on a NEW Critical: every media turn is unsendable.** All three of its own
+  findings verified closed; the Critical came from **re-tracing the now-rendered send gate**, which is the work an
+  auditor does after a fix rather than before it.
+  **VERIFIED BY EXECUTION, not read:** on a fully-funded paid payer, text is sendable while image and video return
+  `modality_not_priceable` and set `hasBlockingError`. `PromptInput` **is** the media composer — it renders the image
+  and video bottom rows with the same send button — **so image and video generation cannot be sent at all.** And this
+  cycle made it **louder**: the new notice fold now also renders "The selected model can't produce that kind of
+  content" on every media composition.
+  **IT SHIPPED BECAUSE EVERY EXISTING MEDIA TEST MOCKS `useTurnOptions` AWAY and returns a sendable pair** — including
+  the media tests in the very file that gates the composer. **The plan PREDICTED this hazard in words** ("criterion 1
+  read literally makes every media turn unsendable") **and the prediction did not prevent it**, because nothing
+  rendered the composer in image mode. A named hazard with no test is a hazard.
+  **RULED: the send gate consumes `admissible` only for text** — the founder's text-arm ruling applied to the gate
+  rather than a new decision. A gate consuming `admissible` for a modality **the producer explicitly declines to
+  price** is the text arm's verdict imposed on an arm that has no verdict yet. Explicitly NOT closed by making the
+  producer price media: that is money work in the core estimator and nobody's task.
+  **THE GATE IS GREEN — this auditor established what E1 could not.** `pnpm test:web` exit **0**, read from a file,
+  396 files / **6,444 tests**, zero threshold lines, full coverage table (All files 99.64 / 98.85 / 99.66 / 99.83).
+  And it judged `markdown-renderer.tsx` **independently across four completed runs** — absent, 75% branches, then
+  **100% branches with no threshold error at all** — so the load-dependence is **reproduced by the auditor rather than
+  argued by the implementer**. E1's attribution was right, and **the gate's remaining red does not block E1 because on
+  a clean run the gate is not red.**
+  **A CLAIM CONTRADICTED, and it is the one that produced the original defect:** report 12 said the false closure
+  docblock was deleted. **One of three was.** Two survive verbatim on the public result type — so the file now
+  **states both the proof and its refutation**, with the false one where the next reader meets it first.
+  It also confirmed the `v8 ignore` is honest by tracing the mechanism (`Button` renders a native `<button>` unless
+  `asChild` is passed; none is; a disabled native button dispatches no click), and hit the wrapper trap **from the
+  other side**: its notifications reported "exit code 0" for a run that exited **1** and for one that exited **0** —
+  so that notification carries no information in either direction. Two agents, both directions, one day.
+- 2026-07-28: **E1 closed both Criticals and three Minors; `pnpm test:web` is GREEN — `TESTWEB_EXIT=0`, 396 files /
+  6,447 tests, zero coverage-threshold errors.** Final verifications dispatched to both auditors.
+  **ITS OWN DIAGNOSIS OF THE HALF-FIX IS THE LESSON: "my previous fix stated the right rule and did not implement
+  it."** With `heldNanoUsd = 0` both sets use the **same funding**, so "hold-blind would have sent" was really a
+  statement about the **empty basis**. The discriminator is now evidence rather than inference — `heldNanoUsd > 0n` —
+  with the zero-hold case routed to length per §Notices 4. Red first: `expected 'funds_held_by_run' to be
+'prompt_too_long'`.
+  **AN OLDER PIN HAD TO BE CORRECTED, NOT JUST ADDED TO — and this is the sharpest finding of the cycle.** The
+  existing hold test asserted the hold wording from a sendable/unsendable pair **with nothing held**, so **it
+  certified the very inference the audit refuted.** It now supplies actual held funds. **A test propping up the bug is
+  the thing most likely to survive the fix**, and it survived two rounds of this one.
+  **THE MEDIA CRITICAL CLOSED BY RULING, NOT BY REPRICING** — the gate consumes `admissible` only for text, both
+  halves pinned so narrowing cannot weaken text. And the test design answers the reason it shipped: **the new pins
+  deliberately do NOT mock the refusal away**, with two composer tests rendering `PromptInput` in **image mode**. The
+  defect existed because every media test mocked the hook that would have caught it; the fix declines that mock.
+  **THE MINOR WAS WORSE THAN EITHER SIDE SAID:** report 12 claimed the false closure argument was deleted, the auditor
+  found two survivors — E1 confirms **one of three** was deleted. Both remaining sat on the **public result type**,
+  asserting the proof while `sendRefusalOf` twelve lines away refuted it. Gone, sweep clean.
+  Its Important closed at both halves: the group dimension no longer reaches the client funding decision,
+  `useGroupBillingContext`/`GroupBillingContext` deleted, **three tests that pinned the re-resolution removed**. What
+  survives is `hasDelegatedBudget` and the loading gate — display, not verdict, and routed to the auditor to confirm.
+  **A RESIDUAL STATED IN CODE RATHER THAN HIDDEN:** when funds are held **and** the prompt is long, both causes are
+  live and it names the **hold** — arguing that is the safe side because a hold clears itself and "wait" becomes true
+  in seconds. That is the one place the new rule still chooses between two true things, and it is disclosed as such.
+  It also independently confirmed the wrapper trap a third time: **the notification said "exit code 0" for this green
+  run AND for the run that exited 1 two cycles ago** — no information in either direction.
+- 2026-07-28: **E1 verification A → FAIL on one item, and it is the artifact meant to prevent this run's most
+  expensive shape.** Everything else verified closed.
+  **THE TWO COMPOSER-LEVEL IMAGE-MODE TESTS ARE VACUOUS AND THEIR DOCBLOCK CERTIFIES THE OPPOSITE.**
+  `prompt-input.test.tsx` mocks the whole `use-prompt-budget` module; both tests then inject values **already
+  identical to the default fixture** and assert those same values back out through the DOM. **Deleting the media
+  guard would not redden either test, because the real hook never runs.** Yet the docblock says they "DELIBERATELY do
+  not mock the refusal away" — **true of the hook-level pin, false of these two.**
+  The auditor's framing is the one to keep: **"a comment certifying test strength the test lacks is worse than a weak
+  test, because it stops the next reader from looking."** The vacuity class landed on the artifact written to close
+  the vacuity class.
+  **BUT THE CLASS IS GENUINELY CLOSED WHERE IT MATTERS, and the auditor drew the distinction I asked for:**
+  `use-prompt-budget.test.ts:1174-1185` mocks **`useTurnOptions`** rather than `usePromptBudget`, so the real
+  `sendRefusalOf` executes and removing the guard reddens it with exactly the reported failure; the text half is
+  pinned immediately below, so narrowing cannot weaken text. **Closed at the hook layer, open at the composer layer**
+  — a test-evidence defect, not a reopened Critical.
+  **THE AUDITOR IMPROVED ON BOTH E1's AND MY REASONING FOR THE RESIDUAL.** E1 justified naming the hold because a hold
+  clears itself; the auditor calls that the weaker half. **The decisive asymmetry is what each notice asks the user to
+  DO:** "wait" costs nothing and is reversible; **"shorten your message" asks for an irreversible destruction of the
+  user's draft that would not unblock the send, because the hold is still there.** A false "wait" self-corrects; **a
+  false "shorten" leaves the user with less text and the same block.** It also corrected the citation — §Notices 4 is
+  written about money-versus-length and does not cover hold-versus-length; §Notices 3, "waiting is an action", is the
+  right one. Routed into the comment, because the current wording invites a future reader to reverse the choice.
+  Verified closed: the media guard returns **before touching `options`** and `turn-core.ts` is untouched; case C and D
+  differ in **exactly** the discriminator, carried on the same snapshot; the false-closure vocabulary sweep is **zero
+  hits across all of `apps/web/src` and `packages/shared/src`**; the group residual confirmed **by absence**. Gate
+  green on the auditor's own run — 6,447 tests, zero threshold errors — with the `markdown-renderer.tsx`
+  load-dependence reproduced a **fourth** time.
+  **CYCLE COUNT NOTED FOR THE FOUNDER:** this is E1's fourth post-audit fix cycle, past my stated three-cycle
+  escalation cap. I am not escalating, and the reason is that the cap exists to catch **wrong criteria producing
+  repeated failure** — here each cycle closed real findings and the next was found by **re-tracing what the fix
+  changed**, which is productive rather than wedged. Recorded so the deviation is visible rather than silent.
+- 2026-07-28: **E1 verification B — the verdict and send-gate paths are CLEAN; one NEW Important in the disclosure
+  layer, caused by an over-correction of MY OWN finding.** Addendum dispatched.
+  **MY BOUNDARY WAS WRONG.** My Important asked for the **hold-aware input** to stop reaching the client decision.
+  E1 removed the **entire group dimension**, which closes that and **also removes disclosures the spec requires.**
+  With no `group` reaching `resolveClientBilling`, `deriveClientFundingInputs` always yields `isSolo: true`, so
+  `payer: 'owner'` and `payerSwitch` have **no reachable producer**.
+  **THE USER-VISIBLE CONSEQUENCE, executed rather than reasoned:** a group member in an **owner-funded** conversation
+  now reads _"This message uses your free daily allowance"_ plus _"Add credit for more messages each day"_ — **while
+  the owner's budget is paying and they are not charged at all.** And §Notices 5, _"a change of payer requires an
+  affirmative pre-send disclosure… switching who pays is not a detail to discover from a balance later"_, **now fires
+  nowhere in the product.**
+  **THE FIX REINTRODUCES NO CLIENT-SIDE RULE, which is why it is available:** the served snapshot **already carries
+  `payer: 'self' | 'owner'`** — hold-blind, server-authoritative, and the same field the adapter already reads.
+  Derive the disclosures from it. The server stays the only authority on **who pays**; the client renders which
+  sentence describes that answer.
+  **THE AUDITOR MEASURED THE RESIDUAL RATHER THAN ACCEPTING IT, and declined to raise a finding on the result.**
+  Waiting does **not** always clear the block — at $0.005 spendable with a small hold and a long history, releasing
+  the hold yields `prompt_too_long`, not a send. So E1's "the safe side" is slightly stronger than the code
+  guarantees. **No finding, because the claim the notice makes is true in every case that reaches it, transient, and
+  self-corrects** — categorically different from the pre-fix state where it was false and permanent. Precedence kept;
+  the comment must match what is guaranteed rather than what is hoped.
+  **A RISK IN THE MEDIA NARROWING THAT DID NOT MATERIALISE, checked explicitly:** media is **not** left ungated —
+  `estimatedCostNanoUsd` is still the media estimate for non-text, so `isDenied` continues to gate generations exactly
+  as before. Narrowing the gate to text removed a wrong refusal without removing a real one.
+  All four money cases verified against the shipped code, including case C rendering `prompt_too_long` at the **full
+  $0.05 allowance** with 200k history. The corrected hold pin **reddens without the discriminator** while C and D
+  form a proper discriminating pair — one refusal code, only `heldNanoUsd` varying. `hasDelegatedBudget` confirmed
+  **incapable of reaching a verdict path** (severity INFO, never `blockingReason`).
+  Its own `test:web` attempts went 1 / 1 / 0 and it stated plainly that its log capture truncates, so it **can cite
+  the captured status but neither reproduce nor refute** report 14's summary line — judging instead on the file list
+  and per-file numbers, exactly as the plan instructs. **Third and fourth independent confirmations of the wrapper
+  trap** arrived in the same report.
+- 2026-07-28: **E1 closed both remaining items; gate green at 396 files / 6,450 tests, zero threshold errors. Final
+  verifications dispatched — the last work before the founder-ordered pause.**
+  **IT FIXED THE TAUTOLOGY, NOT JUST THE COMMENT, and that distinction was the whole finding.** Offered "unmock" or
+  "state what they pin", it took the second **with a reason**: unmocking `usePromptBudget` in a component suite would
+  drag the hook's entire dependency tree in and make that file **a second home for hook logic**. But it did not stop
+  at rewriting the paragraph, because **that would have left the tautology behind** — so the tests now pin
+  composer-owned facts (image-mode chrome; a blocking verdict reaching the media Send control), with an inversion:
+  forcing `hasBlockingError: false` at the `canSubmitMessage` call reddens the second. **And the new docblock states
+  its own limit — "NOTHING in this describe can detect a change to it" — and points at the hook test that can.**
+  A docblock that bounds its own reach is the opposite of the one that caused the finding.
+  **MY OVER-CORRECTION IS CLOSED FROM THE FIELD THE AUDITOR NAMED**, and E1's framing of the boundary is exactly
+  right: the single `payer === 'owner'` branch **picks a SENTENCE, not a payer.** Grep confirms it is the only
+  comparison of its kind in `apps/web`, and `hasDelegatedBudget` is live input again.
+  **ONE PIN IS DESIGNED THE WAY MORE SHOULD BE:** owner-funded asserts `owner_balance` + `group_budget_pays` **with
+  `free_allowance_pays` explicitly ABSENT** — **the wrong sentence excluded, not merely the right one asserted.** That
+  is the positive-and-negative pair that catches a regression which adds a sentence rather than removing one.
+  **IT ADOPTED THE AUDITOR'S STRENGTHENING AND THEN BOUNDED ITS OWN CLAIM FURTHER THAN ASKED.** The residual comment
+  now rests on **what each notice asks the user to do** — "shorten" is irreversible and would not unblock the send —
+  with the citation corrected to §Notices 3 and the §Notices 4 citation left on the zero-hold arm where
+  money-versus-length genuinely is the question. And it recorded that **releasing the hold does NOT always send**: at
+  a small spendable with a long history it self-corrects to the **length** wording, not to a send. Its own verdict on
+  its earlier phrasing: **"my 'safe side' was stronger than the code guarantees."**
+  `max-params` on its own test helper fixed **at the cause** (options object), not by raising the limit — third time
+  this task. A third `eslint --fix` killed at 120s wrote nothing and was **re-run rather than banked** — the entry
+  earning itself a fourth time.
+  **A STANDING CONCERN RAISED RATHER THAN HIDDEN:** `withServedPayer` trusts `served.payer` completely. Intended —
+  the server is the authority — but a wrong `payer` on the wire yields a wrong disclosure with **no client-side
+  cross-check**, and E1 names the alternative honestly: a second authority, which is the defect this closes. Routed to
+  the money auditor to judge whether anything server-side pins that field.
+- 2026-07-28: **E1 verification B → NOT CLEAN: one Critical, a send the server would allow.** Fix dispatched with the
+  **class** as the requirement, not the instance.
+  **`withServedPayer` RETURNS EARLY ON `denied`, so every denial arm bypasses the patch.** On an owner-funded turn a
+  free-tier member is refused **premium models the owner is paying for**, and a member with a negative **own** balance
+  is blocked although the **owner** pays — `client-billing.ts` selects the own balance when `group === undefined`, so
+  with the group dimension gone it **always guards the wrong wallet**. Both contradict §Funding Decision Matrix
+  priority 1 ("Conversation owner pays, **premium allowed**") **and the picker on the same screen**, which reads the
+  served owner tier and marks those rows **available** while the composer refuses the send. **Reachability is the core
+  group use case:** an owner buys credit, delegates budget to free-tier teammates, and they cannot use what the owner
+  bought.
+  **THE STRUCTURAL NOTE IS THE REQUIREMENT, and it is now a standing rule: A PATCH-AFTER-THE-FACT SEAM CANNOT REACH
+  PATHS THAT SHORT-CIRCUIT BEFORE IT.** Third consecutive cycle where a group-path fix had a second-order effect, with
+  an identical cause each time — a **self-funded** verdict derived first and then **patched** with the server's payer.
+  **Ordering the authoritative branch ahead of every short-circuit removes the class; patching this instance leaves
+  the next.**
+  **WHY IT WAS GREEN, and the evidence needs fixing as much as the code:** the composer suite **mocks
+  `useResolveBilling` wholesale** and the three new disclosure pins feed it an **approved** result, so **no test
+  exercises a denial arm against `payer:'owner'`.** Meanwhile `client-billing.test.ts` still covers the `group` input
+  shape **no production caller passes any more — coverage of a dead shape**, which is worse than no coverage because
+  it reads as protection.
+  **A CAVEAT THE FIX MUST NOT PAPER OVER:** for **media** the estimate is real and compared against the caller's
+  **unscoped** spendable, so an owner-funded media turn needs the payer-scoped figure too. That is **G2/E4's arm**.
+  **IT BOUNDED E1's STANDING CONCERN BETTER THAN EITHER OF US:** trusting `served.payer` is right, **and** it is
+  pinned by **seven** server-side integration assertions, **and** a wrong payer **costs a sentence, not money** —
+  admission re-resolves the payer from its own read. Also verified: exactly **one** comparison of the payer field in
+  all of `apps/web` production code, and it selects a sentence; both spec citations sit on the arms they describe.
+- 2026-07-28: **FOUNDER ASKED WHETHER THE ANALYST HAD LOOKED AT THIS BEFORE AND WHETHER IT WAS EVER RULED. I CHECKED
+  THE RECORD RATHER THAN ANSWERING FROM MEMORY, AND THE ANSWER IS DIFFERENT FOR THE TWO ISSUES IN PLAY.**
+  **THE PAYER QUESTION: never analysed, never ruled by an analyst.** Grep over the whole ledger returns no analyst
+  entry on the client-side payer resolution. The prior orchestrator ruled the payer _decision rule_ in the design
+  phase ("the payer is decided on `minTurnCost`"), but **the client-side re-derivation question was ruled by ME alone
+  on 2026-07-28**, from an implementer's report plus my own grep — no analyst, no option set. **That is the one ruling
+  this run that rested on a state the system cannot produce, and it is the one I did not route.** The two questions I
+  _did_ route to analysts — the classifier marker and the price-owner relocation — both produced sound material, and
+  one of them **refuted my own hypothesis before it cost anything.**
+  **THE PACKAGE/BOUNDARY QUESTION: analysed AND ruled on 2026-07-25 — AGAINST extraction — and I did not surface it.**
+  Analyst 1 (package vs directory) **reversed the then-orchestrator's recommendation**: ship as a bounded directory,
+  do **not** create a workspace package. It found **three of five** stated reasons **measurably wrong**, including
+  that `packages/shared`'s exports map was **already at crypto parity** — 10 explicit entries, no wildcard, deep
+  specifiers already unresolvable.
+  **AND IT WROTE AN OBSERVABLE EXTRACTION TRIGGER INTO THE RECORD:** _"extract when EITHER the arch rule records ≥1
+  legitimate exception (a shared module that must reach affordability internals and cannot be re-pointed at the
+  barrel) OR a build target needs affordability without `@hushbox/shared`."_
+  **THAT TRIGGER HAS FIRED — fifteen times.** B9's `PRICE_OWNERS` is precisely an allowlist of modules that must reach
+  affordability internals and **cannot** be re-pointed at the barrel; B9 proved **32 of 32** needed symbols are on the
+  deliberately-not-exported list. **Caveat stated rather than smoothed:** the trigger says _a **shared** module_,
+  meaning inside `packages/shared`; B9's owners are in `apps/api`, so on a **strict** reading these are a different
+  rule's exceptions. On the trigger's **substance** — a legitimate reach that cannot be re-pointed — it has fired
+  many times over.
+  **THE TWO ANALYSES MEASURED DIFFERENT CUTS, WHICH IS WHY THEY DO NOT CONTRADICT.** 2026-07-25 measured extracting
+  the **whole money set as a package**: 56 files / ~10,300 lines / 133 specifier rewrites, dragging in the model
+  descriptor and the modality enum — _"shared-core renamed."_ My analyst measured extracting only the **walled
+  internals**: ~2,425 lines plus tests, 52 `apps/api` specifier lines and 15 `apps/web`. **The earlier ruling rejected
+  moving the money LAYER; option D moves only its INTERNALS and leaves the public surface in shared.** A narrower cut
+  the earlier analysis never evaluated.
+  **PROCESS FINDING AGAINST ME:** I briefed the relocation analyst with plan sections and B9's reports **but not the
+  ledger history of the same question.** The run's own record held a prior ruling on the exact question, with a
+  written re-entry condition, and I did not surface it — so the analyst re-derived compatible conclusions from
+  scratch. That is corroboration by luck rather than by design; **the re-entry condition existed precisely so this
+  moment would not need re-deriving.**
+- 2026-07-29: **E1 verification A → PASS, no findings. E1 closes from the surface lens; only the money verification
+  remains.**
+  **IT TRACED THE INVERSION'S FOOTING RATHER THAN TAKING THE CLAIM.** Removing the `activeModality === 'image'` branch
+  drops image through `BottomRows` to the **final `TextBottomRow`**, which renders the capacity bar — so the negative
+  assertion fails, as reported. **But it found what the claim rests on:** had `FEATURE_FLAGS.AUDIO_ENABLED` been
+  `true`, the fall-through would land on `AudioBottomRow`, the bar would **still** be absent, and **the inversion
+  would have been vacuous.** True, but **contingent on a flag the test does not pin.** Not raised as a finding — the
+  flag is a shared constant and the assertion still fails for a modality reason at its actual value — **but the
+  footing is now recorded rather than assumed.** Checking _why_ an inversion works, not just that it does.
+  **IT CHECKED THE EXACT TRAP THE FIRST VERSION FELL INTO:** `TextBottomRow` renders `CapacityBar`
+  **unconditionally**, and the component always returns its element (the thresholds only pick a fill colour) — so the
+  bar's presence turns on **which row is selected and nothing else**, i.e. on `activeModality`. That is the structural
+  difference from the replaced assertion, whose search toggle keyed on `searchProps !== undefined` with **no modality
+  term at all**.
+  **THE NEGATIVE-ASSERTION HAZARD IS COVERED, and it checked:** the testid carries a **positive** pin in a sibling
+  suite, so a rename or deletion reddens **there** rather than silently satisfying this negative one. The
+  §Known Breakage entry applied rather than cited.
+  **THE COMMENT CLOSES THE CLASS, NOT THE CASE:** it records what is **deliberately not** asserted and why, quoting
+  the `showSearch` expression and attributing the omission to chat-layout — **stopping the next reader from re-adding
+  the very assertion the finding removed.** E1 was asked to make an assertion bite; it also left a note explaining why
+  the obvious neighbouring assertion must not be written.
+  **A SECOND-ORDER EFFECT STATED POSITIVELY, which is the right disposition:** an owner-funded turn no longer trips
+  `isDenied` but can still block via `admissible` — **and since the served snapshot for that turn is the OWNER's, the
+  gate and the picker now derive from the same wallet instead of contradicting each other.** That is the defect
+  closing, not a hole opening. Verified by **call ordering** — `withServedPayer` runs before `generateNotifications`,
+  the send gate reads the produced pair independently, and `readOnlyOverride` remains last.
+  Gate green on its own run: **exit 0, 396 files / 6,452 tests, zero threshold lines**, with the `markdown-renderer.tsx`
+  load-dependence reproduced a **sixth** time.
+- 2026-07-29: **E1 verification B → PASS. E1 IS CLEAN (20 of 29). ALL IN-FLIGHT WORK COMPLETE; THE RUN IS PAUSED at
+  the founder's instruction with nothing dispatched beyond it.**
+  **IT CHECKED WHAT THE REORDER COULD HAVE BROKEN, because moving a branch ahead of a guard trades one hole for
+  another.** All four adjacent arms identical between the two orders: `payer:'self'` + group still yields the
+  payer-switch disclosure, solo unchanged, `denied` + `self` keeps its reason, and **read-only still blocks** because
+  `readOnlyOverride` runs after `withServedPayer` and `hasBlockingError` still ORs `isReadOnly`. **No self-funded
+  refusal was weakened to fix the owner-funded one.**
+  **WHY REPLACING BEATS SPREADING, with two concrete consequences it derived rather than accepted:** a spread would
+  carry `reason` — inert today, but it would leave an **approved** result holding a denial reason about a wallet that
+  is not paying, and **the object would be structurally assignable to the approved variant so the compiler would not
+  catch it**; and it would carry `payerSwitch`, firing §Notices 5's disclosure **on the one case where nothing
+  switched.**
+  **AN OBSERVATION IT DELIBERATELY DID NOT RAISE AS A FINDING, AND ROUTED INSTEAD — the right call.** A
+  write-privileged **link guest** in an owner-funded conversation is refused client-side: `useSession` masks a guest's
+  session, so `useSpendable` is disabled, `served` is undefined, the adapter yields `payer:'self'`, and
+  `resolveClientBilling` returns `guest_budget_exhausted` — **while §Funding priority 1 funds a guest from the owner
+  when headroom covers.** It could not establish whether this **regressed in cycle 14 or predates the run**, because
+  the answer is server-side and outside both its files and E1's. **One question decides it: does
+  `GET /conversations/:id/budgets` succeed for a link-guest principal?** Yes ⇒ regression needing an owner; no ⇒
+  pre-existing. Routed to the founder rather than held against E1.
+  Its closing summary of the sequence: trial and guest send on the shared $0.01 ceiling instead of being refused as
+  broke; the picker greys only on the payer's real funding, hold-blind; the send gate reads `admissible` for text
+  alone and claims a hold only on evidence of one; the payer is the server's answer everywhere, with **exactly one
+  comparison of that field in production and it picks a sentence**; both group disclosures fire from it; and an
+  owner-funded turn is no longer blocked by verdicts about a wallet that is not paying. **"No case I can construct
+  now shows a user an availability or a refusal the server would contradict on the text arm — which was the
+  objective."**
+- 2026-07-29: **FOUNDER DECISIONS RECORDED. No execution started.** Full text in §Founder decisions 2026-07-29.
+  **THE FRAMING IS THE DURABLE RULE, and it outranks the individual corrections: "never weaken the doc to match the
+  implementation — change the implementation to match the best design."** Applying it reclassified **three of seven**
+  corrections from doc edits into implementation work — the storage-fee seam (the doc names one function, the code
+  has three; **collapse them**), `chooseFrom`'s bare `string` (**the rule is the design; introduce a refined type**),
+  and §What is enforced (**its claims are the design; make them true**, which is the relocation). I had proposed
+  weakening all three. **A spec that describes a better system than the code is doing its job; correcting it toward
+  the code destroys the only record of the intent.**
+  **FOUR DOC CORRECTIONS APPLIED, each carrying its REASON rather than just its shape** — the `CatalogSnapshot`
+  pairing explained as what makes divergent classification impossible; `notices(reason)` explained as copy being a
+  total function of a typed reason; `wireFor`'s second argument justified as structural (one turn-level choice, N
+  per-model fragments). Plus `releasedAtMs` on the projection and the arch README's scope contract, which now
+  distinguishes **rule logic** from **the glob list** and marks its rules list illustrative rather than exhaustive.
+  **APPROVED — `@hushbox/pricing`.** Dividing rule: **the package holds everything that computes a number; shared
+  keeps the functions consumers call, the types they exchange, and the copy.**
+  **RULED — a cost-circuit trip gets a generic "something went wrong" message.** It is the one producer of
+  `INSUFFICIENT_ADMISSION` that is not a refusal to start: accepted, worked, killed, **cost absorbed**. Neither the
+  money sentence nor the wait sentence is true, and the user did nothing wrong and is not billed.
+  **RULED — the consumed set is computed once at compile time**, both sides reading one field: one derivation, two
+  readers, removing the class rather than pinning an agreement Global Constraint 5 would ban.
+  **RULED — the run continues after compaction** (nine tasks left). **Deferred:** the coverage re-examination.
+  **ONE ITEM STILL OPEN AND ASKED RATHER THAN ASSUMED:** whether approving the boundary decision also approves **E**,
+  which retires the intra-`apps/api` owner/consumer rule and **reverses the founder's own 2026-07-28 ruling**. E is
+  what deletes the laundering hole — with no importer allowlist there is nothing to launder past — but reversing a
+  standing ruling is not something to infer from approval of the item it was nested under.
+- 2026-07-29: **E APPROVED — the intra-`apps/api` owner/consumer rule is retired**, reversing the 2026-07-28 ruling.
+  Deletes the arch rule, both allowlists, the cap, the ratchet **and the laundering hole**: with no importer allowlist
+  there is nothing to launder past.
+  **THE FOUNDER CHALLENGED MY PACKAGE/SHARED SPLIT AND THE CHALLENGE LANDS.** I drew it on **public versus
+  internal**, and every reason I gave collapses on inspection — `error-codes.ts` can import `notices` from the package
+  (shared declares it), type re-exports are free, and "not arithmetic" says nothing about where a file lives. **And my
+  split creates a boundary maintained by JUDGEMENT**, which is the failure mode this run has punished all the way
+  through; moving more makes `affordability/index.ts` a pure re-export with **nothing to drift**.
+  **THE REAL CONSTRAINT IS THE DEPENDENCY CLOSURE, and it was measured once — for a different cut.** The 2026-07-25
+  analysis found the **whole money layer** drags in `model-descriptor.ts`, `modality.ts`, `param-spec.ts`,
+  `utils/levenshtein.ts` and a `constants.ts` split, _"after which the money package owns the model descriptor and the
+  modality enum, i.e. it is shared-core renamed."_ **That is the answer to "why not move everything" — closure, not
+  taxonomy.** But it measured 3,914 non-test lines (the whole layer) against the ~2,425 on the table (the walled
+  internals), so **the internals-only closure is UNMEASURED** and it is the measurement that decides how much moves.
+  **RULE RECORDED: move the largest set whose dependency closure stays inside money — the line is DISCOVERED, not
+  chosen.** Clean closure ⇒ move more; clean throughout ⇒ move everything with shared as a re-export file; drags
+  shared-core in ⇒ that point is the boundary. Mechanical either way: `apps/web` cannot declare the package, so shared
+  re-exports the surface, and whether that file carries six names or forty is a **consequence** of the closure.
+  **FIRST ACTION ON RESUME, before any file moves: measure the internals-only closure.** Second: the link-guest
+  factual check. Nothing started.

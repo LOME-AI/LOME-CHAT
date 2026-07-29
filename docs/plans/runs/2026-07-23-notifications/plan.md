@@ -1357,6 +1357,53 @@ and the tests those force.
 **Scoped checks:** `pnpm test:api`; `turbo lint typecheck --filter=@hushbox/api --force`.
 **Sensitive:** YES (privacy boundary) → 2 auditors.
 
+
+## Task 26 — Fix MAX_PLAINTEXT_BYTES (RFC 8291 §4 violation)
+
+**Objective:** correct a plaintext ceiling that lets us build a body larger than every
+push service accepts, and stop a test from defending the wrong number.
+
+**Design context.** `apps/api/src/slices/notifications/adapters/webpush/encrypt.ts` sets
+`MAX_PLAINTEXT_BYTES = RECORD_SIZE - GCM_OVERHEAD = 4096 - 17 = 4079`. Verified
+arithmetic: the aes128gcm header is `16 salt + 4 rs + 1 idlen + 65 keyid = 86` bytes, so a
+maximum-size body is `86 + 4079 + 1 + 16 = 4182` octets — 86 over the 4096 every major
+push service enforces. RFC 8291 §4 states the interoperable ceiling outright
+("at most 3993 octets of plaintext") and separately requires `rs` be **greater than**
+plaintext + delimiter + tag, which 4079 makes exactly equal. `send.ts`'s length check is
+the only guard and it guards the wrong number.
+
+Latent, not live: today's generic `{category, conversationId}` payload is ~80 bytes. The
+reason to fix it now is that Task 19's boundary test asserts 4079 as "the maximum payload
+size", so the wrong value has acquired a test defending it.
+
+**Acceptance criteria:**
+- `MAX_PLAINTEXT_BYTES` is the RFC 8291 §4 interoperable ceiling. Derive it from named
+  parts so the arithmetic is legible and survives a change to any component — do NOT
+  write a bare `3993`. The header length must come from the same constants the encoder
+  uses to build the header, not a second literal.
+- The doc comment cites RFC 8291 §4 and states BOTH constraints it satisfies (the 4096
+  body ceiling, and `rs` strictly greater than plaintext + delimiter + tag). State the
+  durable fact — that the old value produced a 4182-octet body — so nobody "optimizes"
+  it back.
+- Task 19's boundary test is tightened: at `MAX_PLAINTEXT_BYTES` it must assert the
+  resulting BODY is `<= 4096`, not merely that it round-trips. A round-trip alone cannot
+  catch this class of bug, which is why it did not.
+- A test pins that `MAX_PLAINTEXT_BYTES + 1` is rejected by `sendWebPush`'s guard.
+- Existing tests that assert the OLD numeric bound are updated — that is correct, not a
+  meaning change, because the old number was wrong. Any test whose INTENT would shift is
+  a stop-and-report.
+- Wire output for real payloads is unchanged: the guard only rejects earlier. Confirm no
+  currently-passing send becomes rejected.
+
+**CAVEATS (state in the report):** this is an interoperability fix, not a security fix.
+No message has ever been near the bound.
+
+**Files:** `apps/api/src/slices/notifications/adapters/webpush/encrypt.ts`, its tests,
+`webpush/send.ts` tests if they pin the bound, and the Task 19 round-trip test.
+**Scoped checks:** `pnpm test:api`; `turbo lint typecheck --filter=@hushbox/api --force`.
+**Sensitive:** no → 1 auditor, but the auditor must verify the arithmetic against the RFC
+text itself rather than against this plan.
+
 ## Standing amendments
 
 - **FOUNDER RULING 2026-07-24 — I7's `push-event` postMessage is REMOVED (supersedes I7,

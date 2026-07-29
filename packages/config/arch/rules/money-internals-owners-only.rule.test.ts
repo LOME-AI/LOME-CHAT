@@ -108,7 +108,7 @@ describe('money-internals-owners-only', () => {
     expect(rule.check(project)).toEqual([]);
   });
 
-  it('ignores files outside apps/api — apps/web is E1/G2 territory, the module is its own', () => {
+  it("ignores files outside apps/api — apps/web is out of this rule's scope, the module is its own", () => {
     const project = projectWith({
       'apps/web/src/hooks/billing/use-prompt-budget.ts':
         "import { estimateTokensForTier } from '@hushbox/shared/affordability/estimate/pre-adapters';\n",

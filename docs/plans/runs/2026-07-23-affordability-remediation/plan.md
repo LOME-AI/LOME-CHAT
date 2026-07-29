@@ -19,7 +19,7 @@ went out together on disjoint file sets; both are money-flagged, so each gets tw
 through two fix cycles (the over-bill and the vacuous equivalence pin); B8 was re-scoped mid-flight after returning
 NEEDS_CONTEXT against an unbuildable criterion.
 
-**Clean — 18 of 29 lettered tasks** (26 at approval, plus B8b, B9 and F3 — all three created 2026-07-27, each because a task in flight proved that real work had no owner: deletion after the B8 split, the api-estimator rewrite, and a served funding number for free users) (each ended on an audit the orchestrator read and agreed found nothing
+**Clean — 20 of 29 lettered tasks** (26 at approval, plus B8b, B9 and F3 — all three created 2026-07-27, each because a task in flight proved that real work had no owner: deletion after the B8 split, the api-estimator rewrite, and a served funding number for free users) (each ended on an audit the orchestrator read and agreed found nothing
 valid; money-flagged tasks had two independent auditors):
 
 | Task    | What it delivered                                                                                                                                                                                                                                                                                                        |
@@ -42,8 +42,16 @@ valid; money-flagged tasks had two independent auditors):
 | **F3**  | one tier-correct served funding number — the free tier was being served the **paid $0.50 cushion**, a 10× overstatement in the unsafe direction; the figure is now reproduced from `resolveBudgetScopes` rather than recomputed, so it cannot drift from the gate by construction                                        |
 | **C3**  | the multi-model `auto` classifier WIRED — recognition derived from the graph, history/custom-instructions/preamble all withheld, storage excluded by the consumed-is-never-persisted CLASS rule, and an 8× over-hold found and closed on the way                                                                         |
 | **D1**  | the resolved effort persisted per generation — a declared node field justified by a **provably lossy wire** (four rungs mint an identical `{max_tokens}`), null-versus-`off` distinguished at every layer, and a money-path row-skip removed that had been hiding billed partials from every usage aggregate             |
+| **B9**  | the owner-versus-consumer boundary made **enforceable rather than stated** — 69 bindings classified 55/12, an `arch:check` rule watched red on real code, a ratchet with a duplicate guard, and a walled money type pulled off the models slice's public barrel                                                          |
+| **E1**  | every text surface renders the produced sets — premium became a **reason not a gate**, the client's second verdict engine deleted with its 42 pins re-homed, the intersection clamp retired after being wrong in **both** directions, and the payer consumed from the server rather than re-derived                      |
 
-**In flight — E1 (fix cycle) and B9 (fix cycle). D1 is clean.** **FOUNDER INSTRUCTION 2026-07-28: dispatch NO new tasks — finish what is in flight to clean audits, then pause, update plan and ledger, and bring open questions and doc changes.** An analyst is running on the price-owner relocation question; its output is decision material for the founder, not a task. C3 closed clean after seven cycles and two auditors, unblocking both B9 (held behind it) and D1.
+**In flight — NOTHING. PAUSED at founder instruction on 2026-07-29, with every in-flight task taken to a clean
+audit and no new task dispatched.**
+
+**FOUNDER INSTRUCTION 2026-07-28, discharged:** finish what is in flight to clean audits, dispatch nothing new, then
+fully update plan and ledger and bring open questions and doc changes. E1, B9 and D1 all closed clean; the
+price-owner relocation analyst returned with its load-bearing assumption **Verified across four resolvers**. Nothing
+is running. **FOUNDER INSTRUCTION 2026-07-28: dispatch NO new tasks — finish what is in flight to clean audits, then pause, update plan and ledger, and bring open questions and doc changes.** An analyst is running on the price-owner relocation question; its output is decision material for the founder, not a task. C3 closed clean after seven cycles and two auditors, unblocking both B9 (held behind it) and D1.
 
 **The 2026-07-27 pause instruction is LIFTED** (founder, same day): B7 and C1 both reached clean audits under it,
 the run reported, and the founder said continue. Normal dispatch rules resume — a task goes out the moment its
@@ -70,7 +78,28 @@ the settlement and Smart Model execution paths — so they run concurrently. Eve
 and G1 open on B8, C3 on both B8 and C2, and lane D on C2. Verified against §Dependency-graph, not assumed —
 D1 in particular depends on C2 rather than C1 and is **not** ready.
 
-### The git baseline — `ada0341c`, and the money module is tracked
+### The git baseline — **`f1d99703` as of 2026-07-28**, and the money module is tracked
+
+**THE FOUNDER COMMITTED AGAIN MID-RUN. `HEAD` is now `f1d99703` ("billing refactor"), not `53daba72`, and the working
+tree fell from ~341 entries to 20.** Third absorption of this run's work into a founder commit. It invalidates every
+"vs HEAD" differential taken before it — not because those claims were wrong, but because `HEAD` now names a
+different commit, so re-running them answers a different question.
+
+- **Identity claims must name their commit, never `HEAD`.** A differential recorded as "vs HEAD" earlier in this run
+  meant `53daba72`; the same words now mean `f1d99703`.
+- **`git diff HEAD` is a usable read of your own edits again** — the §Known Breakage entry warning it reads _the run_
+  rather than _you_ was written when ~341 uncommitted entries from several tasks sat in the tree. With 20 left the
+  hazard is dormant, and it returns the moment several tasks are uncommitted in flight again. **Its trigger is the
+  entry count, not the date.**
+- **The 20 survivors are mostly not this run's code**: readme hash caches, two docs, another run's plan and ledger,
+  `scripts/.cache/seed-crypto.json` — plus exactly four files this run owns: `model-selector-button.tsx` (E1) and
+  `packages/config/arch/{run.ts, rules/money-internals-owners-only.rule.test.ts, README.md}` (B9's in-flight fix).
+  Everything else B1 through E1 produced is now inside `f1d99703`.
+- **Nothing was committed by an agent.** The reflog shows only the founder's own commits — the no-git-writes rule held
+  across the entire run, including through five abnormal terminations and one disclosed violation that touched only
+  its own author's uncommitted work.
+
+### Original baseline record — retained because earlier reports cite it: `ada0341c`, money module tracked
 
 **`HEAD` is `53daba72` ("billing refactor"), and it contains every clean task's code.** The founder's
 commits have absorbed the run twice; an audit spanning the B5 work wants `ada0341c..53daba72`.
@@ -355,6 +384,29 @@ numbers on two independent full runs** — so this is not the documented load-de
 shortfall that eleven green self-gates never saw. CODE-RULES makes a coverage shortfall a **test failure**. The
 uncovered regions are not incidental: one of them is the **pinned-effort input path**, i.e. the adapter-side half of a
 criterion, never exercised.
+
+**A PATCH-AFTER-THE-FACT SEAM CANNOT REACH PATHS THAT SHORT-CIRCUIT BEFORE IT — order the authority first.** E1's
+money auditor, 2026-07-28, after **three consecutive cycles** in which a group-path fix had a second-order effect.
+The shape: the composer derives a **self-funded** verdict, then patches it with the server's payer — and the patch
+returns early on `denied`, so **every denial arm bypasses it.** The instance was a free-tier member on an
+owner-funded conversation being refused premium models the owner is paying for, while **the picker on the same
+screen marked those rows available**, because the picker reads the served (owner's) tier and the composer did not.
+**Fixing the instance leaves the next one; ordering the authoritative branch ahead of every short-circuit removes the
+class.** Whenever a value arrives from an authority and is applied as a **correction** rather than as an **input**,
+ask which paths return before the correction runs.
+
+**A WRAPPER AROUND THE GATE IS NOT THE GATE.** E1, 2026-07-28, one level further out than Global Constraint 9's
+pipeline trap. Its command was `pnpm test:web > log 2>&1; echo "TESTWEB_EXIT=$?"`, and the **background notification
+reported "completed (exit code 0)" — the shell wrapper's status, because the trailing `echo` succeeds regardless.**
+The captured gate status was `TESTWEB_EXIT=1`. A harness, a wrapper, a `; echo`, a `| tee` — each returns its own
+success and hides the one you asked for. **Write the gate's status to its own file and read it from there**, and never
+accept a runner's completion notice as the gate's verdict.
+
+**A FILE CAN CROSS A COVERAGE GATE BECAUSE OF WHAT YOU DELETED.** Also E1: `model-selector-button.tsx` fell to 94.73%
+branches without gaining a single uncovered branch. Removing `canAccessPremium` — **including its `= true` default
+parameter, which is itself a branch** — shrank the _denominator_, lifting a pre-existing unreachable guard above the
+threshold. Deletion is the case nobody checks coverage after, because the intuition is that removing code can only
+help. Expect it whenever a task's shape is subtractive, which describes most of lane E.
 
 **A TIMED-OUT GATE IS NOT A PASSING GATE.** E1, 2026-07-28: two `eslint --fix` runs were killed by the 120s tool
 timeout and **reported nothing at all** — no output, no failure, no exit code to read. Silence from a killed process
@@ -2044,6 +2096,168 @@ string)` as a second violating site.
    across the barrel, which is either the strongest case for a refined type or the clearest case for a stated
    carve-out. Founder's call either way; no code was reshaped under it.
 
+### FOUNDER DECISIONS 2026-07-29 — recorded, no execution started
+
+**All four `BILLING.md` corrections applied**, plus the arch README. The founder's framing governs the batch and is
+the durable rule: **never weaken the doc to match the implementation — change the implementation to match the best
+design.** That reclassified three of the seven corrections from doc edits into implementation work.
+
+- **Applied to the doc** (doc was stale, code is better): the producer's `CatalogSnapshot` signature _with the reason
+  the pairing is load-bearing_ — one snapshot feeds both passes, so `affordable` and `admissible` cannot classify a
+  model differently, which a fifth positional argument would have permitted; `notices(reason)` _with why the reason
+  alone_ — copy is a total function of a typed reason, so a new reason cannot ship without copy; `releasedAtMs` on
+  `PriceableModel`; and `wireFor(chosen, model)` _with the second argument justified as structural_ — one turn-level
+  choice fans out to N siblings and each fragment needs that model's caps, so an id would force a second resolution
+  site inside the money layer.
+- **Reclassified to implementation** (doc is right, code is wrong): the **storage-fee function** — the doc names one
+  seam, the code has three scattered storage-money computations, so **collapse them**; **`chooseFrom`'s bare
+  `string`** — the no-bare-`string` rule is the design, so **introduce a refined classifier-answer type** (the
+  brander `modelId(value: string)` stays exempt: you cannot brand a string without a function that takes one); and
+  **§What is enforced** — its claims are the design, so **make them true** rather than softening them, which is the
+  relocation below.
+- **arch README:** the scope contract now states that "never edit the harness to add behaviour" means **rule logic**,
+  not the glob list — the README already names that list as the statement of scope, and rules are contracted to
+  receive every in-scope file and filter inside `check`. The rules list is now marked **illustrative, not
+  exhaustive**, because it has lagged the set more than once.
+
+**APPROVED — `@hushbox/pricing`, a new workspace package.** The dividing rule: **the new package holds everything
+that computes a number; `packages/shared/src/affordability/` keeps the functions consumers call, the types those
+functions take and return, and the user-facing copy.** `@hushbox/shared` depends on it and re-exports only the public
+surface; `apps/api` declares it directly so price owners reach internals legitimately; **`apps/web` does not declare
+it**, which makes it unresolvable — Verified across Node, TypeScript, Vite (real config) and Vitest, with
+`@hushbox/db` as the live proof. `packages/shared`'s export map then collapses to `.` + `./affordability`, making
+"deep imports do not resolve" true. **Deleted rather than maintained:** the arch rule, `PRICE_OWNERS`,
+`PENDING_CONSUMER_CLOSURES`, the cap, the ratchet, the laundering hole, and the unwritten `apps/web` rule.
+**Two pins without which it is prose:** an assertion that the package is unresolvable from `apps/web`, and a lint rule
+banning `../../packages/` relative escapes — that route is **live in this repo today** and defeats any export map.
+**Precondition:** the 15 walled specifier lines in 6 `apps/web` files close first, or they become hard build errors.
+
+**APPROVED — E: retire the intra-`apps/api` owner/consumer rule**, reversing the 2026-07-28 ruling. It deletes the
+arch rule, `PRICE_OWNERS`, `PENDING_CONSUMER_CLOSURES`, the cap, the ratchet **and the laundering hole** — with no
+importer allowlist there is nothing to launder past. With the package graph enforcing the boundary the spec actually
+names (`apps/web`), the intra-`apps/api` rule guards something the graph already does.
+
+**THE PACKAGE/SHARED LINE IS DRAWN BY THE DEPENDENCY CLOSURE, NOT BY A PUBLIC/INTERNAL TAXONOMY — and my first
+proposal was wrong.** I split on public-versus-internal and every reason I gave collapses: `error-codes.ts` importing
+`notices` from the package is fine (shared declares it), type re-exports are free, and "not arithmetic" says nothing
+about where a file lives. Worse, that split **creates a boundary maintained by judgement**, which is the failure mode
+this run has punished repeatedly; moving more makes `affordability/index.ts` a pure re-export with **nothing to
+drift**.
+
+**The measured constraint is the closure.** The 2026-07-25 analysis found the **whole money layer** cut drags in
+`model-descriptor.ts`, `modality.ts`, `param-spec.ts`, `utils/levenshtein.ts` and a `constants.ts` split — _"after
+which the money package owns the model descriptor and the modality enum, i.e. it is shared-core renamed."_ **That is
+why not to move everything blindly.**
+
+**But that measured a DIFFERENT CUT than the one on the table:** the whole layer (3,914 non-test lines, 28.7% of
+shared) versus the walled internals (~2,425 lines). **Whether the internals-only closure drags in shared-core is
+UNMEASURED**, and it is the measurement that decides how much moves.
+
+**THE RULE: move the largest set whose dependency closure stays inside money.** Draw the line where the closure
+forces it, not where taxonomy suggests. Clean closure ⇒ move more than the internals; clean all the way ⇒ move
+everything and leave shared a re-export file; drags shared-core in at some point ⇒ **that point IS the boundary, and
+it is discovered rather than chosen.** Mechanical either way: `apps/web` cannot declare `@hushbox/pricing`, so shared
+re-exports the public surface — whether that file carries six names or forty is a **consequence** of the closure, not
+a decision.
+
+**FIRST ACTION ON RESUME, before any file moves: measure the internals-only closure.**
+
+**RULED — a cost-circuit trip gets a GENERIC "something went wrong" message.** It is the third producer of
+`INSUFFICIENT_ADMISSION` and the only one that is not a refusal to start: the run was accepted, work happened, the
+platform killed it and **absorbed the cost**. Neither "your balance can't cover this" nor "wait for the run to
+finish" is true, and the user did nothing wrong and is not billed — so the copy says something went wrong, without
+implying fault or a payable remedy. The mechanical half remains: `budget-exceeded` is two conditions pointing at
+**different people** (a group owner's budget, or the sender's own daily allowance) and `AdmissionRefusalReason`
+cannot say which — a billing-side type change, not a decision.
+
+**RULED — the consumed set is computed ONCE at compile time and both sides read it.** Today the estimator walks the
+**definition** (driving the storage reserve) and the interpreter walks the **compiled** graph (driving what
+settlement persists). They cannot disagree today — they differ only on container ids, which are never priced — but
+nothing gates it and a divergence **under-reserves storage**. The fix is to stop asking twice: the compiled graph
+carries the consumed set, computed at the single point where the definition becomes the compiled form, and both
+consumers read that field. Same shape as C3's derived recognition — **one derivation, two readers** — and it removes
+the class rather than pinning the agreement, which would be the cross-check Global Constraint 5 bans. Cheaper
+fallback if that proves awkward: the interpreter reads the shared definition-level walk.
+
+**RULED — the run continues after compaction.** Nine tasks remain: B8b · D2 · E2, E3, E4 · G1, G2, G3 · H1.
+**Deferred, handle as it arises:** re-examining the thirteen tasks cleaned before the `--coverage.include`
+non-accumulation was known.
+
+### The long-term boundary decision — analyst material, awaiting the founder
+
+**MY RECOMMENDATION WAS REFUTED, AND THE REFUTATION IS THE MOST USEFUL THING HERE.** I proposed relocating the price
+**owners** into the money package, believing the export map would then enforce the boundary for free. The premise is
+factually wrong on three counts, each Verified: the money layer is a **subdirectory of `@hushbox/shared`, not a
+package** (`BILLING.md:1275` says so normatively); **the export map gates PATHS, not importers**; and it is equally
+open to `apps/web` and `apps/api` **wherever the owners sit**. Moving owners in makes their internal reaches
+relative, but their _outputs_ must still reach `apps/api` by barrel or subpath — both equally reachable from the web
+app. **The mechanism I was reaching for was never the export map.**
+
+**But it does exist in this repo — it is the PACKAGE DEPENDENCY GRAPH, and it is now Verified across four
+independent resolvers.** The analyst probed nine specifiers from a virtual `apps/web` importer through Node's
+resolver, TypeScript's `resolveModuleName`, **Vite with the real `apps/web/vite.config.ts` and its full plugin
+chain**, and Vitest. **All four agree on all nine, zero disagreements.** `@hushbox/db`, `neverthrow` and `ts-pattern`
+— declared by `apps/api`, not by `apps/web` — **fail to resolve in all four**, while
+`@hushbox/shared/affordability/estimate/reducers` **resolves in all four**, which is the live breach. It also checked
+the two things that could have invalidated this and found neither applies: the root `tsconfig`'s wildcard
+`paths` mapping does **not** reach `apps/web` (its own `paths` **replaces** rather than merges — parsed options
+printed directly), and Vite carries no workspace alias or dedupe.
+
+**So the guarantee holds at typecheck, dev, build and test — and `@hushbox/db` is the live proof that it has held
+without anyone maintaining a rule.** The boundary can only be reached by moving the **internals out**, not the
+**owners in**.
+
+**THE OPTION SET, scored on what each DELETES:**
+
+- **A — status quo.** Keeps the arch rule, `PRICE_OWNERS`, `PENDING_CONSUMER_CLOSURES`, the hand-maintained cap and
+  the ratchet. Deletes nothing, leaves the laundering hole open, and **B8b is permanently unstartable** — 11 of 13
+  subpaths are owner-needed, so "deep imports do not resolve" stays false for the life of the repo. **It looks like
+  zero steps and is a permanent follow-up in disguise.**
+- **B — relocate the owners (my hypothesis).** Disqualified four independent ways, any one fatal: `turn-definition.ts`
+  exports a **history array** (content-freeness, hard ban); `estimate-run.ts` walks `definition.nodes` (§Where the DAG
+  lives bans this **verbatim**); two owners import `@hushbox/db`, `Telemetry` and three slice barrels (cycle); and
+  6 of 7 owners need `DomainError` (**1,265 references across 245 files**) or `neverthrow` inside `packages/shared`.
+  **Feasible fraction: 1 of 7 production owners, ~238 of 8,953 lines** — and it would not deliver the benefit anyway.
+- **C — owners in their own package.** Pays full package-creation cost and **still keeps every mechanism**, because
+  ≥3 production owners provably cannot leave `apps/api`.
+- **D — move the walled INTERNALS out into `@hushbox/pricing`**, declared by `apps/api` and by `@hushbox/shared`
+  (which re-exports only the public surface). **Deletes the 15 subpath entries, the not-yet-written `apps/web` rule,
+  and B8b's blocker** — shared's export map collapses to `.` + `./affordability`, making "deep imports do not
+  resolve" **true**. Contradicts `BILLING.md:1275` — a founder call.
+- **E — retire the intra-`apps/api` owner/consumer distinction** and enforce only the clause the doctrine actually
+  states (`apps/web`). **Deletes the 174-line rule, its 10-case test, both lists, the cap, the ratchet — and the
+  laundering hole, because with no importer allowlist there is nothing to launder past.** Reverses the 2026-07-28
+  ruling, so it is a policy reversal rather than a coding decision.
+
+**ANALYST RECOMMENDATION: D + E, in dependency order, and explicitly NOT B.** Confidence **medium**, for three
+reasons it stated itself: E reverses a founder ruling and is argued from the doc's text rather than from a defect in
+the reasoning; D contradicts a normative doc line; and D's precondition is real work owned by other lanes.
+
+**EXECUTION ORDER, and the first step needs no ruling at all:**
+
+1. **Close the 15 walled specifier lines in 6 `apps/web` files** — E1's 11, G2's 3, plus `use-reasoning-effort.ts`,
+   which additionally **re-exports** a walled name and is therefore a contract change to its consumers, not an import
+   edit. **This is the smallest independently valuable step and it is already chartered work: every option is
+   strictly better for it having landed** — A closes the only breach the doctrine actually names, D becomes
+   executable, E becomes safe.
+2. **E** — retire the intra-api rule. Must not land _before_ something covers `apps/web`, or the run ends with zero
+   enforcement anywhere.
+3. **D** — create the package, move ~2,425 lines of walled units plus tests, collapse the export map. **Requires
+   step 1.**
+4. **The pins, without which step 3 is prose:** an assertion that `@hushbox/pricing` is unresolvable from `apps/web`,
+   and a lint rule banning `../../packages/` relative escapes.
+
+**TWO RESIDUALS THE PROBE CANNOT CLOSE, and they defeat every option equally rather than favouring one:**
+**(i)** the relative-path escape is **live in this repo** — `workflows/engine/{live-run,interpreter}.test.ts` reach
+`packages/realtime/src/replay-buffer.js` through `../../../../../../`, past any export map. `apps/web` has **zero**
+such escapes today and nothing prevents one. **(ii)** `apps/web` does **not declare `@hushbox/shared`** — it resolves
+only through the **root** `package.json` devDeps hoist, which is accidental rather than deliberate. Any
+package-boundary guarantee silently depends on a new package never being added there.
+
+**A CONSEQUENCE OF E NOBODY HAD NAMED:** the two consumer-only subpaths become deletable when 6 `apps/api`
+`workflows/**` files move to `chooseFrom`/`wireFor` — **which is precisely the work step 2 stops tracking.** If E
+lands, those six must close in the same change or the one-producer intent is silently dropped.
+
 ### F3 — Serve what affordability actually needs (blocks E1)
 
 **Created 2026-07-27 on the founder's ruling. The defect is real; the PREMISE I GAVE FOR IT WAS WRONG, and F3
@@ -3017,6 +3231,24 @@ steps and must be taken, not aggregated.
 ## Lane E — Client surfaces (depends on B5, B6, B7, B8)
 
 ### E1 — Every surface renders the produced sets (depends on B5, B6, B8, F3)
+
+**RULED 2026-07-28 — THE SEND GATE CONSUMES `admissible` ONLY FOR TEXT.** E1's surface auditor found by execution
+that the shipped gate **refuses every non-text modality**: `useTurnOptions` passes `activeModality` into the producer,
+`turn-core.ts` returns `refused('modality_not_priceable')` for every non-text modality, and that refusal reaches
+`hasBlockingError` — so `canSubmitMessage` is false and **image and video generation cannot be sent at all**, since
+`PromptInput` is the media composer too. This cycle made it **louder**, not quieter: the new notice fold renders "The
+selected model can't produce that kind of content" on every media composition.
+
+**This is the founder's text-arm ruling applied to the gate, not a new decision.** A send gate that consumes
+`admissible` for a modality **the producer explicitly declines to price** is not the text arm — it is the text arm's
+verdict imposed on an arm that has no verdict yet. Media keeps the path it had before this run, until G2 and E4.
+**Do not close it by making the producer price media**: that is money work in the core estimator, it is nobody's task,
+and this section already says so.
+
+**WHY IT SHIPPED, and it is the reason the pin must be render-level:** every existing media test **mocks
+`useTurnOptions` away and returns a sendable pair**, so the suite could not see it. The plan predicted this hazard in
+words — "criterion 1 read literally makes every media turn unsendable" — and the prediction did not prevent it,
+because nothing tested the composer in image mode.
 
 **RULED 2026-07-27 — E1 IS THE TEXT ARM ONLY, and the media pricing builder SURVIVES.** E1 probed
 `turn-core.ts`'s `evaluateTurn` and found it returns `refused('modality_not_priceable')` for every non-text

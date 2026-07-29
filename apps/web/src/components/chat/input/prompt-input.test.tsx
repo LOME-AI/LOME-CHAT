@@ -2102,6 +2102,68 @@ describe('PromptInput', () => {
     });
   });
 
+  describe('the composer IS the media surface (the premise behind the text-arm gate)', () => {
+    /**
+     * SCOPE, stated exactly: this file mocks `use-prompt-budget` wholesale, so
+     * the real `sendRefusalOf` never runs here and NOTHING in this describe can
+     * detect a change to it. These tests pin only what the COMPOSER decides
+     * from `activeModality` and from the verdict it is handed.
+     *
+     * The text-arm guard itself is pinned where it executes —
+     * `use-prompt-budget.test.ts`, which mocks `useTurnOptions` beneath the real
+     * hook, so removing `if (!isTextTurn) return undefined` reddens it. That is
+     * the test to change if the rule changes.
+     *
+     * What these add is the PREMISE that made the guard's absence a user-facing
+     * defect rather than a cosmetic one: this component is the surface that
+     * sends image and video generations, so a text-arm refusal reaching it
+     * stopped media outright.
+     */
+    it('renders the media composer chrome in image mode', () => {
+      renderWithProviders(
+        <PromptInput
+          value="a cat"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isAuthenticated
+          activeModality="image"
+        />
+      );
+
+      // Both assertions turn on `activeModality`, which is the composer's OWN
+      // input: `BottomRows` selects `ImageBottomRow` over `TextBottomRow`, and
+      // only the text row carries the capacity meter. The same Send control
+      // drives generation in either.
+      //
+      // Deliberately NOT asserted here: the absence of the search toggle. That
+      // is `showSearch = searchProps !== undefined && …` — no modality term —
+      // so it would be absent whatever the modality and could not fail for a
+      // modality reason. `searchProps` omission is chat-layout's decision and
+      // is pinned as such earlier in this file.
+      expect(screen.getByTestId(TEST_IDS.sendButton)).toBeInTheDocument();
+      expect(screen.queryByTestId(TEST_IDS.capacityBar)).not.toBeInTheDocument();
+    });
+
+    it('disables Send in image mode when it IS handed a blocking verdict', () => {
+      // The composer's wiring, not the fixture echoed back: a blocking verdict
+      // must reach the media Send control exactly as it reaches the text one.
+      // This is why a text-arm refusal leaking into media disabled generation.
+      mockUsePromptBudget.mockReturnValue({ ...defaultBudget, hasBlockingError: true });
+
+      renderWithProviders(
+        <PromptInput
+          value="a cat"
+          onChange={mockOnChange}
+          onSubmit={mockOnSubmit}
+          isAuthenticated
+          activeModality="image"
+        />
+      );
+
+      expect(screen.getByTestId(TEST_IDS.sendButton)).toBeDisabled();
+    });
+  });
+
   describe('a blocked send always carries its notice (§Notices 7)', () => {
     it('renders the hold reason when the send is blocked by a run in flight', () => {
       // The disabled button alone is not a notice. A blocked send with no

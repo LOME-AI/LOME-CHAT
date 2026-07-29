@@ -8,7 +8,7 @@ import {
 } from '@hushbox/shared';
 import { REASONING_BUDGET_TOKENS_BY_EFFORT } from '@hushbox/shared/affordability/estimate/reasoning-plan';
 import { type BudgetCalculationResult } from '@/hooks/billing/use-budget-calculation';
-import { noticeText } from '@hushbox/shared';
+import { noticeText, resolveClientBilling } from '@hushbox/shared';
 import { usePromptBudget } from '@/hooks/billing/use-prompt-budget';
 
 const {
@@ -107,9 +107,18 @@ vi.mock('@/hooks/billing/use-turn-options', () => ({
 }));
 
 /** A produced pair with the two sendability flags these tests care about. */
-function pair(affordable: boolean, admissible: boolean, refusal = 'insufficient_funds'): unknown {
+interface PairOptions {
+  refusal?: string;
+  heldNanoUsd?: bigint;
+  payer?: 'self' | 'owner';
+}
+
+function pair(affordable: boolean, admissible: boolean, options: PairOptions = {}): unknown {
+  const { refusal = 'insufficient_funds', heldNanoUsd = 0n, payer = 'self' } = options;
   return {
     isPending: false,
+    heldNanoUsd,
+    payer,
     options: {
       affordable: affordable
         ? { sendable: true, turnDimensions: [] }
@@ -345,46 +354,6 @@ describe('usePromptBudget', () => {
       expect(mockUseConversationBudgets).toHaveBeenCalledWith(null);
     });
 
-    it('passes group context to useResolveBilling when group budget data is available', () => {
-      mockUseConversationBudgets.mockReturnValue({
-        data: {
-          conversationCapNanoUsd: '10000000000',
-          conversationSpentNanoUsd: '2000000000',
-          ownerBalanceNanoUsd: '50000000000',
-          members: [
-            {
-              memberId: 'mem-1',
-              userId: 'user-1',
-              username: 'testuser',
-              privilege: 'write',
-              capNanoUsd: '8000000000',
-              spentNanoUsd: '3000000000',
-              effectiveRemainingNanoUsd: '5000000000',
-            },
-          ],
-        },
-        isLoading: false,
-      });
-
-      renderHook(() =>
-        usePromptBudget({
-          ...defaultInput,
-          conversationId: 'conv-1',
-          currentUserPrivilege: 'write',
-        })
-      );
-
-      // Hook passes the served NanoUSD figures through as exact bigints.
-      expect(mockUseResolveBilling).toHaveBeenCalledWith(
-        expect.objectContaining({
-          group: {
-            effectiveRemainingNanoUsd: 5_000_000_000n,
-            ownerBalanceNanoUsd: 50_000_000_000n,
-          },
-        })
-      );
-    });
-
     it('is not a group member when a conversationId is present but privilege is omitted', () => {
       renderHook(() =>
         usePromptBudget({
@@ -399,67 +368,6 @@ describe('usePromptBudget', () => {
       expect(mockUseResolveBilling).toHaveBeenCalledWith(
         expect.not.objectContaining({ group: expect.anything() })
       );
-    });
-
-    it('reports zero effective remaining when the members list is empty', () => {
-      mockUseConversationBudgets.mockReturnValue({
-        data: {
-          conversationCapNanoUsd: '10000000000',
-          conversationSpentNanoUsd: '0',
-          ownerBalanceNanoUsd: '50000000000',
-          members: [],
-        },
-        isLoading: false,
-      });
-
-      renderHook(() =>
-        usePromptBudget({
-          ...defaultInput,
-          conversationId: 'conv-1',
-          currentUserPrivilege: 'write',
-        })
-      );
-
-      expect(mockUseResolveBilling).toHaveBeenCalledWith(
-        expect.objectContaining({
-          group: expect.objectContaining({ effectiveRemainingNanoUsd: 0n }),
-        })
-      );
-    });
-
-    it('threads a negative owner balance into the group context (composer denial)', () => {
-      mockUseConversationBudgets.mockReturnValue({
-        data: {
-          conversationCapNanoUsd: '10000000000',
-          conversationSpentNanoUsd: '2000000000',
-          ownerBalanceNanoUsd: '-1000000000',
-          members: [
-            {
-              memberId: 'mem-1',
-              userId: 'user-1',
-              username: 'testuser',
-              privilege: 'write',
-              capNanoUsd: '8000000000',
-              spentNanoUsd: '3000000000',
-              effectiveRemainingNanoUsd: '-1000000000',
-            },
-          ],
-        },
-        isLoading: false,
-      });
-
-      renderHook(() =>
-        usePromptBudget({
-          ...defaultInput,
-          conversationId: 'conv-1',
-          currentUserPrivilege: 'write',
-        })
-      );
-
-      const callArgument = mockUseResolveBilling.mock.calls.at(-1)![0] as {
-        group: { ownerBalanceNanoUsd: bigint };
-      };
-      expect(callArgument.group.ownerBalanceNanoUsd).toBe(-1_000_000_000n);
     });
 
     it('does not pass group context while budget data is loading', () => {
@@ -1242,10 +1150,12 @@ describe('usePromptBudget', () => {
     });
 
     it('a HOLD blocks the send with the wait reason, distinct from a money refusal', () => {
-      // Inside `affordable`, outside `admissible` — by construction that can only
-      // be a hold, because the sets differ solely in hold-awareness. Paying would
-      // not help, so the notice must not offer it.
-      mockUseTurnOptions.mockReturnValue(pair(true, false));
+      // Funds are actually held. That — not the gap between the two sets — is
+      // what makes this a hold: paying would not help, so the notice must not
+      // offer it, and waiting is the action that becomes true.
+      mockUseTurnOptions.mockReturnValue(
+        pair(true, false, { refusal: 'insufficient_funds', heldNanoUsd: 40_000_000n })
+      );
 
       const { result } = renderHook(() => usePromptBudget(defaultInput));
 
@@ -1259,11 +1169,201 @@ describe('usePromptBudget', () => {
       // outside `admissible` while `affordable` (empty basis) still sends.
       // Telling that user to wait for a reply that is not running is a false
       // action: their fix is to shorten the message.
-      mockUseTurnOptions.mockReturnValue(pair(true, false, 'prompt_too_long'));
+      mockUseTurnOptions.mockReturnValue(pair(true, false, { refusal: 'prompt_too_long' }));
 
       const { result } = renderHook(() => usePromptBudget(defaultInput));
 
       expect(result.current.sendRefusal).toBe('prompt_too_long');
+    });
+
+    it('does NOT gate a media turn on `admissible` — the producer declines to price it', () => {
+      // E1 is the TEXT arm. `turn-core.ts` returns `modality_not_priceable` for
+      // every non-text modality, so consuming `admissible` here imposes the text
+      // arm's verdict on an arm that has no verdict yet — and `PromptInput` is
+      // the media composer, so it disabled image and video generation outright.
+      mockActiveModality.current = 'image';
+      mockUseTurnOptions.mockReturnValue(pair(false, false, { refusal: 'modality_not_priceable' }));
+
+      const { result } = renderHook(() => usePromptBudget(defaultInput));
+
+      expect(result.current.sendRefusal).toBeUndefined();
+      expect(result.current.hasBlockingError).toBe(false);
+    });
+
+    it('still gates a TEXT turn on `admissible`', () => {
+      // The other half of the same rule: narrowing to text must not weaken text.
+      mockActiveModality.current = 'text';
+      mockUseTurnOptions.mockReturnValue(pair(false, false, { refusal: 'insufficient_funds' }));
+
+      const { result } = renderHook(() => usePromptBudget(defaultInput));
+
+      expect(result.current.sendRefusal).toBe('insufficient_funds');
+      expect(result.current.hasBlockingError).toBe(true);
+    });
+
+    it("an OWNER-funded turn says the owner pays, never the member's own allowance", () => {
+      // Before the served payer was consulted, a member in an owner-funded
+      // conversation read "This message uses your free daily allowance" — while
+      // the owner's budget paid and they were charged nothing at all.
+      mockActiveModality.current = 'text';
+      mockUseTurnOptions.mockReturnValue(
+        pair(true, true, { refusal: 'insufficient_funds', heldNanoUsd: 0n, payer: 'owner' })
+      );
+      mockUseConversationBudgets.mockReturnValue({
+        data: { members: [{ capNanoUsd: '1000000000000' }] },
+        isPending: false,
+      });
+
+      const { result } = renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conv-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      expect(result.current.fundingSource).toBe('owner_balance');
+      expect(result.current.notifications.map((n) => n.id)).toContain('group_budget_pays');
+      expect(result.current.notifications.map((n) => n.id)).not.toContain('free_allowance_pays');
+    });
+
+    it('an owner-funded turn is NOT blocked by the premium lock on the member own wallet', () => {
+      // §Funding Decision Matrix priority 1: "Conversation owner pays, PREMIUM
+      // ALLOWED." The premise is taken from the REAL resolver rather than
+      // invented — a free-tier member selecting a premium model genuinely
+      // resolves to a denial when only their own wallet is considered.
+      const selfOnly = resolveClientBilling({
+        tier: 'free',
+        purchasedBalanceNanoUsd: 0n,
+        spendableNanoUsd: 0n,
+        isPremiumModel: true,
+        estimatedMinimumCostNanoUsd: 0n,
+      });
+      expect(selfOnly.fundingSource).toBe('denied');
+
+      // That exact denial must not survive the server saying the owner pays:
+      // the premium lock is a statement about the SELF wallet and does not
+      // apply when it is not the wallet paying. The picker on the same screen
+      // already marks the row available, because the served tier is the
+      // owner's.
+      mockActiveModality.current = 'text';
+      mockUseResolveBilling.mockReturnValue(selfOnly);
+      mockUseTurnOptions.mockReturnValue(pair(true, true, { payer: 'owner' }));
+      mockUseConversationBudgets.mockReturnValue({
+        data: { members: [{ capNanoUsd: '1000000000000' }] },
+        isPending: false,
+      });
+
+      const { result } = renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conv-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      expect(result.current.fundingSource).toBe('owner_balance');
+      expect(result.current.hasBlockingError).toBe(false);
+    });
+
+    it('an owner-funded turn is NOT blocked by a negative balance on the member own wallet', () => {
+      // Same shape, the other denial arm: `client-billing.ts` guards the
+      // caller's own balance, which is the wrong wallet entirely when the
+      // owner pays.
+      const selfOnly = resolveClientBilling({
+        tier: 'paid',
+        purchasedBalanceNanoUsd: -1_000_000_000n,
+        spendableNanoUsd: -1_000_000_000n,
+        isPremiumModel: false,
+        estimatedMinimumCostNanoUsd: 10_000_000n,
+      });
+      expect(selfOnly.fundingSource).toBe('denied');
+
+      mockActiveModality.current = 'text';
+      mockUseResolveBilling.mockReturnValue(selfOnly);
+      mockUseTurnOptions.mockReturnValue(pair(true, true, { payer: 'owner' }));
+      mockUseConversationBudgets.mockReturnValue({
+        data: { members: [{ capNanoUsd: '1000000000000' }] },
+        isPending: false,
+      });
+
+      const { result } = renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conv-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      expect(result.current.fundingSource).toBe('owner_balance');
+      expect(result.current.hasBlockingError).toBe(false);
+    });
+
+    it('discloses the payer switch when the server funds a group turn from the member', () => {
+      // §Notices 5: switching who pays is not a detail to discover from a
+      // balance later. The server said `self` on a GROUP conversation — that is
+      // the fall-through, and it must be disclosed before sending.
+      mockActiveModality.current = 'text';
+      mockUseTurnOptions.mockReturnValue(
+        pair(true, true, { refusal: 'insufficient_funds', heldNanoUsd: 0n, payer: 'self' })
+      );
+      mockUseConversationBudgets.mockReturnValue({
+        data: { members: [{ capNanoUsd: '1000000000000' }] },
+        isPending: false,
+      });
+
+      const { result } = renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conv-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      expect(result.current.notifications.map((n) => n.id)).toContain('payer_switched_to_personal');
+    });
+
+    it('discloses NOTHING about payers on a solo conversation', () => {
+      // Self-funding alone is not a switch; only a group turn that fell through
+      // is. A solo composer must not be told its payer changed.
+      mockActiveModality.current = 'text';
+      mockUseTurnOptions.mockReturnValue(
+        pair(true, true, { refusal: 'insufficient_funds', heldNanoUsd: 0n, payer: 'self' })
+      );
+
+      const { result } = renderHook(() => usePromptBudget(defaultInput));
+
+      expect(result.current.notifications.map((n) => n.id)).not.toContain(
+        'payer_switched_to_personal'
+      );
+    });
+
+    it('CASE C: low balance + long history, nothing held → LENGTH, never the hold wording', () => {
+      // The case that shipped twice. A free user's whole daily allowance is 5¢
+      // (FREE_ALLOWANCE_CENTS_VALUE), so `insufficient_funds` with a long history
+      // and `heldNanoUsd = 0` is an ordinary free-tier state, not a corner.
+      // `affordable` sends because it is evaluated against the EMPTY basis — that
+      // says nothing about a hold. Telling this user to wait is a false action:
+      // nothing is running and waiting never helps. §Notices 4 routes it to
+      // length, because the funding covers a minimum answer and the prompt is
+      // what makes the turn infeasible.
+      mockUseTurnOptions.mockReturnValue(
+        pair(true, false, { refusal: 'insufficient_funds', heldNanoUsd: 0n })
+      );
+
+      const { result } = renderHook(() => usePromptBudget(defaultInput));
+
+      expect(result.current.sendRefusal).toBe('prompt_too_long');
+    });
+
+    it('CASE D: the same refusal WITH funds actually held → the hold wording', () => {
+      mockUseTurnOptions.mockReturnValue(
+        pair(true, false, { refusal: 'insufficient_funds', heldNanoUsd: 100_000_000_000n })
+      );
+
+      const { result } = renderHook(() => usePromptBudget(defaultInput));
+
+      expect(result.current.sendRefusal).toBe('funds_held_by_run');
     });
 
     it('a BALANCE shortfall names money, not waiting', () => {

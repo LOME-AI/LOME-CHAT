@@ -98,7 +98,7 @@ export function sendWebPush(
     return errAsync(validationError('web push Urgency is not a recognized level'));
   }
   if (payload.length > MAX_PLAINTEXT_BYTES) {
-    return errAsync(validationError('web push payload exceeds the single-record size limit'));
+    return errAsync(validationError('web push payload exceeds the RFC 8291 plaintext ceiling'));
   }
 
   const fetchImpl = deps.fetchImpl ?? fetch;
