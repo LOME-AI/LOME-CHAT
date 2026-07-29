@@ -30,10 +30,10 @@ export interface MessagePayerRow {
 }
 
 /**
- * Each assistant message's resolved payer. `usage_records.userId` is the
- * payer stamped at settlement (the wallet owner — under owner-funded group
- * turns this differs from the sender in the personal-fallthrough case),
- * reached through the charge's anchor content item.
+ * Each assistant message's resolved payer: `usage_records.payerUserId`, the
+ * owner of the wallet settlement debited, reached through the charge's anchor
+ * content item. It names the conversation owner on an owner-funded turn and the
+ * sender on a self-funded one.
  */
 export async function listMessagePayers(
   db: Database,
@@ -46,7 +46,7 @@ export async function listMessagePayers(
     .orderBy(asc(messages.sequenceNumber));
 
   const charges = await db
-    .select({ messageId: contentItems.messageId, payerId: usageRecords.userId })
+    .select({ messageId: contentItems.messageId, payerId: usageRecords.payerUserId })
     .from(usageRecords)
     .innerJoin(contentItems, eq(contentItems.id, usageRecords.contentItemId))
     .where(eq(usageRecords.conversationId, conversationId));

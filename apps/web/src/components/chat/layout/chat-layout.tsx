@@ -224,7 +224,10 @@ export function ChatLayout({
   const activeModality = useModelStore((state) => state.activeModality);
   const selectedModels = useModelStore((state) => state.selections[state.activeModality]);
   const setActiveModality = useModelStore((state) => state.setActiveModality);
-  useResolveDefaultModel(activeModality);
+  // Absent only before the conversation exists, which the funding scope and the
+  // share dialog both spell `null`.
+  const conversationIdOrNull = conversationId ?? null;
+  useResolveDefaultModel(activeModality, conversationIdOrNull);
   const webSearch = useWebSearch();
   const selectModality = React.useCallback(
     (modality: ChatModality): void => {
@@ -451,7 +454,7 @@ export function ChatLayout({
         shareMessageModalOpen={modals.shareMessageModalOpen}
         closeShareMessageModal={modals.closeShareMessageModal}
         shareMessageId={modals.shareMessageId}
-        shareMessageConversationId={conversationId ?? null}
+        shareMessageConversationId={conversationIdOrNull}
         sharedMessageContent={sharedMessageContent}
         sharedMessageEpochNumber={sharedMessageEpochNumber}
         sharedMessageWrappedContentKey={sharedMessageWrappedContentKey}

@@ -666,7 +666,7 @@ export function createEstimateRun(resolveModel: ModelPricingResolver): EstimateR
   return (definition) => {
     const storageContext: StorageStamp | undefined = definition.storage;
     const parents = buildParentIndex(definition.nodes);
-    const consumed = consumedProducerIds(definition.nodes);
+    const consumed = consumedProducerIds(definition);
     const memo = new Map<string, EnclosureFactors>();
     const perNode: Result<bigint, DomainError>[] = [];
     for (const node of definition.nodes) {

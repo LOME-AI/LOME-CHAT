@@ -9,8 +9,15 @@ The rules below are the working knowledge specific to this tree.
 - Every route declares exactly one **route class** as its **first handler** via
   `routeClass(…)`: `public` · `session` · `pending-2fa` · `billing-token` · `dev-only`.
   An undeclared route is default-denied (403). `dev-only` routes 404 in production.
-  Link-guest and trial-session principals are refused at HTTP for all classes — they
-  are authorized only at the realtime and media seams.
+  Link-guest and trial-session **principals** are refused at HTTP for all classes. That
+  is a belt, not the guest gate: a link guest never presents a principal at all —
+  `derivePrincipal` sees no cookie, yields `none`, and the `public` class admits it.
+  **A guest-reachable route is therefore `public` plus an in-handler credential gate**,
+  which resolves the guest from `X-Link-Public-Key`, matches the conversation, and
+  checks the member row and its privilege. Getting that gate wrong is a silent
+  authorization hole, so it is enforced structurally rather than by review: every
+  `public` route taking a `:conversationId` or reading the link header must prove it
+  invokes the shared gate.
 - `routes.ts` is one `defineSliceManifest({ basePath, routes })`. **The manifest's
   return type must stay inferred** — annotating it `Hono<AppEnv>` widens routes to
   `BlankSchema` and silently erases the slice from `AppType`, blinding the typed

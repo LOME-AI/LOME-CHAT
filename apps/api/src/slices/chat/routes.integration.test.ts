@@ -2045,6 +2045,11 @@ async function seedZeroBalanceMember(): Promise<{ userId: string; conversationId
  * pays the OWNER's wallet. The sending member has no wallet of their own — so
  * the payer is never the caller, the direct-billing tier gate is skipped, and
  * the caller's own wallet read is a path distinct from the turn context's.
+ *
+ * Both caps are sized to cover a real turn. A cap merely above zero would once
+ * have read as owner-funded here and then been refused at admission; the payer
+ * freeze now compares the turn's minimum, so a fixture claiming owner funding
+ * has to seed funding that can actually pay for one.
  */
 async function seedOwnerFundedGroup(): Promise<{
   conversationId: string;
@@ -2054,7 +2059,7 @@ async function seedOwnerFundedGroup(): Promise<{
   const owner = await seedUser();
   const conversationRows = await db
     .insert(conversations)
-    .values({ userId: owner, title: BYTES, conversationBudgetNanoUsd: 1_000_000n })
+    .values({ userId: owner, title: BYTES, conversationBudgetNanoUsd: 10_000_000n })
     .returning({ id: conversations.id });
   const conversationId = conversationRows[0]?.id;
   if (conversationId === undefined) throw new Error('conversation seed failed');
@@ -2073,11 +2078,98 @@ async function seedOwnerFundedGroup(): Promise<{
     .returning({ id: conversationMembers.id });
   const memberId = memberRows[0]?.id;
   if (memberId === undefined) throw new Error('member seed failed');
-  await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 1_000_000n });
+  await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 10_000_000n });
   return { conversationId, owner, sender };
 }
 
-describe('chat route: POST /chat premium-tier gate', () => {
+/**
+ * A group conversation whose owner is well funded but whose SENDING MEMBER
+ * holds a cap too small to fund a turn — the band `minTurnCost` exists to
+ * decide. The member has their own purchased wallet, so §Funding Decision
+ * Matrix priority 1's fall-through has somewhere to land.
+ */
+async function seedUnderfundedMemberGroup(memberCapNanoUsd: bigint): Promise<{
+  conversationId: string;
+  owner: string;
+  sender: string;
+}> {
+  const owner = await seedUser();
+  const conversationRows = await db
+    .insert(conversations)
+    .values({ userId: owner, title: BYTES, conversationBudgetNanoUsd: 10_000_000n })
+    .returning({ id: conversations.id });
+  const conversationId = conversationRows[0]?.id;
+  if (conversationId === undefined) throw new Error('conversation seed failed');
+  createdConversationIds.push(conversationId);
+  await db
+    .insert(epochs)
+    .values({ conversationId, epochNumber: 1, epochPublicKey: BYTES, confirmationHash: BYTES });
+  await db
+    .insert(wallets)
+    .values({ userId: owner, type: 'purchased', balanceNanoUsd: 10_000_000n });
+
+  const sender = await seedUser();
+  await seedPurchasedWallet(sender);
+  const memberRows = await db
+    .insert(conversationMembers)
+    .values({ conversationId, userId: sender, visibleFromEpoch: 1 })
+    .returning({ id: conversationMembers.id });
+  const memberId = memberRows[0]?.id;
+  if (memberId === undefined) throw new Error('member seed failed');
+  await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: memberCapNanoUsd });
+  return { conversationId, owner, sender };
+}
+
+describe('chat route: the payer freeze compares the turn minimum', () => {
+  it('charges the SENDER when the group headroom is positive but cannot cover the turn', async () => {
+    await seedModel();
+    // One nano of headroom is positive — the whole of the old comparison — and
+    // nowhere near a turn. The owner can never fund this send, so admission
+    // would refuse it against the member scope on this attempt and every retry.
+    const { conversationId, owner, sender } = await seedUnderfundedMemberGroup(1n);
+    const captured: CapturedRunBody[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body as unknown as CapturedRunBody);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(sender), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model: MODEL, userMessage: { id: crypto.randomUUID(), content: 'hello' } }
+    );
+    expect(res.status).toBe(201);
+    expect(captured[0]?.userId).toBe(sender);
+    expect(captured[0]?.userId).not.toBe(owner);
+    const senderWallet = await db
+      .select({ id: wallets.id })
+      .from(wallets)
+      .where(eq(wallets.userId, sender));
+    expect(captured[0]?.walletId).toBe(senderWallet[0]?.id);
+  });
+
+  it('still charges the OWNER when the headroom covers the turn', async () => {
+    await seedModel();
+    const { conversationId, owner, sender } = await seedUnderfundedMemberGroup(10_000_000n);
+    const captured: CapturedRunBody[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body as unknown as CapturedRunBody);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await post(
+      realtime,
+      { cookie: await cookie(sender), 'Idempotency-Key': crypto.randomUUID() },
+      { conversationId, model: MODEL, userMessage: { id: crypto.randomUUID(), content: 'hello' } }
+    );
+    expect(res.status).toBe(201);
+    expect(captured[0]?.userId).toBe(owner);
+  });
+});
+
+describe('chat route: premium-tier gate', () => {
   it('refuses a premium model for a zero-balance caller with 403 MODEL_TIER_LOCKED', async () => {
     await withPremiumModel(async (premiumModel) => {
       const { userId, conversationId } = await seedZeroBalanceMember();
@@ -2215,6 +2307,138 @@ describe('chat route: POST /chat premium-tier gate', () => {
       testEnv
     );
     expect(res.status).toBe(201);
+  });
+
+  it('refuses a premium model from a zero-balance FULL-SESSION sender on the guest route (403)', async () => {
+    await withPremiumModel(async (premiumModel) => {
+      // The guest route accepts a full session (the owner opening their own
+      // share link), so a signed-in sender reaches it as a direct-billing
+      // caller. The gate follows the payer, so it fires here exactly as it
+      // does on the send route.
+      const { userId, conversationId } = await seedZeroBalanceMember();
+      const res = await postPath(
+        '/chat/guest',
+        fakeRealtime(STARTED),
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: premiumModel,
+          userMessage: { id: crypto.randomUUID(), content: 'hello' },
+        }
+      );
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ code: 'MODEL_TIER_LOCKED' });
+    });
+  });
+
+  it('admits a premium model for an owner-funded link guest on the guest route (201)', async () => {
+    await withPremiumModel(async (premiumModel) => {
+      // A link guest never self-funds: the owner is the payer, so the gate
+      // must stay a no-op however little the guest could afford personally.
+      const ownerId = await seedUser();
+      const conversationId = await seedConversation(ownerId, false);
+      const guest = await seedGuestLink(conversationId, { privilege: 'write' });
+      await seedOwnerFunding(ownerId, conversationId, guest.memberId);
+      const res = await postGuest(fakeRealtime(STARTED), guest.credential, {
+        conversationId,
+        model: premiumModel,
+        userMessage: { id: crypto.randomUUID(), content: 'hello' },
+      });
+      expect(res.status).toBe(201);
+    });
+  });
+
+  it('admits a premium model on a regenerate from the same zero-balance caller (201)', async () => {
+    await withPremiumModel(async (premiumModel) => {
+      // A regenerate may run ANY model the payer can afford: the entitlement
+      // axis is exempt there because the model was already chosen on the turn
+      // being regenerated. The same caller shape and the same premium fixture
+      // are refused on the send route by 'refuses a premium model for a
+      // zero-balance caller with 403 MODEL_TIER_LOCKED' — that pairing is the
+      // exemption's boundary, and only entitlement is exempted.
+      const { userId, conversationId } = await seedZeroBalanceMember();
+      const anchor = await seedMessage(conversationId, {
+        senderType: 'user',
+        senderId: userId,
+        sequenceNumber: 1,
+        parentMessageId: null,
+      });
+      const res = await postRegenerate(
+        fakeRealtime(STARTED),
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: premiumModel,
+          targetMessageId: anchor,
+          action: 'retry',
+          userMessage: { id: crypto.randomUUID(), content: 'again' },
+        }
+      );
+      expect(res.status).toBe(201);
+    });
+  });
+
+  it('maps a not-started admission outcome on a premium regenerate to 402', async () => {
+    await withPremiumModel(async (premiumModel) => {
+      // Wiring, not money enforcement: the entitlement exemption must return
+      // the resolved context rather than a refusal, so a premium regenerate
+      // reaches run start at all and the run's not-started admission outcome
+      // becomes the caller's 402. The verdict here is a constant supplied by
+      // the realtime double, so no change to money enforcement can move it —
+      // the money half is carried by 'refuses a smart-model regenerate when no
+      // candidate is affordable', whose 402 comes from route code.
+      const { userId, conversationId } = await seedZeroBalanceMember();
+      const anchor = await seedMessage(conversationId, {
+        senderType: 'user',
+        senderId: userId,
+        sequenceNumber: 1,
+        parentMessageId: null,
+      });
+      const res = await postRegenerate(
+        fakeRealtime({ started: false, code: 'INSUFFICIENT_ADMISSION' }),
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: premiumModel,
+          targetMessageId: anchor,
+          action: 'retry',
+          userMessage: { id: crypto.randomUUID(), content: 'again' },
+        }
+      );
+      expect(res.status).toBe(402);
+      expect(await res.json()).toEqual({ code: 'INSUFFICIENT_ADMISSION' });
+    });
+  });
+
+  it('refuses a smart-model regenerate when no candidate is affordable (402)', async () => {
+    // The budget half, on the route's own affordability read rather than a
+    // realtime verdict: Smart Model derives its candidates from the payer's
+    // effective funding, so a spent daily allowance leaves an empty set on a
+    // regenerate exactly as it does on a send.
+    await seedModelId(MODEL);
+    const { userId, conversationId } = await seedZeroBalanceMember();
+    await db
+      .insert(allowanceSpending)
+      .values({ userId, day: utcDayKey(new Date()), spentNanoUsd: DAILY_ALLOWANCE_NANO_USD });
+    const anchor = await seedMessage(conversationId, {
+      senderType: 'user',
+      senderId: userId,
+      sequenceNumber: 1,
+      parentMessageId: null,
+    });
+    const res = await postRegenerate(
+      fakeRealtime(STARTED),
+      { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+      {
+        conversationId,
+        model: SMART_MODEL_ID,
+        targetMessageId: anchor,
+        action: 'retry',
+        userMessage: { id: crypto.randomUUID(), content: 'again' },
+      }
+    );
+    expect(res.status).toBe(402);
+    expect(await res.json()).toMatchObject({ code: 'INSUFFICIENT_ADMISSION' });
   });
 });
 
@@ -3755,6 +3979,47 @@ describe('chat route: POST /chat/trial', () => {
   }
 
   /**
+   * A fixture whose rates make the CLASSIFIER RESERVE the term that decides the
+   * send: the smallest viable answer sits inside the 1¢ ceiling while that answer
+   * plus the reserve does not. The reserve is the classifier's own truncated
+   * prompt at the engine's input rate plus `CLASSIFIER_OUTPUT_TOKEN_CAP` at its
+   * output rate, so a high OUTPUT rate is what separates the two sides here.
+   *
+   * Which side of the ceiling each lands on is pinned by the companion pair of
+   * tests, not asserted by this comment: the no-auto send must answer 201 for the
+   * auto send's 402 to mean anything.
+   */
+  const CLASSIFIER_RESERVE_TRIAL_FIXTURE = {
+    reasoning: { supportedEfforts: null },
+    limits: { contextLength: 1_000_000 },
+    pricing: { inputPerToken: '1000', outputPerToken: '3000' },
+  } as const;
+
+  /**
+   * {@link withPinnedTrialCatalog} WITHOUT its cheap 2/3-nano row, so the seeded
+   * fixture is itself the cheapest priceable text model — which is to say the
+   * classifier engine. The reserve is then priced at the fixture's own rates.
+   *
+   * With the cheap row present the engine is that row, its reserve is a few
+   * thousand nano, and no rate on the fixture can make the reserve decide the
+   * send — a classifier-cost refusal would be unobservable however the fixture is
+   * priced. The pricey decoys stay, because they are what holds the premium
+   * percentile above the fixture and keeps the verdict a cost one.
+   */
+  async function withFixtureAsEngineTrialCatalog<T>(
+    fixtureId: string,
+    descriptorOverrides: Record<string, unknown>,
+    postSend: () => Promise<T>
+  ): Promise<T> {
+    return withSuiteCatalogLock(async () => {
+      await db.delete(modelCatalog);
+      await seedTrialDecoys();
+      await seedGateModel(fixtureId, descriptorOverrides);
+      return postSend();
+    });
+  }
+
+  /**
    * The trial turn's input-token count: the ONE shared prompt measurement (system
    * prompt included, so the oracle moves with the wire prompt) at the trial tier's
    * 2 chars per token.
@@ -3841,6 +4106,116 @@ describe('chat route: POST /chat/trial', () => {
         prompt: 'hi',
         reasoningEffort: 'medium',
       })
+    );
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({ code: 'TRIAL_MESSAGE_TOO_EXPENSIVE' });
+  });
+
+  it('classifies a trial auto send instead of running it reasoning-free', async () => {
+    // The inversion of the old trial behaviour: `auto` used to compile a turn
+    // with no reasoning wire at all whenever the model offered two or more real
+    // choices — the silent static fallback §Reasoning Effort 5 forbids, on the
+    // path §Trial Usage names. It now takes the same classifier stage a paid
+    // pinned+auto send takes, under the trial policy.
+    const autoCtx = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    const res = await withPinnedTrialCatalog(autoCtx, REASONING_TRIAL_FIXTURE, () =>
+      postTrial(realtime, trialHeaders(), {
+        model: autoCtx,
+        prompt: 'hi',
+        reasoningEffort: 'auto',
+      })
+    );
+    expect(res.status).toBe(201);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    expect(definition.nodes[0]).toMatchObject({
+      type: 'smartModel',
+      candidates: [{ id: autoCtx }],
+      classify: { model: false, effort: true },
+    });
+  });
+
+  it('leaves a classified trial definition unstamped and on the trial policy', async () => {
+    // A trial turn persists nothing, so the classified definition must carry the
+    // no-persist policy and no storage stamp — otherwise admission would hold
+    // storage that settlement can never bill.
+    const autoCtx = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    await withPinnedTrialCatalog(autoCtx, REASONING_TRIAL_FIXTURE, () =>
+      postTrial(realtime, trialHeaders(), {
+        model: autoCtx,
+        prompt: 'hi',
+        reasoningEffort: 'auto',
+      })
+    );
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    expect(definition.storage).toBeUndefined();
+    expect(definition.hooks).toEqual({ admission: 'trial', settlement: 'trial' });
+  });
+
+  it('keeps a trial auto send on the regular turn for a non-reasoning model', async () => {
+    // The deterministic arm: nothing to classify, so no classifier call, no
+    // charge and no reserve — the regular compile resolves it.
+    const captured: WorkflowDefinition[] = [];
+    const realtime = fakeRealtime(STARTED, {
+      startRun: (_conversationId, body) => {
+        captured.push(body.definition);
+        return okAsync(STARTED);
+      },
+    });
+    await seedModel();
+    const res = await postTrial(realtime, trialHeaders(), {
+      model: MODEL,
+      prompt: 'hi',
+      reasoningEffort: 'auto',
+    });
+    expect(res.status).toBe(201);
+    const definition = captured[0];
+    if (definition === undefined) throw new Error('expected a captured definition');
+    expect(definition.nodes.map((node) => node.type)).toEqual(['modelCall']);
+  });
+
+  it('runs the classifier-reserve fixture without auto (201 — the answer alone fits)', async () => {
+    // The premise the refusal below rests on. Without it the 402 could be the
+    // model gate refusing an over-cap model, and the pair would pin nothing.
+    const engineCtx = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    const res = await withFixtureAsEngineTrialCatalog(
+      engineCtx,
+      CLASSIFIER_RESERVE_TRIAL_FIXTURE,
+      () => postTrial(fakeRealtime(STARTED), trialHeaders(), { model: engineCtx, prompt: 'hi' })
+    );
+    expect(res.status).toBe(201);
+  });
+
+  it('refuses a trial auto send whose classifier reserve overruns the 1¢ ceiling (402)', async () => {
+    // The same model and the same prompt as the 201 above, differing only in
+    // `auto` — so the ceiling that the answer fits is the ceiling the answer plus
+    // the classifier's reserve does not. Auto is priced, never silently degraded
+    // to a reasoning-free turn (BILLING §Reasoning Effort 5, §Trial Usage).
+    const engineCtx = `chat-route/${crypto.randomUUID().slice(0, 8)}`;
+    const res = await withFixtureAsEngineTrialCatalog(
+      engineCtx,
+      CLASSIFIER_RESERVE_TRIAL_FIXTURE,
+      () =>
+        postTrial(fakeRealtime(STARTED), trialHeaders(), {
+          model: engineCtx,
+          prompt: 'hi',
+          reasoningEffort: 'auto',
+        })
     );
     expect(res.status).toBe(402);
     expect(await res.json()).toEqual({ code: 'TRIAL_MESSAGE_TOO_EXPENSIVE' });
@@ -4756,7 +5131,11 @@ async function seedGuestLink(
   return { credential: toBase64(publicKey), linkId, memberId };
 }
 
-/** Funds an owner-covered guest turn: owner purchased wallet, conversation cap, member cap. */
+/**
+ * Funds an owner-covered guest turn: owner purchased wallet, conversation cap,
+ * member cap — every cap sized to cover a real turn, since the payer freeze
+ * compares the turn's minimum and a token cap would refuse the guest instead.
+ */
 async function seedOwnerFunding(
   ownerId: string,
   conversationId: string,
@@ -4767,9 +5146,9 @@ async function seedOwnerFunding(
     .values({ userId: ownerId, type: 'purchased', balanceNanoUsd: 10_000_000n });
   await db
     .update(conversations)
-    .set({ conversationBudgetNanoUsd: 1_000_000n })
+    .set({ conversationBudgetNanoUsd: 10_000_000n })
     .where(eq(conversations.id, conversationId));
-  await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 1_000_000n, spentNanoUsd: 0n });
+  await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 10_000_000n, spentNanoUsd: 0n });
 }
 
 describe('chat route: POST /chat/guest (link-guest send)', () => {
@@ -4856,6 +5235,31 @@ describe('chat route: POST /chat/guest (link-guest send)', () => {
       userMessage: { id: crypto.randomUUID(), content: 'no funds' },
     });
     expect(res.status).toBe(403);
+  });
+
+  it('DENIES a guest whose owner headroom is positive but cannot cover the turn', async () => {
+    await seedModel();
+    const ownerId = await seedUser();
+    const conversationId = await seedConversation(ownerId, false);
+    const guest = await seedGuestLink(conversationId, { privilege: 'write' });
+    // Owner wallet and both caps present, the member cap positive but far below
+    // a turn: the guest boundary does not move — a guest holds no wallet, so it
+    // is refused rather than fallen through (§Group Funding 2).
+    await db
+      .insert(wallets)
+      .values({ userId: ownerId, type: 'purchased', balanceNanoUsd: 10_000_000n });
+    await db
+      .update(conversations)
+      .set({ conversationBudgetNanoUsd: 10_000_000n })
+      .where(eq(conversations.id, conversationId));
+    await db.insert(memberBudgets).values({ memberId: guest.memberId, budgetNanoUsd: 1n });
+    const res = await postGuest(fakeRealtime(STARTED), guest.credential, {
+      conversationId,
+      model: MODEL,
+      userMessage: { id: crypto.randomUUID(), content: 'hello' },
+    });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ code: 'GROUP_BUDGET_EXHAUSTED' });
   });
 
   it('refuses a READ-only guest', async () => {
@@ -5679,6 +6083,36 @@ describe('chat route: admin-disabled model gate', () => {
         model: disabledModel,
         userMessage: { id: crypto.randomUUID(), content: 'hello' },
       });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ code: 'MODEL_DISABLED' });
+    });
+  });
+
+  it('refuses a regenerate selecting a disabled model with 403 MODEL_DISABLED', async () => {
+    await withDisabledModel(async (disabledModel) => {
+      // Availability is not entitlement: a regenerate is exempt from the
+      // premium-tier gate but never from the kill switch, and it answers the
+      // specific refusal rather than the generic unknown-model one.
+      const userId = await seedUser();
+      const conversationId = await seedConversation(userId, true);
+      await seedPurchasedWallet(userId);
+      const anchor = await seedMessage(conversationId, {
+        senderType: 'user',
+        senderId: userId,
+        sequenceNumber: 1,
+        parentMessageId: null,
+      });
+      const res = await postRegenerate(
+        fakeRealtime(STARTED),
+        { cookie: await cookie(userId), 'Idempotency-Key': crypto.randomUUID() },
+        {
+          conversationId,
+          model: disabledModel,
+          targetMessageId: anchor,
+          action: 'retry',
+          userMessage: { id: crypto.randomUUID(), content: 'again' },
+        }
+      );
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({ code: 'MODEL_DISABLED' });
     });

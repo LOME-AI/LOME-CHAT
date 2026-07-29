@@ -18,14 +18,16 @@ export const usageRecords = pgTable(
     id: uuid('id')
       .primaryKey()
       .default(sql`uuidv7()`),
-    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
-    // The turn's SENDER, first-class and independently queryable beside
-    // `userId`. The two resolve to different people on a group turn, and
-    // `userId` is NOT the charged wallet's owner: it is the initiating member
-    // on a user turn — even when an owner-funded turn debits the OWNER's
-    // wallet — and the owner on a link-guest turn (a guest has no users row).
-    // Grouping spend by `user_id` therefore groups by initiator; who funded it
-    // is recoverable only from the ledger legs. Exactly one side is
+    // The PAYER: the owner of the wallet this charge debited, on every turn
+    // shape alike — the sender when they fund themselves, the conversation
+    // owner when the owner funds a member's or a guest's turn. One meaning, no
+    // dependence on the sender's principal kind, so grouping spend by
+    // `payer_user_id` answers "what did this account spend" without a ledger
+    // join. Who SENT rides the sender pair below.
+    payerUserId: uuid('payer_user_id').references(() => users.id, { onDelete: 'set null' }),
+    // The turn's SENDER, first-class and independently queryable beside the
+    // payer. The two resolve to different people on an owner-funded group turn.
+    // Exactly one side is
     // written at insert, mirroring conversation_members' principal pair:
     // senderUserId for a member sender, senderLinkId for a link-guest sender
     // (a guest has no users row, so a users FK alone cannot record it). Both
@@ -63,7 +65,9 @@ export const usageRecords = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    index('usage_records_user_id_idx').on(table.userId).where(isNotNull(table.userId)),
+    index('usage_records_payer_user_id_idx')
+      .on(table.payerUserId)
+      .where(isNotNull(table.payerUserId)),
     index('usage_records_content_item_id_idx')
       .on(table.contentItemId)
       .where(isNotNull(table.contentItemId)),

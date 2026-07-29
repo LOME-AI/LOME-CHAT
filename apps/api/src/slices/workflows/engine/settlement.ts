@@ -76,8 +76,8 @@ export function keyRowCompletion(response: unknown): KeyRowCompletion {
 
 /**
  * The run-scoped facts every charge shares, closed over from the `RunContext`
- * the DO threads into the settlement hook: who pays (`walletId`/`userId`), the
- * run grouping id, the settlement timestamp, and the persist-then-charge seam.
+ * the DO threads into the settlement hook: who pays (`walletId`/`payerUserId`),
+ * the run grouping id, the settlement timestamp, and the persist-then-charge seam.
  *
  * `contentItemIdFor` is the documented handoff to the chat slice's persist
  * seam: a charge is anchored to the content persisted for its generation, and
@@ -89,13 +89,12 @@ export function keyRowCompletion(response: unknown): KeyRowCompletion {
  */
 export interface ChargeContext {
   readonly walletId: string;
-  readonly userId: string;
+  /** The owner of `walletId` — the account every charge of this run bills. */
+  readonly payerUserId: string;
   /**
-   * The turn's SENDER principal, stamped on every charge of the run beside
-   * the attributed user (`userId`). They diverge on a link-guest turn —
-   * `userId` is the OWNER, the guest has no users row. On a user turn `userId`
-   * is the sending member, owner-funded or not: owner funding moves only the
-   * charged wallet. Both are self on a solo turn.
+   * The turn's SENDER principal, stamped on every charge of the run beside the
+   * payer. The two diverge whenever the owner funds someone else's turn — a
+   * member's or a guest's — and coincide on a self-funded one.
    */
   readonly sender: ChargeSender;
   readonly runId: string;
@@ -209,7 +208,7 @@ function chargeInputFor(
 ): ChargeInput {
   return {
     walletId: context.walletId,
-    userId: context.userId,
+    payerUserId: context.payerUserId,
     sender: context.sender,
     runId: context.runId,
     contentItemId,

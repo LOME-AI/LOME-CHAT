@@ -1327,33 +1327,11 @@ describe('trialReasoningSelection', () => {
     expect(decision).toEqual({ accepted: false });
   });
 
-  it("resolves 'auto' reasoning-free when the model offers multiple choices (no static pick)", () => {
-    // Multi-choice auto is classifier-owned; the trial build has no
-    // classifier stage on this path, so auto degrades honestly — never
-    // through a static preference order.
-    const decision = trialReasoningSelection(
-      trialDescriptor({ supportedEfforts: null }),
-      budget,
-      'auto'
-    )._unsafeUnwrap();
-    expect(decision).toEqual({ accepted: true, selection: undefined });
-  });
-
-  it("resolves 'auto' on a non-reasoning model to no reasoning", () => {
-    const decision = trialReasoningSelection(trialDescriptor(), budget, 'auto')._unsafeUnwrap();
-    expect(decision).toEqual({ accepted: true, selection: undefined });
-  });
-
-  it("picks the sole real choice deterministically on a Min-only model ('auto' → 'off')", () => {
-    // A disableable model with no offered rungs has exactly one real choice
-    // (Min), so auto picks it with no classifier and no reserve (§Effort 5).
-    const decision = trialReasoningSelection(
-      trialDescriptor({ supportedEfforts: ['none'] }),
-      budget,
-      'auto'
-    )._unsafeUnwrap();
-    expect(decision).toEqual({ accepted: true, selection: 'off' });
-  });
+  // `auto` is not this function's to resolve — the type excludes it. A trial
+  // auto turn classifies through the pinned+auto compiler, and its deterministic
+  // single-choice cases are `resolveTurnReasoning`'s, pinned in
+  // `turn-reasoning.test.ts` against that one authority. Resolving it here would
+  // mean picking a level with no classifier, which §Reasoning Effort 5 forbids.
 
   it("passes 'off' through untouched (the build owns the mandatory refusal)", () => {
     const decision = trialReasoningSelection(trialDescriptor(), budget, 'off')._unsafeUnwrap();

@@ -851,7 +851,7 @@ describe('conversation observation routes', () => {
     const usage = await db
       .insert(usageRecords)
       .values({
-        userId: owner.id,
+        payerUserId: owner.id,
         contentItemId: item?.id ?? null,
         runId: crypto.randomUUID(),
         conversationId,
@@ -915,7 +915,7 @@ describe('conversation observation routes', () => {
       .from(contentItems)
       .where(eq(contentItems.messageId, seeded.aiMessageId));
     await db.insert(usageRecords).values({
-      userId: seeded.payerId,
+      payerUserId: seeded.payerId,
       contentItemId: item?.id ?? null,
       runId: crypto.randomUUID(),
       conversationId: seeded.conversationId,
@@ -1397,7 +1397,7 @@ describe('dev mailbox routes', () => {
 interface CapturedPushView {
   id: string;
   category: string;
-  tag: string | null;
+  tag: string;
   title: string;
   body: string;
   payload: Record<string, string>;

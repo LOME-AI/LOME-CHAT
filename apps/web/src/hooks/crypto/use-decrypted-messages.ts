@@ -17,7 +17,11 @@ import {
 import { useTrackedDecryption } from '@/hooks/crypto/use-tracked-decryption';
 import { keyChainQueryOptions, keyKeys } from '@/hooks/crypto/keys';
 import { decryptedCache, decryptedCacheKey } from '@/lib/decrypted-message-cache';
-import type { MessageResponse, ContentItemResponse } from '@hushbox/shared';
+import type {
+  MessageResponse,
+  ContentItemResponse,
+  ResolvedReasoningEffort,
+} from '@hushbox/shared';
 import type { Message, MessageMediaItem } from '@/lib/api';
 
 // Re-exported so existing consumers keep importing the cache clear from here.
@@ -79,6 +83,22 @@ function sumReasoningTokens(contentItems: ContentItemResponse[]): number {
   return total;
 }
 
+/**
+ * The level the message's generation reasoned at. Taken from the first item
+ * that recorded one — never folded, because a level is a decision taken once
+ * per generation rather than a quantity spent. Absent when no item recorded
+ * one, which is why `off` (reasoning resolved to none) survives here as a
+ * value: the badge shows it, and shows nothing for the absent case.
+ */
+function pickReasoningEffort(
+  contentItems: ContentItemResponse[]
+): ResolvedReasoningEffort | undefined {
+  for (const item of contentItems) {
+    if (item.reasoningEffort !== undefined) return item.reasoningEffort;
+  }
+  return undefined;
+}
+
 function extractMediaItems(contentItems: ContentItemResponse[]): MessageMediaItem[] {
   const media: MessageMediaItem[] = [];
   for (const item of contentItems) {
@@ -110,6 +130,7 @@ function buildDecryptedMessage(msg: MessageResponse, content: string): Message {
   const mediaItems = extractMediaItems(msg.contentItems);
   const isSmartModel = pickIsSmartModel(msg.contentItems);
   const reasoningTokens = sumReasoningTokens(msg.contentItems);
+  const reasoningEffort = pickReasoningEffort(msg.contentItems);
   return {
     id: msg.id,
     conversationId: msg.conversationId,
@@ -126,6 +147,7 @@ function buildDecryptedMessage(msg: MessageResponse, content: string): Message {
     ...(isSmartModel && { isSmartModel: true }),
     ...(mediaItems.length > 0 && { mediaItems }),
     ...(reasoningTokens > 0 && { reasoningTokens }),
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
   };
 }
 

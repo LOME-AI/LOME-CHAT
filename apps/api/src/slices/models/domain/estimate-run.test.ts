@@ -146,18 +146,28 @@ function fanInNode(
   return { id, version: 1, out: 'out', type: 'fanIn', reducer, ins };
 }
 
+/**
+ * `edges` is what makes a node's output consumed, so the fixtures that assert
+ * an output-storage reserve declare theirs; the rest price provider cost alone,
+ * where consumption cannot change the number.
+ */
 function workflow(
   nodes: readonly unknown[],
-  storage?: { readonly inputChars: number; readonly tier: UserTier }
+  storage?: { readonly inputChars: number; readonly tier: UserTier },
+  edges: readonly unknown[] = []
 ): WorkflowDefinition {
   return WorkflowDefinition.parse({
     version: 1,
     deadlineClass: 'text',
     hooks: { admission: 'chat', settlement: 'chat' },
     nodes,
-    edges: [],
+    edges,
     ...(storage === undefined ? {} : { storage }),
   });
+}
+
+function edge(fromNode: string, fromPort: string, toNode: string, toPort: string): unknown {
+  return { from: { node: fromNode, port: fromPort }, to: { node: toNode, port: toPort } };
 }
 
 describe('estimateRun', () => {
@@ -1196,16 +1206,97 @@ describe('estimateRun — persisting-turn storage', () => {
     // reducer consuming `m1` is exactly that shape.
     const consumed = workflow(
       [
-        modelNode('m1', 'gpt'),
+        modelNode('m1', 'gpt', { in: { node: 'input', port: 'prompt' } }),
         fanInNode('decide', TURN_DECISION_REDUCER, [
           { node: 'input', port: 'prompt' },
           { node: 'm1', port: 'out' },
         ]),
       ],
-      { inputChars: 0, tier: 'free' }
+      { inputChars: 0, tier: 'free' },
+      [
+        edge('input', 'prompt', 'm1', 'in'),
+        edge('input', 'prompt', 'decide', 'in0'),
+        edge('m1', 'out', 'decide', 'in1'),
+      ]
     );
 
     expect(estimateRun(consumed)._unsafeUnwrap()).toBe(BASE_1000);
+  });
+
+  it('reserves that same output storage once nothing reads the node', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+    // The discriminator for the pin above: one edge moved off `m1`, everything
+    // else identical, and the storage the pin asserts absent comes back.
+    const unread = workflow(
+      [
+        modelNode('m1', 'gpt', { in: { node: 'input', port: 'prompt' } }),
+        fanInNode('decide', TURN_DECISION_REDUCER, [
+          { node: 'input', port: 'prompt' },
+          { node: 'input', port: 'prompt' },
+        ]),
+      ],
+      { inputChars: 0, tier: 'free' },
+      [
+        edge('input', 'prompt', 'm1', 'in'),
+        edge('input', 'prompt', 'decide', 'in0'),
+        edge('input', 'prompt', 'decide', 'in1'),
+      ]
+    );
+    const outputStorage = 1000n * BigInt(outputCharsPerTokenForTier('free')) * CHAR_RATE;
+
+    expect(estimateRun(unread)._unsafeUnwrap()).toBe(BASE_1000 + outputStorage);
+  });
+
+  it('reserves no output storage for a producer only a branch reads', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+    // A `branch` carries no embedded input ref — it reads its producer through
+    // an edge alone — so a definition-side walk over node refs could not see
+    // this consumption and would reserve storage for a value settlement never
+    // persists. The reserve is exact here rather than generous, and exact still
+    // covers the bill: the branch is not a sink either, so the whole graph
+    // persists nothing and the storage term is zero on both sides.
+    const branchFed = workflow(
+      [
+        modelNode('m1', 'gpt', { in: { node: 'input', port: 'prompt' } }),
+        branchNode('route', { done: 'end' }, 'end'),
+      ],
+      { inputChars: 0, tier: 'free' },
+      [edge('input', 'prompt', 'm1', 'in'), edge('m1', 'out', 'route', 'in')]
+    );
+
+    expect(estimateRun(branchFed)._unsafeUnwrap()).toBe(BASE_1000);
+  });
+
+  it('reserves no output storage for a producer only a loop reads', () => {
+    const estimateRun = createEstimateRun(
+      resolverOf(buildDescriptor({ id: 'gpt', contextLength: 1000 }))
+    );
+    const loopFed = workflow(
+      [
+        modelNode('m1', 'gpt', { in: { node: 'input', port: 'prompt' } }),
+        loopNode('l1', 'body', 2),
+        modelNode('body', 'gpt', { in: { node: 'l1', port: 'state' } }),
+      ],
+      { inputChars: 0, tier: 'free' },
+      [
+        edge('input', 'prompt', 'm1', 'in'),
+        edge('m1', 'out', 'l1', 'in'),
+        edge('l1', 'state', 'body', 'in'),
+      ]
+    );
+    // Only `modelCall`/`smartModel` nodes carry an output-storage term, and the
+    // reserve applies it to every unconsumed producer — `body` is the only
+    // unconsumed node of that class, priced over the loop's iteration count.
+    // The run never persists that value: a loop's body is child-driven, and the
+    // sink predicate excludes child-driven nodes. The reserve is therefore
+    // generous here, in the safe direction.
+    const bodyStorage = 2n * 1000n * BigInt(outputCharsPerTokenForTier('free')) * CHAR_RATE;
+
+    expect(estimateRun(loopFed)._unsafeUnwrap()).toBe(BASE_1000 + BASE_1000 * 2n + bodyStorage);
   });
 
   it('still reserves output storage for the sink the same graph persists', () => {

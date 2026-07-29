@@ -42,14 +42,14 @@ unreachable zero.
 
 ### Funding
 
-| Term               | Formula                                                                                                                |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| `balance`          | Ledger balance of the payer's purchased wallet. May be negative.                                                       |
-| `allowance`        | Remaining free daily allowance (day-keyed).                                                                            |
-| `cushion`          | Paid tier only: the permitted negative excursion (`MAX_ALLOWED_NEGATIVE_BALANCE_CENTS`).                               |
-| `effectiveBalance` | paid: `balance + cushion` · free: `allowance` · trial/guest: a fixed per-message ceiling.                              |
-| `holds`            | Σ of the payer's unexpired admission holds.                                                                            |
-| **`spendable`**    | `effectiveBalance − holds`. **Pure money, one number per payer.** It contains no token quantity and no per-model term. |
+| Term               | Formula                                                                                                                                                      |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `balance`          | Ledger balance of the payer's purchased wallet. May be negative.                                                                                             |
+| `allowance`        | Remaining free daily allowance (day-keyed).                                                                                                                  |
+| `cushion`          | Paid tier only: the permitted negative excursion (`MAX_ALLOWED_NEGATIVE_BALANCE_CENTS`).                                                                     |
+| `effectiveBalance` | paid: `balance + cushion` · free: `allowance` · trial: a fixed per-message ceiling. A guest has none of its own — the payer's applies (**Group Funding 1**). |
+| `holds`            | Σ of the payer's unexpired admission holds.                                                                                                                  |
+| **`spendable`**    | `effectiveBalance − holds`. **Pure money, one number per payer.** It contains no token quantity and no per-model term.                                       |
 
 `spendable` is a property of the _payer_, not of the sender — see **Group Funding 1**.
 
@@ -72,6 +72,12 @@ Both funding numbers are derivable from what the wire already serves:
 `GET /billing/spendable` returns `spendableNanoUsd` and `heldNanoUsd`, so
 `effectiveBalance = spendable + holds`. No additional field and no second request exist
 for this.
+
+**A link guest reads the same snapshot through a different door.** `/billing/spendable` is
+billing-token-classed and refuses a guest, so the guest's **payer** snapshot is served by a
+guest-reachable read on the conversation — same shape, same producer, same numbers the
+admission gate uses. A different route is not a second source; a second _derivation_ would
+be. The guest client never composes a funding figure from two responses.
 
 ### The prompt basis
 
@@ -130,13 +136,13 @@ from the same pool as the answer. The ceiling bounds both together.
 
 ### Cost
 
-| Term                | Formula                                                                                                                                                                                                                                                                                                                                                     |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cost(m, tokens)`   | `inputTokens × inputRate(m) + tokens × variableRate(m)` — storage rides `variableRate`, so a non-persisting turn carries no storage term. Trial never persists.                                                                                                                                                                                             |
-| `maxCallCost(m)`    | `cost(m, min(providerCap(m), contextHeadroom(m)))` — the most a call on `m` could ever cost for this prompt. Money-only, balance-independent, and independent of the payer.                                                                                                                                                                                 |
-| `minTurnCost`       | `Σᵢ (inputTokens × inputRate(mᵢ) + MINIMUM_OUTPUT_TOKENS × variableRate(mᵢ))` at a **candidate payer's** tier — the least this turn could possibly cost if that payer paid. The payer decision consumes this, never a full estimate.                                                                                                                        |
-| `trialTurnCost`     | Priced with **no storage term at all** — §Trial Usage's "trial never persists" is unconditional, so the per-message cap buys strictly more than a storage-inclusive reading allowed. There is exactly **one** premium/trial classifier, in the money module; a second copy carrying its own price percentile and recency window is a defect, not a variant. |
-| `classifierReserve` | Worst-case cost of the classifier's own provider call. **Provider leg only** — the classifier's prompt and output are never persisted, so no storage is reserved or charged for it. The engine is the cheapest priceable model, which is a sound rule only because **Catalog Admission** puts a floor under "cheapest".                                     |
+| Term                | Formula                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cost(m, tokens)`   | `inputTokens × inputRate(m) + tokens × variableRate(m)` — storage rides `variableRate`, so a non-persisting turn carries no storage term. Trial never persists.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `maxCallCost(m)`    | `cost(m, min(providerCap(m), contextHeadroom(m)))` — the most a call on `m` could ever cost for this prompt. Money-only, balance-independent, and independent of the payer.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `minTurnCost`       | `fixedCosts + Σᵢ (B(mᵢ, e_min) + MINIMUM_OUTPUT_TOKENS) × variableRate(mᵢ)` at a **candidate payer's** tier — the turn priced at the **`eligible(m)` corner**: every fixed term its own definition names (input tokens, input storage, classifier reserve) plus the cheapest resolved reasoning budget and a minimum answer. The least this turn could possibly cost if that payer paid. **The payer decision consumes this, never a full estimate** — and it must be the whole corner: dropping the fixed terms or the reasoning term yields a number that is smaller but **not sufficient**, so a headroom that clears it would still fail admission. |
+| `trialTurnCost`     | Priced with **no storage term at all** — §Trial Usage's "trial never persists" is unconditional, so the per-message cap buys strictly more than a storage-inclusive reading allowed. There is exactly **one** premium/trial classifier, in the money module; a second copy carrying its own price percentile and recency window is a defect, not a variant.                                                                                                                                                                                                                                                                                             |
+| `classifierReserve` | Worst-case cost of the classifier's own provider call. **Provider leg only** — the classifier's prompt and output are never persisted, so no storage is reserved or charged for it. The engine is the cheapest priceable model, which is a sound rule only because **Catalog Admission** puts a floor under "cheapest".                                                                                                                                                                                                                                                                                                                                 |
 
 ### Sharing one budget across siblings
 
@@ -228,7 +234,7 @@ cost.
 | Tier      | Model Access | Persistence      | Funding                                             |
 | --------- | ------------ | ---------------- | --------------------------------------------------- |
 | **Trial** | Basic only   | None (ephemeral) | Absorbed — message count + per-message + daily caps |
-| **Guest** | Basic only   | Via shared link  | Group budget only, never own funds                  |
+| **Guest** | The payer's  | Via shared link  | Group budget only, never own funds                  |
 | **Free**  | Basic only   | Full             | Welcome credit + daily allowance                    |
 | **Paid**  | All models   | Full             | Prepaid credits loaded via card                     |
 
@@ -236,7 +242,17 @@ cost.
 
 - Unauthenticated → **trial** (or **guest** when arriving through a shared link)
 - Authenticated with balance > 0 → **paid**; balance = 0 → **free**
-- Premium model access is paid-only
+- Premium model access is paid-only — **of the payer**, so an owner-funded guest reaches
+  whatever the owner reaches (**Group Funding 1**)
+
+**Two different tiers exist on one turn, and only one word has been doing both jobs.** A
+**sender tier** answers _who is sending_ (`guest`, `trial`); a **payer funding tier**
+answers _what funds this_ (`paid`, `free`). Trial legitimately sits on both axes — it is a
+session kind **and** a funding mode with its own ceiling. **`guest` sits only on the first.**
+Every funding-derived property of a guest's turn — effective balance, ratios, cushion,
+premium access, modality — is the payer's. Only identity-derived properties are the
+sender's. Where both appear together the payer's is named `payerTier`, because a composer
+holding two values called `tier` will eventually cross them.
 
 ---
 
@@ -403,8 +419,10 @@ contextHeadroom(m), budgetBuys(m))`. Never reserve beyond what the model can
    physically emit, what the prompt leaves free, or what the payer can pay.
 8. **Cushion is spendable-side.** Paid: +$0.50 spendable everywhere
    (`MAX_ALLOWED_NEGATIVE_BALANCE_CENTS` — the balance may go $0.50 negative). Free: daily
-   allowance only. Trial/guest: fixed $0.01 effective balance, quota gates, no holds.
-9. **Tier ratios, and the assumption they carry.** Input estimation: paid 1 token per 4 characters, all other tiers 1
+   allowance only. Trial: fixed $0.01 effective balance, quota gates, no holds — **because a
+   trial session has no funding endpoint to read**. A guest has one and is owner-funded
+   (**Group Funding 1**), so it never takes the trial ceiling.
+9. **Tier ratios, and the assumption they carry.** The tier is the **payer's**. Input estimation: paid 1 token per 4 characters, all other tiers 1
    per 2. Output-storage estimation is inverted (paid 2, others 4) so the tier that
    over-reserves input also over-reserves output storage. Always round against the user
    (ceil).
@@ -815,7 +833,12 @@ wall by accident — the same class of prose-guarded dependency the presented-se
 type FundingSnapshot = {
   readonly spendableNanoUsd: NanoUSD;
   readonly heldNanoUsd: NanoUSD;
-  readonly tier: Tier;
+  /** The PAYER's tier, never the sender's. The name carries the distinction because a
+   *  guest's two tiers differ and one composer holds both. */
+  readonly payerTier: Tier;
+  /** Structural, not funding-derived: a link guest's payer is the conversation's owner
+   *  whether or not the owner's funds cover. Zero spendable is not a third kind of payer,
+   *  which is why this union stays closed at two. */
   readonly payer: 'self' | 'owner';
 };
 
@@ -1130,18 +1153,32 @@ When a message is sent, the shared funding decision
 (`packages/shared/src/affordability/billing/funding-decision.ts`, wrapped for the client by
 `affordability/billing/client-billing.ts`) decides who pays, in priority order:
 
-| Priority | Condition                                                                                                                                                        | Outcome                                                                                                                                      |
-| :------: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-|    1     | Group conversation with headroom remaining (min of member allowance, conversation allowance, owner balance ≥ 0) **and** the turn's estimate within that headroom | **Conversation owner pays**, premium allowed. Headroom insufficient ⇒ signed-in members fall through to personal billing; guests are refused |
-|    2     | Premium model, user without premium access                                                                                                                       | Denied — premium requires the paid tier                                                                                                      |
-|    3     | Paid user with sufficient spendable funds (cushion applies)                                                                                                      | **User's purchased balance**; insufficient ⇒ denied                                                                                          |
-|    4     | Free user, basic model, sufficient daily allowance                                                                                                               | **Free daily allowance**; insufficient ⇒ denied                                                                                              |
-|    5     | Link guest with no group budget                                                                                                                                  | Denied — guests never pay from their own funds                                                                                               |
-|    6     | Trial, estimated cost within the per-message cap                                                                                                                 | **Absorbed** (no charge); over the cap ⇒ denied                                                                                              |
+| Priority | Condition                                                                                                                                                             | Outcome                                                                                                                                      |
+| :------: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+|    1     | Group conversation with headroom remaining (min of member allowance, conversation allowance, owner balance ≥ 0) **and** the turn's `minTurnCost` within that headroom | **Conversation owner pays**, premium allowed. Headroom insufficient ⇒ signed-in members fall through to personal billing; guests are refused |
+|    2     | Premium model, user without premium access                                                                                                                            | Denied — premium requires the paid tier                                                                                                      |
+|    3     | Paid user with sufficient spendable funds (cushion applies)                                                                                                           | **User's purchased balance**; insufficient ⇒ denied                                                                                          |
+|    4     | Free user, basic model, sufficient daily allowance (a **regenerate** lifts the basic-model term — see below)                                                          | **Free daily allowance**; insufficient ⇒ denied                                                                                              |
+|    5     | Link guest with no group budget                                                                                                                                       | Denied — guests never pay from their own funds                                                                                               |
+|    6     | Trial, estimated cost within the per-message cap                                                                                                                      | **Absorbed** (no charge); over the cap ⇒ denied                                                                                              |
 
-Priority 1 compares the **estimate** against headroom, not merely headroom against zero: a
+Priority 1 compares **`minTurnCost`** against headroom, not merely headroom against zero: a
 positive remaining balance that cannot cover this turn is not fundable, and must present as
-unfundable before the user commits a prompt.
+unfundable before the user commits a prompt. **It is `minTurnCost` and never a full estimate** —
+§Math & Terms is controlling here, and the reason is the circularity: a full estimate's ceiling is
+bounded by the payer's own funding, so pricing one to choose the payer would need the answer first.
+**One pass, at the candidate payer's tier, on bounds only.**
+
+**Regenerating an answer runs this same matrix minus priority 2.** A regenerate is a paid action and
+is gated by affordability in full, so a regenerate the payer cannot fund is refused exactly as a send
+is. **Premium entitlement alone does not gate it:** any model may be regenerated if it can be
+afforded, and **that includes funding a premium model from the free daily allowance** — priority 4's
+basic-model term is the **same predicate** as priority 2, so lifting entitlement on a regenerate lifts
+it there too. **Ruled deliberately, not inherited:** the free allowance is a real budget, and a
+regenerate it covers is affordable. The reach stays bounded by the allowance itself — one day's
+remaining allowance must cover the priced ceiling — so what it reaches is premium models cheap enough
+to fit inside a day, most often models that are premium by **recency** rather than by price. A model
+withdrawn from the catalog is still refused, because availability is not entitlement.
 
 ---
 
@@ -1149,7 +1186,7 @@ unfundable before the user commits a prompt.
 
 1. **Owner-funded means owner-priced.** An owner-funded turn is estimated, reserved, and
    billed exactly as if the owner sent it — the payer's tier drives every input (ratios,
-   cushion, premium) on client and server alike, and the served spendable number is the
+   cushion, premium, modality) on client and server alike, and the served spendable number is the
    **payer's**, not the sender's. The sender's own tier applies only when the sender pays.
 2. **One fall-through decision.** Headroom covers the estimate → owner pays; it does not →
    signed-in members fall through to personal funds; guests are always refused (no wallet,
@@ -1159,7 +1196,16 @@ unfundable before the user commits a prompt.
 4. **Membership lifecycle owns budget rows**: removing a member removes its budget row; owner
    deletion cascades conversations and budgets.
 5. Owner state (tier, balance) is read fresh per turn; negative owner balance = zero headroom.
-6. **Ruled edge cases.** (a) Pre-send exhaustion → members fall through to personal funds,
+6. **A link's allowance is per-link, not per-guest, and that is what makes a bearer credential
+   safe.** The budget row is keyed to the link's member row, created when the link is minted,
+   and **an absent row means zero** — so an unfunded link spends nothing and a funded one is
+   capped no matter how many people hold the URL. Everyone holding it shares one cumulative
+   allowance and races for it through the same atomic check. Two consequences follow and are
+   accepted: the owner's **concurrent-run cap is shared** with the link, so a busy link can
+   crowd out the owner's own turns; and the served figure discloses the owner's balance
+   whenever the balance is the binding term — bounded by the cap the owner sets, and zero when
+   they set none.
+7. **Ruled edge cases.** (a) Pre-send exhaustion → members fall through to personal funds,
    guests refused. (b) Exhaustion discovered only at admission (race) → hard refusal, no
    in-admission re-resolve; the client's retry re-resolves. (c) A budget edit below accrued
    spend is validated and rejected at the edit. (d) Member removal deletes the member's budget
@@ -1173,7 +1219,8 @@ unfundable before the user commits a prompt.
 - Charges land on the payer's **purchased wallet**; each user also has a **free wallet**
   (always balance 0) through which the daily allowance is accounted — a charge against it
   writes a day-keyed allowance-spending row.
-- The free allowance applies to **basic models only**, is day-keyed (unique on user+day, UTC),
+- The free allowance applies to **basic models only on a send**, and to any affordable model on a
+  **regenerate** (§Funding Decision Matrix). It is day-keyed (unique on user+day, UTC),
   and never offsets a negative purchased balance. There are no midnight reset jobs — a new day
   is simply a new row.
 - Member budgets and conversation spending are **lifetime cumulative** rows, unique per member
@@ -1247,7 +1294,9 @@ drive greying.
    permits, and a blocked send always carries a notice.
 8. **Every paid action carries the send verdict.** Sending, queueing a message while a run
    streams, draining that queue, and regenerating an answer are all paid actions, and all read
-   the same verdict. A surface that can spend money and cannot refuse is a defect.
+   the same verdict — with one ruled exception, on one axis: **a regenerate reads the money half
+   only.** Affordability gates it exactly as it gates a send; premium entitlement does not. The
+   exception is entitlement-shaped, so it never widens what a payer can spend. A surface that can spend money and cannot refuse is a defect.
 9. **A hold blocks the send; it never greys the options.** When the payer's funds are
    reserved by a run in flight rather than spent, the send button is disabled with a
    transient reason whose action is **wait for the message to finish**, and no payment

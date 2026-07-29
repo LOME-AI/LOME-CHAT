@@ -116,16 +116,19 @@ export const getSpendableQuerySchema = z.object({
 export type GetSpendableQuery = z.infer<typeof getSpendableQuerySchema>;
 
 /**
- * Schema for the `GET /billing/spendable` response — the payer's funding
- * snapshot (BILLING §Affordability 1, §Data Structures `FundingSnapshot`).
+ * Schema for the payer's funding snapshot (BILLING §Affordability 1, §Data
+ * Structures `FundingSnapshot`), served by `GET /billing/spendable` to a caller
+ * who holds a wallet and by the conversation's guest funding read to a link
+ * guest, who holds none. Two doors, one shape, one producer — a guest never
+ * composes a funding figure from a second response.
  * `spendableNanoUsd` is hold-aware and complete for every tier — the number
  * admission would gate with when the payer is the caller, which is the
  * purchased wallet's spendable funds at the paid tier and the day's remaining
  * free allowance below it, so no surface has to compose a funding figure from a
  * second endpoint (it may be negative once holds exceed the funds behind it);
  * `heldNanoUsd` is what active holds subtracted, so `spendable + held`
- * reconstructs the hold-blind effective balance the picker greys on. `tier` and
- * `payer` identify WHOSE money those figures are: an owner-funded group turn
+ * reconstructs the hold-blind effective balance the picker greys on. `payerTier`
+ * and `payer` identify WHOSE money those figures are: an owner-funded group turn
  * serves the owner's hold-aware group remaining at the owner's tier, not the
  * sender's — with the owner-balance dimension priced RAW (no cushion, no owner
  * wallet holds) so a member cannot infer the owner's activity, which is why an
@@ -138,7 +141,7 @@ export type GetSpendableQuery = z.infer<typeof getSpendableQuerySchema>;
 export const getSpendableResponseSchema = z.object({
   spendableNanoUsd: z.string(),
   heldNanoUsd: z.string(),
-  tier: userTierSchema,
+  payerTier: userTierSchema,
   payer: z.enum(['self', 'owner']),
 });
 

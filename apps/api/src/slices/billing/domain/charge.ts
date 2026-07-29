@@ -10,10 +10,8 @@ import type { BillingModality, BillingStores, WalletType } from '../ports/index.
 /**
  * The turn's SENDER principal, recorded on every billed row beside the payer
  * (a member's userId, or a link guest's linkId — a guest has no users row).
- * Required, never inferred from `userId`: on a link-guest turn `userId` is the
- * OWNER while the guest sent it. On a user turn `userId` is the sending member
- * itself — owner funding moves the charged WALLET to the owner, never the
- * attributed user.
+ * Required, never inferred from the payer: they name the same person only on a
+ * self-funded turn, and a link guest has no account to be inferred to at all.
  */
 export type ChargeSender =
   | { readonly kind: 'user'; readonly userId: string }
@@ -21,7 +19,13 @@ export type ChargeSender =
 
 export interface ChargeInput {
   readonly walletId: string;
-  readonly userId: string;
+  /**
+   * The paying account: the owner of `walletId`. The two are resolved together
+   * upstream and must stay in lockstep — the billed row's payer is what "what
+   * did this account spend" aggregates, so a payer that is not the debited
+   * wallet's owner is unaggregatable rather than merely imprecise.
+   */
+  readonly payerUserId: string;
   /** The sender recorded on the usage record, independent of the payer. */
   readonly sender: ChargeSender;
   /** Plain grouping uuid for the run's charges — there is no run table. */
@@ -106,7 +110,7 @@ export async function chargeWithinTx(
   const chargedNanoUsd = input.billableCostNanoUsd + input.storageFeeNanoUsd;
   const wallet = await stores.lockWalletWithinTx(tx, input.walletId);
   const usage = await stores.insertUsageRecordIfAbsentWithinTx(tx, {
-    userId: input.userId,
+    payerUserId: input.payerUserId,
     ...(input.sender.kind === 'user'
       ? { senderUserId: input.sender.userId }
       : { senderLinkId: input.sender.linkId }),
@@ -156,9 +160,11 @@ export async function chargeWithinTx(
   ]);
   await stores.updateWalletBalanceWithinTx(tx, wallet.id, balanceAfterNanoUsd, ledgerSeq);
   if (wallet.type === 'free') {
+    // The allowance belongs to the free wallet's owner, which is the payer —
+    // the same account the usage row records, by construction.
     await stores.addSpendingWithinTx(
       tx,
-      { scope: 'allowance', userId: input.userId, day: utcDayKey(input.now) },
+      { scope: 'allowance', userId: input.payerUserId, day: utcDayKey(input.now) },
       chargedNanoUsd
     );
   }

@@ -43,7 +43,7 @@ import { wallets } from './wallets';
 export const usersRelations = relations(users, ({ one, many }) => ({
   wallets: many(wallets),
   payments: many(payments),
-  usageRecords: many(usageRecords, { relationName: 'payer' }),
+  paidUsageRecords: many(usageRecords, { relationName: 'payer' }),
   sentUsageRecords: many(usageRecords, { relationName: 'sender' }),
   conversations: many(conversations),
   memberships: many(conversationMembers, { relationName: 'member' }),
@@ -75,8 +75,8 @@ export const ledgerEntriesRelations = relations(ledgerEntries, ({ one }) => ({
 }));
 
 export const usageRecordsRelations = relations(usageRecords, ({ one, many }) => ({
-  user: one(users, {
-    fields: [usageRecords.userId],
+  payer: one(users, {
+    fields: [usageRecords.payerUserId],
     references: [users.id],
     relationName: 'payer',
   }),

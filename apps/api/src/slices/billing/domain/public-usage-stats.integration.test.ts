@@ -41,7 +41,7 @@ async function seedRecords(
     const rows = await db
       .insert(usageRecords)
       .values({
-        userId: null,
+        payerUserId: null,
         contentItemId: null,
         runId: crypto.randomUUID(),
         modelId,

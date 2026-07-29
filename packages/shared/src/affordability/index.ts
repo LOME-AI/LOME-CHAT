@@ -84,6 +84,12 @@ export * from './estimate/index.js';
 // producer, the classifier seam (choose · render · wire), the funding decision
 // and the notice vocabulary.
 export { getTurnOptions } from './turn-options.js';
+// The bound the PAYER decision consumes (§Math & Terms). Published because the
+// send path must price it before it can choose a payer, and a consumer that
+// composed it from the walled terms itself would be the second implementation
+// of a quantity the funding decision compares against.
+export { minTurnCostNanoUsd } from './min-turn-cost.js';
+export type { MinTurnCostInput } from './min-turn-cost.js';
 export { chooseFrom, renderOptions, wireFor } from './classifier-choice.js';
 export type { ChosenOptions } from './classifier-choice.js';
 export * from './model-id.js';

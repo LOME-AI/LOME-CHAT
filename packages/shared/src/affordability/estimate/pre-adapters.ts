@@ -73,7 +73,7 @@ export function outputStorageRatePerTokenNanoUsd(outputCharsPerToken: number): b
 export const PAID_CUSHION_NANO_USD: bigint =
   BigInt(MAX_ALLOWED_NEGATIVE_BALANCE_CENTS) * NANO_USD_PER_CENT;
 
-/** Fixed effective balance a trial/guest turn may spend, in nano-USD. */
+/** Fixed effective balance a TRIAL turn may spend, in nano-USD. */
 const TRIAL_FIXED_BALANCE_NANO_USD: bigint =
   BigInt(MAX_TRIAL_MESSAGE_COST_CENTS) * NANO_USD_PER_CENT;
 
@@ -96,18 +96,23 @@ export function spendableFundsNanoUsd(balanceNanoUsd: bigint, tier: UserTier): b
 
 /**
  * Effective balance the affordability reducer gates against, in nano-USD:
- *  - trial/guest: a fixed per-message ceiling (they run on delegated/quota budget)
+ *  - trial: a fixed per-message ceiling, because a trial session has no funding
+ *    endpoint to read (§Affordability 8)
  *  - free: the daily free allowance only, no cushion
  *  - paid: the wallet balance plus the negative-balance cushion
+ *
+ * `guest` is excluded from the parameter by type, not by a branch: a link guest
+ * HAS a funding door and is owner-funded, so its effective balance is the
+ * payer's served figure and never this fixed ceiling. Passing one here is the
+ * conflation the exclusion exists to make unwritable (§Funding, §User Tiers).
  */
 export function getEffectiveBalanceNano(
-  tier: UserTier,
+  tier: Exclude<UserTier, 'guest'>,
   balanceNanoUsd: bigint,
   freeAllowanceNanoUsd: bigint
 ): bigint {
   switch (tier) {
-    case 'trial':
-    case 'guest': {
+    case 'trial': {
       return TRIAL_FIXED_BALANCE_NANO_USD;
     }
     case 'free': {

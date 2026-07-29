@@ -6,7 +6,8 @@ import {
   useDecryptedMessages,
   clearDecryptedMessageCache,
 } from '@/hooks/crypto/use-decrypted-messages';
-import type { MessageResponse } from '@hushbox/shared';
+import type { MessageResponse, ResolvedReasoningEffort } from '@hushbox/shared';
+import type { Message } from '@/lib/api';
 import { clearEpochKeyCache, getCacheSize } from '@/lib/epoch-key-cache';
 import { useDecryptionActivityStore } from '@/stores/decryption-activity';
 
@@ -143,6 +144,37 @@ function createMessageResponse(overrides: MessageResponseOverrides = {}): Messag
     ],
     ...rest,
   };
+}
+
+/**
+ * Renders one settled assistant message whose single variable is the reasoning
+ * level its content item carries: a rung, `off`, or none recorded at all.
+ */
+function renderMessageWithLevel(
+  reasoningEffort?: ResolvedReasoningEffort
+): ReturnType<typeof renderHook<Message[], unknown>> {
+  mockUnwrapEpochKey.mockReturnValue(new Uint8Array([1]));
+  mockDecryptEnvelopeText.mockReturnValue('content');
+  mockFetchJson.mockResolvedValue({
+    wraps: [
+      { epochNumber: 1, wrap: 'w', confirmationHash: 'h', privilege: 'owner', visibleFromEpoch: 1 },
+    ],
+    chainLinks: [],
+    currentEpoch: 1,
+  });
+
+  const base = createMessageResponse({ id: 'ai-msg', senderType: 'ai' });
+  const message = {
+    ...base,
+    contentItems: base.contentItems.map((item) => ({
+      ...item,
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    })),
+  };
+
+  return renderHook(() => useDecryptedMessages('conv-1', [message]), {
+    wrapper: createWrapper(),
+  });
 }
 
 describe('useDecryptedMessages', () => {
@@ -854,6 +886,36 @@ describe('useDecryptedMessages', () => {
 
     expect(result.current[0]?.reasoningTokens).toBeUndefined();
     expect(result.current[1]?.reasoningTokens).toBeUndefined();
+  });
+
+  it('populates reasoningEffort from the content items', async () => {
+    const { result } = renderMessageWithLevel('high');
+
+    await waitFor(() => {
+      expect(result.current).toHaveLength(1);
+    });
+
+    expect(result.current[0]?.reasoningEffort).toBe('high');
+  });
+
+  it('keeps an off level on the message rather than dropping it', async () => {
+    const { result } = renderMessageWithLevel('off');
+
+    await waitFor(() => {
+      expect(result.current).toHaveLength(1);
+    });
+
+    expect(result.current[0]?.reasoningEffort).toBe('off');
+  });
+
+  it('leaves reasoningEffort absent when no content item recorded one', async () => {
+    const { result } = renderMessageWithLevel();
+
+    await waitFor(() => {
+      expect(result.current).toHaveLength(1);
+    });
+
+    expect(result.current[0]?.reasoningEffort).toBeUndefined();
   });
 
   it('sums multiple content-item costs as bigint NanoUSD', async () => {

@@ -14,7 +14,6 @@ import { compileDefinition } from '../compile/compile-definition.js';
 import {
   FAN_OUT_ELEMENT_PORT_ID,
   LOOP_STATE_PORT_ID,
-  reservedOutPortId,
   WORKFLOW_INPUT_NODE_ID,
 } from '../compile/conventions.js';
 import { channelValueOf, contentValueOf, inputTagOf } from './channel-values.js';
@@ -271,8 +270,6 @@ class RunExecution {
   private circuitTripped = false;
   private deadlineAtMs: number;
   private streamSequence = 0;
-  /** Memoized: the walk is over the whole compiled graph and never changes mid-run. */
-  private consumed: ReadonlySet<string> | undefined;
 
   constructor(
     private readonly deps: WorkflowExecutorDeps,
@@ -602,10 +599,10 @@ class RunExecution {
     // Streaming is withheld from any node whose output is CONSUMED rather than
     // displayed (`docs/BILLING.md` §Reasoning Effort 6): a classifier is an
     // ordinary model call, and without this it would emit its routing internals
-    // into the user's conversation. The disposition is derived from the graph —
-    // the same consumption walk that decides which values settlement persists —
-    // so it cannot contradict what the definition already fixes, the way a
-    // declared per-node flag could.
+    // into the user's conversation. The disposition is read off the compiled
+    // consumed set — the same value that decides which outputs settlement
+    // persists — so it cannot contradict what the definition already fixes, the
+    // way a declared per-node flag could.
     // The turn's classifier is derived from the graph the same way — the
     // decision reducer reading this call's answer IS what makes it the
     // classifier — and what follows from it is a withholding, not a flag: the
@@ -613,7 +610,7 @@ class RunExecution {
     // request cannot bill input the classifier reserve did not price.
     const context = this.nodeContext(
       node.id,
-      execution.streaming && !this.consumedProducers().has(node.id),
+      execution.streaming && !this.compiled.consumedProducers.has(node.id),
       isTurnClassifierNode(node, this.request.definition.nodes)
     );
     try {
@@ -1059,7 +1056,7 @@ class RunExecution {
    * (virtual body feeds excluded), bodies and control nodes aside.
    */
   private sinkOutputs(): Record<string, ContentValue> {
-    const consumed = this.consumedProducers();
+    const consumed = this.compiled.consumedProducers;
     // Null-prototype accumulator: a NodeId is any non-empty string, so a node
     // named '__proto__' (or another reserved prototype name) would set this
     // object's prototype instead of an own key on a plain `{}`, silently
@@ -1071,26 +1068,6 @@ class RunExecution {
       if (value !== undefined) outputs[nodeId] = contentValueOf(value);
     }
     return outputs;
-  }
-
-  private consumedProducers(): ReadonlySet<string> {
-    this.consumed ??= this.walkConsumedProducers();
-    return this.consumed;
-  }
-
-  private walkConsumedProducers(): ReadonlySet<string> {
-    const consumed = new Set<string>();
-    for (const compiledNode of this.compiled.nodes.values()) {
-      for (const input of compiledNode.inputs.values()) {
-        if (input.from.node === WORKFLOW_INPUT_NODE_ID) continue;
-        // Virtual body feeds (fanOut element, loop state) are not
-        // consumption of the parent's out channel.
-        const producer = this.compiledNode(input.from.node).node;
-        if (input.from.port === reservedOutPortId(producer)) continue;
-        consumed.add(input.from.node);
-      }
-    }
-    return consumed;
   }
 
   private isSink(nodeId: string, consumed: ReadonlySet<string>): boolean {

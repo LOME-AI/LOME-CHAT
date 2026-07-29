@@ -14,10 +14,9 @@ validator, critic — must read it in full.**
 
 ## RUN STATE — paused 2026-07-27
 
-**B8 and C2 are both implemented and in audit.** The founder lifted the pause on 2026-07-27 and both ready tasks
-went out together on disjoint file sets; both are money-flagged, so each gets two independent auditors. C2 has been
-through two fix cycles (the over-bill and the vacuous equivalence pin); B8 was re-scoped mid-flight after returning
-NEEDS_CONTEXT against an unbuildable criterion.
+**Resumed 2026-07-29 after compaction.** Nothing is in flight and nothing has been dispatched since the
+2026-07-28 pause. §Founder decisions 2026-07-29 is the current contract; the readiness below is computed
+against §Dependency-graph rather than recalled.
 
 **Clean — 20 of 29 lettered tasks** (26 at approval, plus B8b, B9 and F3 — all three created 2026-07-27, each because a task in flight proved that real work had no owner: deletion after the B8 split, the api-estimator rewrite, and a served funding number for free users) (each ended on an audit the orchestrator read and agreed found nothing
 valid; money-flagged tasks had two independent auditors):
@@ -45,59 +44,173 @@ valid; money-flagged tasks had two independent auditors):
 | **B9**  | the owner-versus-consumer boundary made **enforceable rather than stated** — 69 bindings classified 55/12, an `arch:check` rule watched red on real code, a ratchet with a duplicate guard, and a walled money type pulled off the models slice's public barrel                                                          |
 | **E1**  | every text surface renders the produced sets — premium became a **reason not a gate**, the client's second verdict engine deleted with its 42 pins re-homed, the intersection clamp retired after being wrong in **both** directions, and the payer consumed from the server rather than re-derived                      |
 
-**In flight — NOTHING. PAUSED at founder instruction on 2026-07-29, with every in-flight task taken to a clean
-audit and no new task dispatched.**
+**In flight — NOTHING. PAUSED at founder instruction 2026-07-29:** every in-flight task was carried to a clean
+audit and nothing new dispatched.
 
-**FOUNDER INSTRUCTION 2026-07-28, discharged:** finish what is in flight to clean audits, dispatch nothing new, then
-fully update plan and ledger and bring open questions and doc changes. E1, B9 and D1 all closed clean; the
-price-owner relocation analyst returned with its load-bearing assumption **Verified across four resolvers**. Nothing
-is running. **FOUNDER INSTRUCTION 2026-07-28: dispatch NO new tasks — finish what is in flight to clean audits, then pause, update plan and ledger, and bring open questions and doc changes.** An analyst is running on the price-owner relocation question; its output is decision material for the founder, not a task. C3 closed clean after seven cycles and two auditors, unblocking both B9 (held behind it) and D1.
+**THE RUN IS 31 OF 66.** Sixty-six lettered tasks; twenty-nine were added on 2026-07-29 as the run's own audits
+kept surfacing work that had no owner. **A figure the orchestrator quoted as "34 of 66" in chat was wrong — it
+was stated without being computed**, which is the mirrored-value error this plan bans in code, committed in
+prose for the second time in this run. The count below is derived: 20 clean at the 2026-07-28 pause, plus the
+eleven the ledger declares clean since (F4, F5, F7, F8, C5, D2, D3, F10, G8, G12, G13).
 
-**The 2026-07-27 pause instruction is LIFTED** (founder, same day): B7 and C1 both reached clean audits under it,
-the run reported, and the founder said continue. Normal dispatch rules resume — a task goes out the moment its
-dependencies are clean and no in-flight task shares its files.
+**Clean — 31:** B1, B1b, B2, B3, B4, B5, B6, B7, B8, B9 · A1, A2 · C1, C2, C3, C5 · D1, D2, D3 · E1 · F1, F2,
+F3, F4, F5, F7, F8, F10 · G8, G12, G13.
 
-**Not started — 12 tasks:** B9, B8b · D1, D2 ·
-E1 (blocked on F3), E2, E3, E4 · G1, G2, G3 · H1.
+**READY NOW — 28.** B10 · C4, C6, C7 · D4 · E2, E3, E4, E5, E6, E7 · F6, F9, F11, F12, F13, F14, F15 · G2, G4,
+G7, G9, G10, G11 · H1 · S1, S3, S4. **Still blocked — 7:** B8b and G5 on G2 · G1 on B8b · G6 on G5 · G3 on
+E2 · S2 on S1 · S5+ on S1 and S2. 28 + 7 = 35, and 31 + 35 = 66; the arithmetic closes.
 
-**B9 AND C3 COLLIDE, AND C3 GOES FIRST (resolved 2026-07-27 — my grants overlapped).** B9 owns
-`apps/api/src/slices/models/**` for the walled-reference rewrite; C3 was granted
-`models/domain/smart-model-candidates.ts` (the `_pinned` declaration) and `models/domain/estimate-run.ts` (the
-classifier double-pricing fix) — both inside B9's tree. Serialised rather than split, because splitting would hand
-one file to two owners, which is the rule this plan exists to keep. **C3 first**, on three grounds: it carries the
-run's only user-visible interim regression (Smart Model classifies nothing until it lands), it carries two
-`reserve ⊇ bill` defects that bind the moment it wires the node, and it is the original blocker this whole run was
-opened to remove. B9 is cleanup toward the wall and the wall is not urgent — B8b waits on E1 and G2 regardless. B9's
-behaviour-identity criterion then applies to the tree **as C3 leaves it**, not as it stands now.
-Every one carries criteria amended by what the clean tasks learned; several would have been built against a
-wrong premise without those amendments.
+**The previous revision of this line said "22" and omitted E6 and G4** — a third mirrored count stated without
+being computed, in the same block that indicts the first two. The set above was derived by reading every
+non-clean task's own **Ordering** line against the clean list, not by editing the old membership. Anyone
+revising it does the same: **recompute, never amend.**
 
-**The spine is clear.** Exactly two tasks are ready the moment the pause lifts: **B8** (needs B7 and C1, both
-clean) and **C2** (needs C1). They own disjoint files — B8 the shared barrel and the 14 interim subpaths, C2
-the settlement and Smart Model execution paths — so they run concurrently. Everything else stays blocked: E1
-and G1 open on B8, C3 on both B8 and C2, and lane D on C2. Verified against §Dependency-graph, not assumed —
-D1 in particular depends on C2 rather than C1 and is **not** ready.
+**Two ordering facts live only in a section that does not own them, and both are easy to miss:**
 
-### The git baseline — **`f1d99703` as of 2026-07-28**, and the money module is tracked
+- **H1 depends on E6.** H1's own section states no dependency, but E6's design context says H1's end-to-end
+  proof needs the client to send the Smart Model's effort selection. Dispatching H1 before E6 would prove a
+  path the client cannot reach. H1 is ready only in the sense that E6 is ready.
+- **G10 is ready but deliberately LAST** — it re-examines the thirteen tasks cleaned before the coverage traps
+  were known, so running it before the rest land re-examines a tree that is about to change underneath it.
 
-**THE FOUNDER COMMITTED AGAIN MID-RUN. `HEAD` is now `f1d99703` ("billing refactor"), not `53daba72`, and the working
-tree fell from ~341 entries to 20.** Third absorption of this run's work into a founder commit. It invalidates every
-"vs HEAD" differential taken before it — not because those claims were wrong, but because `HEAD` now names a
-different commit, so re-running them answers a different question.
+### Concurrency is bounded by two things, and neither is the dependency graph
 
-- **Identity claims must name their commit, never `HEAD`.** A differential recorded as "vs HEAD" earlier in this run
-  meant `53daba72`; the same words now mean `f1d99703`.
-- **`git diff HEAD` is a usable read of your own edits again** — the §Known Breakage entry warning it reads _the run_
-  rather than _you_ was written when ~341 uncommitted entries from several tasks sat in the tree. With 20 left the
-  hazard is dormant, and it returns the moment several tasks are uncommitted in flight again. **Its trigger is the
-  entry count, not the date.**
-- **The 20 survivors are mostly not this run's code**: readme hash caches, two docs, another run's plan and ledger,
-  `scripts/.cache/seed-crypto.json` — plus exactly four files this run owns: `model-selector-button.tsx` (E1) and
-  `packages/config/arch/{run.ts, rules/money-internals-owners-only.rule.test.ts, README.md}` (B9's in-flight fix).
-  Everything else B1 through E1 produced is now inside `f1d99703`.
-- **Nothing was committed by an agent.** The reflog shows only the founder's own commits — the no-git-writes rule held
-  across the entire run, including through five abnormal terminations and one disclosed violation that touched only
-  its own author's uncommitted work.
+The founder asked for maximal concurrent dispatch on 2026-07-29. The graph permits 28 at once; nothing else
+does. Both real limits are recorded here so a resuming orchestrator does not rediscover them by voiding runs:
+
+1. **The file-ownership globs are too coarse to run their own lane in parallel.** Seven ready tasks (B10, C4,
+   F13, F15, G2, G7, G11) each claim `packages/shared/src/affordability/**` as a whole, and five (C6, C7, E4,
+   F14, F15) reach into `apps/api/src/slices/chat/domain/` — but the actual edits are disjoint in most pairs.
+   The glob, not the work, is what collides. **Tightening a task's Files line to the paths it truly edits is
+   the single highest-leverage act available to the orchestrator**, and it must happen BEFORE dispatch: two
+   agents discovering an overlap mid-flight is the expensive ordering, and a plan amendment after dispatch
+   cannot un-write an edit.
+2. **A per-package test-gate mutex.** §Known Breakage measured it: two runs of one package's suite share that
+   package's `coverage/.tmp` and the second aborts the first, and the failure presents as a green run with no
+   coverage table. That caps trustworthy gating at roughly one agent per package regardless of how many are
+   dispatched — so concurrency is planned per **gate**, not per task.
+
+### Grounded ownership — surveyed 2026-07-29, and it OVERTURNS the coarse-glob fear
+
+A read-only survey grounded all eleven contended tasks to the concrete files their objectives force, each
+proven by the symbol at a line rather than by the glob. **The globs collide; the work mostly does not.** The
+survey's map is authoritative over any broad `**` glob in a task's own Files line, and the eight facts below
+bind dispatch. Where a task's Files line and this section disagree, **this section wins** — the Files lines
+were written before the objectives were grounded.
+
+**Two tasks are forced into a file their Files line does not name.** Both would have been discovered by an
+agent mid-edit, which is the expensive ordering:
+
+- **B10 must edit `apps/api/src/slices/chat/domain/runtime.ts:604`.** `admissionRefusalCode()` is where two of
+  the three `INSUFFICIENT_ADMISSION` producers collapse to one wire code, so B10's criterion "each has exactly
+  one wording" cannot be met without it. B10's Files line named only `affordability/**`,
+  `workflows/engine/**` and `apps/web/**`. **Add it.** Nothing else ready claims `runtime.ts`, so this costs
+  no concurrency.
+- **F14 must edit `apps/api/src/slices/chat/domain/turn-context.ts:110-129`** — `UnpricedTurnReason` is the
+  typed exemption mechanism itself, and F14's criterion is that the mechanism is _deleted_, not left with an
+  empty set. **This collides with F15**, which owns `turn-context.ts` for `resolvePayerWallet`. Both are
+  ordered after F7, so nothing forced the conflict into the open. **Order F15 → F14:** F15 establishes the one
+  spendable path, and F14's pricing then reads it rather than racing it.
+
+**`chooseFrom` has ZERO production callers, and C4's Files line claims callers that do not exist.** It is
+defined at `packages/shared/src/affordability/classifier-choice.ts:70`; grep across all of `apps/api/src` and
+`apps/web/src` returns nothing — only the shared barrels and its own test. B8 built it "where no producer
+existed", and nothing has wired it since. So C4 is either a pure signature refinement of an unwired function
+(harmless, and narrow — one file plus barrels), **or the wiring gap is real and has no owner.** Escalated to
+the founder 2026-07-29; C4 must not be dispatched as though `apps/api` call sites exist.
+
+**The five real file collisions in the ready set** — every other pair is disjoint and may run concurrently:
+
+| File                                     | Claimed by           | Resolution                                                                            |
+| ---------------------------------------- | -------------------- | ------------------------------------------------------------------------------------- |
+| `chat/domain/turn-definition.ts`         | C6, E4, F15          | serialize; F15 first (it fixes the spendable term the others read)                    |
+| `chat/domain/smart-model-turn.ts`        | C6, C7               | serialize; C7 first (it makes the classifier slot real, C6 then rules on the refusal) |
+| `chat/domain/turn-context.ts`            | F14, F15             | serialize; **F15 → F14** (above)                                                      |
+| `models/domain/estimate-run.ts`          | C7, F14, G7          | serialize in that order                                                               |
+| `affordability/estimate/pre-adapters.ts` | F15, G11             | serialize; F15 first (it owns the cushion; G11 de-mirrors the trial pair around it)   |
+| `chat/routes.ts`                         | F6, F9, F12, F14, G9 | serialize — five claimants on one file, the run's tightest lane                       |
+
+**E2 and E6 CANNOT run concurrently.** `use-reasoning-effort.ts`'s caller set was grepped, not assumed:
+`prompt-input.tsx:20,695` imports and calls it, and `use-authenticated-chat.ts` is also a caller — **both are
+E2's files**. (`message-item.tsx` is NOT a caller, so E2's other component file is free.) Order E2 → E6.
+
+**The 15 walled `apps/web` lines ARE owned — by G2, widened 2026-07-29.** An earlier RUN STATE paragraph and
+an orchestrator report both called them unowned; that was reading the pre-widening paragraph instead of G2's
+own section. G2 owns all fifteen across six files, it runs after F4 (clean), and it is therefore **ready**.
+This makes G2 the run's highest-leverage single dispatch: it alone unblocks four tasks (B8b → G1, G5 → G6).
+
+**G2's `affordability/**`glob should be read as`affordability/billing/client-billing.ts`.\*\* That is the only
+file in the tree the survey grounds to G2's objective, and narrowing it is what lets B10, C4, G7 and G11 run
+alongside G2 instead of behind it — four tasks unblocked by one glob correction.
+
+**F13 forces no `affordability/` edit at all.** Its real target is
+`apps/web/src/hooks/billing/use-prompt-budget.ts:470-505`, which **G2 also owns** under the widening. Order
+G2 → F13.
+
+### The dispatch schedule this produces
+
+Concurrency is per **gate**, and file-disjointness is now proven rather than hoped. Under the measured
+one-suite-per-package mutex the ceiling is about five simultaneous implementers; if that mutex can be lifted
+safely the same file map supports roughly twice that, because the files no longer overlap.
+
+| Lane         | Serialized order                         | Gate    |
+| ------------ | ---------------------------------------- | ------- |
+| **config**   | G4                                       | config  |
+| **api-chat** | C7 → C6 · F15 → F14 → F6 → F9 → F12 → G9 | api     |
+| **api-misc** | F11 · G7 · G11 · H1 (H1 after E6)        | api     |
+| **web**      | E3 · E2 → E6 · G2 → F13 · E5 · E7        | web     |
+| **shared**   | B10 · C4 · E4                            | shared  |
+| **spec**     | S1 → S2 · S3 · S4 · S5+                  | per S1  |
+| **last**     | G10                                      | per pkg |
+
+**G4, E3, F11, S1 and B10 are the clean first wave** — five tasks, five different gates, and no two share a
+file under the map above. G2 is the highest-leverage dispatch but spans three gates, so it buys the most and
+costs the most; it belongs in the first wave only if the gate mutex lifts.
+
+**TWO DECISIONS GATE WORK, and both are the founder's:**
+
+- **`BILLING.md` §Math & Terms' `minTurnCost` formula is WRONG**, verified from the arithmetic by F7's auditor:
+  the doc's per-sibling sum yields 27,954,400 and leaves a sibling ineligible, while the shipped widest-corner
+  figure of 54,168,800 is exactly sufficient and tight at one nano below. The correction needs the reason
+  (siblings share one solved ceiling) **and** an explicit note that `corner × Σrates` is a **bound, not a
+  reserve**, or a reader takes it as violating §Multi-Model 2's ban on reserving that shape.
+- **C6's reading:** is degrading on **unaffordability** the same defect as degrading on **choice**? §Effort 5
+  admits no exception, but whether "cannot afford it" counts as "cannot build it" is a reading, and if the doc
+  needs a carve-out that is a founder correction rather than a code accommodation.
+
+**The 15 walled `apps/web` lines did NOT close with E1, and they are now UNOWNED.** Verified 2026-07-29: 15
+`@hushbox/shared/affordability/…` specifier lines survive in 6 files — `hooks/billing/use-media-cost-estimate.ts`
+(G2's), `hooks/billing/use-budget-calculation.{ts,test.ts}`, `hooks/billing/use-prompt-budget.{ts,test.ts}`
+and `hooks/chat/use-reasoning-effort.ts`. The last five were E1's files, E1 closed clean without touching
+those lines, and §Founder decisions names closing all 15 as the **precondition** for the relocation. They
+need a named owner before the relocation can be scheduled; G2 covers only its own file.
+
+**`apps/api` holds 59 such lines across ~20 files.** Under the approved package split those become
+legitimate — `apps/api` declares `@hushbox/pricing` — but every one is a specifier rewrite, so the
+relocation's real size is 59 api lines plus the moved units, not the move alone.
+
+### The git baseline — **`a94ca204` as of 2026-07-29**; the tree holds none of this run's code
+
+**The founder committed a fourth time.** `HEAD` is `a94ca204` ("billing refactor", 42 files, +3,994/−256),
+absorbing E1's `model-selector-button.tsx` and B9's three `packages/config/arch/` files — the four the tree
+still held at the last report. **The run directory is now tracked**, so `plan.md` and `ledger.md` are
+versioned from here.
+
+- **The working tree is clean of this run's code.** Eight entries remain: six readme hash caches,
+  `scripts/.cache/seed-crypto.json`, and one stray file (below). **A red suite is therefore yours or on
+  §Known Breakage — it is never uncommitted run state.**
+- **`git diff HEAD` reads your own edits again**, and stays usable only while few tasks sit uncommitted.
+  That §Known Breakage warning's trigger is the entry count, not a date.
+- **Identity claims must name a commit, never `HEAD`.** A differential recorded "vs HEAD" earlier meant
+  `53daba72`, then `f1d99703`; the same words now mean `a94ca204`. Four absorptions in, a bare `HEAD` in a
+  report is unreproducible by construction.
+- **Nothing has been committed by an agent at any point in this run**, across all four absorptions.
+
+**A stray `ledger.md` at the repo root held 23 lines of this run's E1 audit narrative that were absent from
+the real ledger** — an accidental relative-path write. The content is folded into `ledger.md` verbatim under
+2026-07-29 and **the founder deleted the stray file**. It survived long enough to be recovered only because
+the commit did not sweep untracked files; this run has already lost two `research/` documents to exactly
+that. **A record at a path nobody names is not a record.**
 
 ### Original baseline record — retained because earlier reports cite it: `ada0341c`, money module tracked
 
@@ -341,6 +454,75 @@ prose is a sync contract with the code beside it. Applied across all ten of C2's
 returned zero remaining hits. A sweep that has not been done this way is not a sweep.
 
 ## Known Breakage — attribute around, do not chase
+
+**THE `ugrep` BLINDNESS ALSO APPLIES TO PIPES — this widens the rule, 2026-07-29 (G12).** A chain like
+`grep … | grep -v node_modules` **silently drops everything** when a matched line contains the NUL, because
+the second `grep` treats its own input as binary. So it is not only sweeps of the two files that were narrow:
+**any piped grep chain in this run whose matches could have included one of those lines is suspect.** The rule
+stands as "a negative result is not evidence unless every stage of the pipeline is binary-inclusive".
+
+**AND THE TOOLING ITSELF EMITS THE BYTE.** While writing the guard, the `Write` tool produced a **raw NUL
+twice** where the authored text was the six characters `\u0000`, caught only by byte inspection and repaired.
+**`Read` renders a raw NUL as a space**, so an agent editing such a line from a rendered view will silently
+reintroduce it and see nothing wrong. The guard is what catches that — which is the argument for the guard
+having been the point of G12 rather than the two edits.
+
+**FOUR GATE TRAPS FOUND BY G8 WHILE RESTORING THE COVERAGE GATE, 2026-07-29. Each one makes a green look
+like something it is not.**
+
+- **The background-task harness reported "completed (exit code 0)" for a `pnpm test:api` run whose real status
+  was exit 1.** This is the wrapper trap **one level further out** than Global Constraint 9 documents — not a
+  script swallowing a status, but the agent harness itself. **A harness completion notice is not a gate
+  result.** Read the command's own exit code from its own output, always.
+- **`pnpm test:api` now exits 1 for a COVERAGE reason, not a test reason.** Zero tests fail. A reader who sees
+  exit 1 and assumes a regression will chase nothing; a reader who sees it and assumes the old standing
+  failure will miss a real shortfall.
+- **A stale vite pre-bundle is a RACE, not a fixed condition.** Any write into `packages/{db,shared,crypto}`
+  during the 5–8 minute api run blows up **unrelated** files at collection time. With several agents live this
+  fires often. Remedy: clear `apps/api/node_modules/.vite` and retry in a quiet window — **and never attribute
+  such a failure to the diff under test without re-running it quiet.**
+  **REFINED by G8's auditor, from three full runs: it is not only a concurrent-edit race.** A run hit the
+  same blowup with **no** `packages/**` write in the window, and afterwards the pre-bundle directory held
+  **two** hash directories — vite re-optimised mid-run after the cache was cleared, orphaning paths held by
+  in-flight workers. **Practical rule: after clearing the pre-bundle, the NEXT run is the unreliable one and
+  the run after it is clean.** Budget one extra pass rather than reading it as a bad attribution.
+- **`vitest run -u <path>` does NOT honour the path filter** (vitest 4.1.8): `-u` swallows the argument and
+  re-records **the whole suite**. G8 checked for collateral and found exactly one dirty snapshot, its own. Any
+  agent updating a snapshot must verify the blast radius rather than trusting the filter.
+
+**THE REPO'S `grep` IS `ugrep` AND IT SILENTLY SKIPS TWO SOURCE FILES — every grep-based NEGATIVE claim in
+this run is narrower than it reads.** Discovered by F4's cycle 3, measured rather than inferred. A raw NUL byte
+in a string literal makes `ugrep` treat a file as **binary** and drop it: **no match, no warning, exit 0.**
+Verified 2026-07-29 — exactly two source files repo-wide contain one:
+
+- `apps/web/src/hooks/billing/use-turn-options.ts:216` — **the money layer's single adapter hook under
+  `apps/web`**, so every repo-wide sweep in this run silently excluded the one file most likely to hold what
+  the sweep was looking for. A sweep reported it does **not** contain `hasServedFunding`; it contains it twice.
+- `apps/web/src/lib/conversation-socket-registry.ts:17`
+
+**The consequence is a rule, not a caveat: a "zero hits" result is not evidence unless the sweep ran with `-a`.**
+That covers the vocabulary sweeps every brief in this run mandates, the walled-import inventories, and the
+orchestrator's own greps. **Re-verified this way and unchanged: the 15 walled `apps/web` specifier lines** — 15
+with and without `-a`. Other negative claims in earlier reports were **not** re-run and should be treated as
+unproven rather than false. **G12 removes the cause** so the tool stops lying.
+
+**NO TWO SUITES SHARING A COVERAGE DIRECTORY MAY RUN AT ONCE — this is not an `apps/api` quirk.** F4's cycle 3
+lost a `pnpm test:web` run to the identical failure (`Something removed the coverage directory … multiple
+Vitests with the same reportsDirectory`), printing hundreds of passing lines and zero failures while being
+**void**. The constraint below was written for `apps/api`; it applies per package. Briefs must serialise the
+suite they name, and an agent that needs one waits rather than racing.
+
+**TWO `apps/api` GATE CONSTRAINTS, discovered 2026-07-29 under concurrency — they bind every remaining task.**
+
+- **Two `pnpm test:api` runs cannot overlap in one worktree.** They share `apps/api/coverage/.tmp`, and the
+  second aborts the first within a minute. Measured by F8, which lost two runs to it and confirmed the
+  competing process. **Only one `apps/api` suite may run at a time across all concurrent agents** — briefs must
+  say so, and an agent that needs the suite waits rather than racing. This is why audit briefs in this run
+  forbid `pnpm test:api` and ask for isolated file runs instead.
+- **The standing `template-html` failure blocks the `apps/api` COVERAGE gate entirely**, for every task in this
+  run: vitest suppresses the coverage report when any test fails, so a red suite yields no coverage table and
+  the gate's exit code says nothing about coverage. Until it is fixed, per-file coverage on `apps/api` must be
+  taken by a **scoped run over the owned files**, and an unscoped green claim about coverage is not evidence.
 
 **A CONCURRENT AGENT REGENERATING `.env.development` / `.env.scripts` VOIDS AN IN-FLIGHT SUITE RUN.** C2's first
 auditor lost a full `test:api` pass to this on 2026-07-27 — 35 files / 16 tests red including trial 402s and admin
@@ -2183,6 +2365,804 @@ fallback if that proves awkward: the interpreter reads the shared definition-lev
 **Deferred, handle as it arises:** re-examining the thirteen tasks cleaned before the `--coverage.include`
 non-accumulation was known.
 
+### FOUNDER RULING 2026-07-29 — a write-privileged link guest spends the owner's funds
+
+**Ruled, not proposed: "Write-privileged link guests should absolutely be allowed to make calls using
+owner-allocated funds."** This settles the question E1's auditor routed rather than held against E1, and it
+closes it in the direction `BILLING.md` §Funding priority 1 already specified — the owner funds a guest when
+headroom covers. **The doc was right and the system is wrong**, which is the same shape as F3 and the same
+shape as the storage-fee seam: the correction is to the implementation.
+
+**What is Verified about today's behaviour**, established 2026-07-29 before the ruling:
+
+- `apps/api/src/lib/context/route-class.ts:76` refuses `link-guest` **and** `trial-session` on **every**
+  route class, before per-class matching runs. Introduced by `16ad428c`, structurally reinforced but never
+  altered since.
+- `derivePrincipal` never mints a link-guest from a cookie — it returns only `none | pending-2fa |
+billing-only | full`. Link-guest principals exist at the realtime and media seams alone, which
+  `apps/api/CLAUDE.md` states as a deliberate stance.
+- `GET /conversations/:id/budgets` is `routeClass('session')`, born that way at `c9757bd3`, and 403s a guest.
+  So does every other HTTP funding read.
+- **Not a regression, and not this run's doing.** Deny-by-construction predates the run; E1's client-side
+  `guest_budget_exhausted` mirrors a server that would refuse anyway. E1 stands clean.
+
+**The gap is therefore two-sided and the two sides have different evidence bases**, which is why they were
+researched separately: an **authorization** side (can a guest principal reach the turn path at all, and how
+does revocation and link expiry stay enforced when it can) and a **money** side (does admission hold against
+the owner's wallet, does settlement charge it, what bounds a bearer-token holder's spend of someone else's
+money, and what may a guest be told about the owner's balance without leaking it).
+
+**The bearer-credential property is load-bearing on every option:** a share link can be forwarded, so
+whatever authorizes the guest also authorizes anyone the link reaches. Any option must state what an
+attacker holding the link can spend, and the bound must exist in code rather than only in the doc.
+
+### Link-guest research 2026-07-29 — two analysts, disjoint mandates, converging recommendation
+
+**THE PREMISE I GAVE THE FOUNDER WAS WRONG AND BOTH ANALYSTS CORRECTED IT.** I reported that no HTTP
+endpoint lets a link guest send. **`POST /chat/guest` exists, is `routeClass('public')`, and is fully wired**
+(`apps/api/src/slices/chat/routes.ts:1128-1207`): it resolves the guest server-side from
+`X-Link-Public-Key` — 401 no credential, 403 cross-conversation, 403 no active member row, 403
+`privilege === 'read'` — then runs the same paid pipeline as `POST /chat`. Eleven integration cases plus
+`e2e/sharing/link-guest-chat.spec.ts`. It landed in `4932c1cc` on 2026-07-11, **three days after the
+2026-07-08 "link-guest = legacy participation" ruling**. The `route-class.ts:76` blanket refusal is real but
+is a **belt on an out-of-band principal** — a guest send never presents a principal to the matrix, so
+`derivePrincipal` yields `none` and the `public` class admits it. **Write-privilege lives on
+`conversation_members.privilege`, not on `shared_links`**, chosen at link mint.
+
+**The server money path is Verified CORRECT AND COMPLETE for an owner-funded guest turn.** Payer freezes to
+the owner's purchased wallet; the turn is priced at the **owner's** tier; the admission hold lands on the
+owner's wallet; **the guest's own `member_budgets` row and the `conversation_spending` row both gate and
+accrue**; settlement debits the owner in the one fenced transaction; `usage_records` carries `userId` =
+owner and `senderLinkId` = the link; ledger legs are zero-sum. A guest with zero headroom is refused
+`GROUP_BUDGET_EXHAUSTED` and never falls through to self-funding. **Every remaining gap is client-side or a
+missing read.**
+
+**The spend bound exists in code, not only in the doc.** The member-budget row is created at link **mint**,
+so an owner pre-allocates before any guest arrives, and an absent row means `0n` ⇒ denied — fail-closed. Two
+properties to state wherever this is briefed: the allowance is **per-link, not per-guest** (every stranger
+holding the URL shares one cumulative budget and they race through the atomic Lua, which is what makes it
+safe), and the **per-wallet concurrent-run cap of 5 is shared with the owner**, so a busy link can crowd out
+the owner's own turns.
+
+**The gaps, grouped by who must fix them:**
+
+- **The one legacy capability not restored:** `GET /conversations/:id/budgets` was
+  `requirePrivilege('read', { allowLinkGuest: true })` in legacy and is `routeClass('session')` today. Two
+  independent reds — the route class **and** `getConversationBudgets` taking `callerUserId: string` and
+  gating on `members.activeByUser`, which no guest can satisfy.
+- **A guest cannot stop the run it started.** `POST /chat/stop` is session-classed and gates on
+  `activeByUser`; the guest client calls it anyway and swallows the 401 into `console.error`. This
+  contradicts `ARCHITECTURE.md` §Streaming's unqualified guarantee that a user can always abort a paid run —
+  and under the ruling the unstoppable run spends the **owner's** money.
+- **The composer refuses every guest before any request is made:** `useSession` masks the guest session ⇒
+  `useSpendable` never fires ⇒ the snapshot is fabricated `{spendable: $0.01, tier:'guest', payer:'self'}` ⇒
+  `resolveSelfFunding` denies **from the tier alone, never from a funding comparison**. So
+  `guest_budget_exhausted` is never truthful today, and under the ruling it becomes **a reason that can never
+  legitimately fire**. It is deleted, and a guest denial arrives only from the funding core's
+  `GROUP_BUDGET_EXHAUSTED`, which the client already maps.
+- **The refusal copy a guest sees is a false path.** The money refusal says "Add credit", which a guest
+  cannot do — §Notices 3 forbids exactly that. The correct copy already exists and is unreachable from the
+  composer: `guest_no_group_budget` and `group_owner_funds_unavailable`.
+
+**A LIVE DEFECT FOUND IN PASSING, UNRELATED TO LINK GUESTS: `/chat/guest` runs no tier gate and accepts a
+full session.** `tierGateRejection` has exactly one call site — `POST /chat`. A test pins that a full-session
+user may send through the guest route, so **a signed-in free-tier user can post a premium model to
+`/chat/guest` and bypass `MODEL_TIER_LOCKED`.** Legacy skipped that gate for guests only, never for members.
+It needs its own owner so it cannot be deprioritised inside a guest task.
+
+**THE RECOMMENDATION, reached independently by both analysts and therefore load-bearing:** a
+**`public`-classed guest funding read in the `conversations` slice**, resolving through the existing
+`authorizeCaller` → `resolveCallerMember` seam and returning the **same `ownerSnapshot()` figures the
+admission Lua gates on** — the same code, so one number and one source survive. The transport is free (the
+typed client already injects the credential on every call). The other gap routes close the same way, plus an
+**arch rule requiring every `public` route that takes a `:conversationId` or reads the link header to prove
+its authorization** — modelled on `mutating-routes-prove-idempotency`. The tier-gate bypass is the evidence
+that this pattern needs mechanical enforcement rather than diligence.
+
+**REJECTED, and the first one must be named in any brief because it is the path of least resistance:**
+letting a guest read `/budgets` and feeding it into `resolveClientBilling`'s still-present `group` parameter
+— **disqualified twice**: the client composes a funding figure from a second endpoint, and it reintroduces
+the second who-pays authority F3 removed. That dead parameter is a live invitation and should be deleted by
+whatever lands. Also rejected: a new `link-guest` route class (trades away the unconditional
+`link-guest ⇒ FORBIDDEN` fail-closed line covering all 158 registrations, while still needing the per-route
+conversation match it claimed to replace); promoting guests to real principals (a forwarded,
+individually-unrevocable bearer URL would reach all 68 session routes, and there is no `users` row to hang it
+on); and serving the figure over the WS (a second delivery path for a number HTTP already serves, on a
+room-broadcast frame vocabulary that would ship the owner's headroom to every socket).
+
+**FOUR DECISIONS FOR THE FOUNDER, none of them an implementer's to make:**
+
+1. **`BILLING.md` contradicts itself on guests.** §Affordability 8 fixes trial **and guest** at a `$0.01`
+   effective balance; §Group Funding 1 and the User Tiers table say a guest is owner-priced from group budget
+   and never self-funds. Both cannot describe an owner-funded guest turn, and the code implements
+   §Affordability 8. The ruling makes §Group Funding 1 operative ⇒ correct §Affordability 8's guest clause
+   and drop `'guest'` from `getEffectiveBalanceNano`, leaving `'trial'`. **This is two doc clauses
+   disagreeing, not a proposal to weaken the doc.**
+2. **A privacy escalation the earlier ruling did not contemplate.** The served figure's owner-balance term is
+   deliberately **raw**, not hold-aware — an earlier ruling stripped the owner's holds so a member could not
+   infer their activity elsewhere. The raw balance still moves with every settlement platform-wide, and a
+   **link URL is held by an anonymous, unbounded set of observers** who can poll it. The term cannot simply
+   be dropped: a `min` missing a term serves **more** than the gate, so the composer would offer sends
+   admission refuses.
+3. **Media.** Legacy refused `image|video|audio` from a link guest (`MEDIA_TRIAL_BLOCKED`); today's route
+   forwards modality unrestricted, so a forwarded link can spend the owner's budget on video.
+4. **Forks.** `/chat/guest` validates `forkId` and its comment says a guest may fork; every fork route is
+   session-only, so a guest cannot discover a fork id. One of the two is wrong.
+
+**A DOC TYPE HOLE either way:** `FundingSnapshot.payer: 'self' | 'owner'` (`BILLING.md:819` and the code)
+cannot express a guest with **no** payer. Whichever representation is chosen, the doc changes with the code.
+
+**Two adjacent defects, named so they are not rediscovered, and out of this scope:**
+`usage_records.userId` records the **initiator**, not the payer — contradicting `ARCHITECTURE.md` §Data model
+on owner-funded **member** turns (it coincides for guests only because a guest has no users row); and the
+server's payer freeze runs §Funding priority 1 with `turnEstimateNanoUsd: undefined`, which the code's own
+comment calls "a spec violation", producing a permanent client/server divergence for **members** with
+positive-but-insufficient headroom.
+
+### The guest composer is a SHIPPED FEATURE THAT IS BROKEN, and the regression predates this run
+
+**Attribution, Verified line by line across `ada0341c → a94ca204`: this run did not cause it and could not
+have.** Every load-bearing line — `useSession`'s guest mask, `useSpendable`'s `enabled: isAuthenticated`,
+`/conversations/:id/budgets` being `routeClass('session')`, its domain gate on
+`activeByUser(conversationId, callerUserId)`, and `resolveSelfFunding`'s `tier === 'guest'` denial — is
+**identical at both commits**. At baseline the guest reached the denial because the `/budgets` fetch 403'd and
+left `groupContext` undefined; today it reaches the same denial because E1 deliberately stopped passing
+`group`. **Different route, identical outcome, at both commits.**
+
+**The regression site is `c9757bd3` ("regression remediation"), where the `conversations` slice was written.**
+Legacy's budgets read carried `requirePrivilege('read', { allowLinkGuest: true })`
+(`legacy` corpus, `fce35f4d:apps/api/src/routes/budgets.ts:23`) and that read is what fed legacy's group
+context, which enabled the guest composer. Legacy's own guest-denial arm is **byte-identical to today's and
+was simply never reached.** The slice's route was born `routeClass('session')`; `git log -S "allowLinkGuest"`
+finds the string only on legacy commits. **The rewrite dropped a guest-reachable money read and nothing
+noticed.**
+
+**THIS IS NOT "a feature the founder has ruled should exist". It is a shipped, E2E-covered feature that has
+been broken for real users since `c9757bd3`.** `e2e/sharing/link-guest-chat.spec.ts` **drives the real
+composer** — it fills the real textbox and asserts `sendButton` `toBeEnabled` before clicking
+(`:66-70`, repeated `:95-99`) — so with `hasBlockingError: true` it fails at the enable assertion **before any
+API call**. This run touched that spec only cosmetically (2 lines, `'Top up'` → `'Add credit'`). Ten E2E
+report directories exist and **none names `link-guest`**, so the spec is presumed-passing on legacy history
+rather than on any run since the slice landed. **A green unit suite pinning the guest denial as intended
+behaviour, sitting on top of a red integration reality** — precisely the inversion the E2E doctrine exists to
+prevent.
+
+**Two consequences bind whoever implements this:**
+
+- **Run the E2E spec BEFORE the fix.** It is the exact reproduction and converts an Inferred red into a
+  Verified one at the lowest possible cost. TDD's watched-red, already written.
+- **The regression can no longer be repaired by reverting, and the tempting minimal diff is disqualified.**
+  Before E1, restoring `allowLinkGuest` on `/budgets` alone would have fixed the composer with no client
+  change. After E1, `buildBillingResolverInput` no longer accepts or forwards `group` at all
+  (`use-prompt-budget.ts:126-144`) — deliberately, with a correct rationale — so **the fix must go forward**:
+  serve one payer-scoped number rather than a two-field group blob the client composes. Reverting would
+  reintroduce the documented "resolved `self` where the server resolves `owner`" bug.
+
+**E1's auditor was right to route this rather than hold it against E1, and right that E1 did not cause it. It
+was wrong only about where the answer lived — server-side in the READ path, not the send path.**
+
+### FOUNDER DECISIONS 2026-07-29 (link guests) — all seven ruled, docs applied
+
+1. **Owner-funded is right, and the doc was conflating two axes.** A **sender tier** answers _who is
+   sending_ (`guest`, `trial`); a **payer funding tier** answers _what funds this_. Trial sits on both — it
+   is a session kind **and** a funding mode with a ceiling. **`guest` sits only on the first**, and the
+   founder kept it as a tier on that basis. Every funding-derived property of a guest's turn — effective
+   balance, ratios, cushion, premium access, modality — is the **payer's**. `BILLING.md` §Group Funding 1
+   already said exactly this; §Affordability 8, §Affordability 9, the §User Tiers row and the
+   `effectiveBalance` row contradicted it and are now consistent with it. **The trial ceiling keeps its
+   reason rather than merely its value: trial has no funding endpoint to read. A guest now has one, so the
+   shared arm dissolves because its premise is false, not because we deleted it.**
+2. **The disclosure is ACCEPTED and out of scope.** Serving a guest the payer figure reveals the owner's
+   balance whenever it is the binding term, to anyone holding the link. Ruled: keep the exact figure, do not
+   warn the owner. Recorded so it is not re-raised — and note it is bounded by the cap the owner sets and is
+   **zero when they set none**, so the exposure begins only when a link is funded.
+3. **The media widening is KEPT.** A guest may generate media on the owner's funds. This is not a widening
+   under decision 1 — modality follows the payer like every other funding-derived property, which is how
+   `BILLING.md` §Group Funding 1 now reads.
+4. **The fork affordance is KEPT** even with no UI, for a future one. The route comment claiming a guest may
+   fork "exactly like a member" is corrected instead: the server accepts `forkId` and no client surface
+   exposes it.
+5. **The tier-gate bypass is FIXED.**
+6. **`FundingSnapshot.payer` stays a two-value union — the founder's question killed the proposed change.**
+   Asked whether a guest with no payer is possible: **no.** A guest's payer is **structural** — the
+   conversation's owner, determined by the conversation rather than by whether funds cover. What varies is
+   the amount. `{payer:'owner', spendable:0}` states it exactly, and that is what drives the correct copy.
+   The analyst reached for a third value by reading "zero funding" as "no payer"; they are different things.
+7. **The E2E spec is NOT run.** The watched-red comes from the unit and integration reds instead. **Accept
+   the consequence explicitly: the spec stays presumed-failing and authored-not-run, so the one test that
+   would have caught the original regression still catches nothing.**
+
+**Docs applied under this ruling** (founder-approved, orchestrator-written — `.md` stays read-only to
+subagents): `BILLING.md` — the `effectiveBalance` row, the guest's funding door, the §User Tiers guest row
+(model access is **the payer's**), the two-axes paragraph under tier derivation, §Affordability 8 and 9,
+`FundingSnapshot` (`tier` → **`payerTier`**, with the `payer` union's closure explained), §Group Funding 1
+(modality) and a new §Group Funding 6 recording the per-link allowance and its two accepted consequences.
+`apps/api/CLAUDE.md` — the stale "only at the realtime and media seams" claim, replaced by what is actually
+true and by the rule G4 enforces.
+
+**The rename is the durable half of decision 1.** Two fields called `tier` in one composer, meaning
+different things, is the shape that produced this run's costliest errors. `payerTier` makes crossing them a
+type error rather than a reading error.
+
+### F4 — The guest's funding truth is served, and the composer stops refusing sends the server accepts
+
+**Design context.** This is not a feature. **It is a shipped, E2E-covered feature that has been broken since
+`c9757bd3`** — see §The guest composer is a shipped feature that is broken. The server accepts the send
+today; the client refuses it. The fix must go **forward**: before E1 the old group-context path could have
+been repaired by restoring one flag, but E1 deliberately removed the client's `group` input, so restoring it
+would reintroduce the second who-pays authority F3 removed. **Both analysts, briefed independently, reached
+this same shape.**
+
+**Acceptance criteria:**
+
+- A **guest-reachable funding read** returns the payer snapshot — `spendableNanoUsd`, `heldNanoUsd`,
+  `payerTier`, `payer: 'owner'` — produced by the **same producer the admission gate uses**, not a second
+  derivation. **Pinned two-sidedly against `admitRun` itself**, the way F1 and F3 pinned theirs, so the
+  served number cannot drift from the gate.
+- It is `public`-classed and resolves the guest through the **existing** `authorizeCaller` /
+  `resolveCallerMember` seam — no second resolution path, no second revocation predicate. Wrong
+  conversation, revoked link, expired link and a departed member are each refused, matching the shape the
+  other guest-reachable conversation reads already use.
+- `FundingSnapshot.tier` is renamed **`payerTier`** everywhere, and the value served is the **payer's** — a
+  guest funded by a paid owner is served `paid`, never `guest`.
+- **The tier-keyed guest denial is DELETED.** `resolveSelfFunding` must not deny on `tier === 'guest'`; a
+  guest denial arrives only from the funding core's `GROUP_BUDGET_EXHAUSTED`, the path the server uses. A
+  test pins that a funded guest is **not** denied.
+- **The no-endpoint fallback becomes trial-only.** A guest never takes the `$0.01` trial ceiling — pinned
+  directly, because this is the exact conflation the founder ruled on.
+- The composer's snapshot for a guest is the **served** one. Nothing is fabricated when the query has not
+  resolved; the pending state is the existing neutral one.
+- **No refusal shown to a guest offers "Add credit"** — a false path a guest cannot walk (§Notices 3). Zero
+  allocation ⇒ `guest_no_group_budget`; owner cannot cover ⇒ `group_owner_funds_unavailable`. Both copies
+  already exist and are unreachable today.
+- **The dead `group` parameter is deleted** from `ClientBillingInput` and `useResolveBilling`, and the dead
+  `/budgets` request a guest currently fires (and 403s) stops firing. The parameter is the entry point to
+  the disqualified two-endpoint design; leaving it is leaving an invitation.
+- **One funding read per composer.** `useResolveBilling` currently calls `useSpendable()` with no
+  `conversationId` while its siblings pass one — two cache entries for one payer's figure. Reconciled to
+  one.
+- **Premium and media options for a guest are computed from the payer's tier**, so an owner-funded guest
+  sees what the owner sees (§Group Funding 1, decisions 1 and 3).
+- Red first, and these are the reds: the funding read with no guest arm; the route that does not exist;
+  `resolveClientBilling` denying on tier alone; the composer's `hasBlockingError`.
+
+**Files:** `apps/api/src/slices/conversations/**` (the new read and its domain function),
+`apps/api/src/slices/billing/domain/spendable.ts`, `packages/shared/src/affordability/**`,
+`packages/shared/src/schemas/api/**`, `apps/web/src/hooks/billing/**`, `apps/web/src/lib/auth.ts`,
+`apps/web/src/components/chat/input/**`, tests.
+**Scoped checks:** `pnpm test:api`, `pnpm test:shared`, `pnpm test:web`.
+**Sensitive:** money **and** authorization — **3-lens panel** (correctness, security, conventions); clean
+only when all three pass.
+
+### Unowned and unruled — surfaced 2026-07-29, must not be lost at close
+
+- **No throttle on invalid-credential floods to `POST /chat/guest`.** The in-handler limiter is keyed on the
+  **resolved** `linkId` and runs only after resolution, so the 401 path short-circuits before it and each
+  garbage request still costs a link lookup. The public share read carries a per-IP cap; this does not. Raised
+  by the authorization analyst, never ruled. **Hardening, not a defect** — recorded so it is a decision rather
+  than an omission.
+- **A read-privileged link guest is served the funding snapshot** even though `/chat/guest` refuses it a send.
+  What it learns is `payer:'owner'`, one bit of `payerTier` (the owner's purchased balance is or is not
+  positive) and `spendable: 0` — a read link is funded only if the owner explicitly allocates to it. This sits
+  inside decision 2's accepted band ("to anyone holding the link"), and a naive privilege refusal would leave
+  a read-only guest's composer in a **permanent pending state**, which is worse. Flagged rather than fixed.
+
+### F5 — The tier gate moves to the payer-resolution seam
+
+**Design context.** `tierGateRejection` has exactly one call site while **two** routes resolve a payer, so
+`POST /chat/guest` runs no tier gate and also accepts a full session — **a signed-in free-tier user can
+reach premium models through it.** Found in passing by the authorization analyst, unrelated to link guests.
+Adding a second call site fixes this instance and leaves the class open; the gate belongs where the payer is
+resolved, so a third turn route cannot be born without it.
+
+**Acceptance criteria:**
+
+- Red first: a free-tier signed-in user posting a **premium** model to `/chat/guest` is refused
+  `MODEL_TIER_LOCKED`. It returns success today.
+- **One call site**, at the payer-resolution seam, inherited by every turn route.
+- The gate still **no-ops when the payer is not the sender** — an owner-funded turn is never blocked by the
+  sender's tier (E1's ruling, §Group Funding 1). Pinned in **both** directions: refused for a self-funded
+  free sender, permitted for an owner-funded one.
+- **A full session on `/chat/guest` stays accepted** — that is the owner opening their own share link.
+  Refusing it is not the fix and would break a legitimate path.
+- The `forkId` comment is corrected to state what is true: the server accepts it, no client surface exposes
+  it yet (decision 4).
+
+**Files:** `apps/api/src/slices/chat/routes.ts`, the payer-resolution seam it moves to, tests.
+**Scoped checks:** `pnpm test:api`.
+**Sensitive:** authorization **and** payments — **3-lens panel**.
+
+**AMENDED 2026-07-29 after cycle 1 — the plan said two routes resolve a payer; there are THREE.**
+`POST /chat/regenerate` also goes through `resolveTurnContext` and was bypassing **both** model gates. The
+implementer hit its stop-and-report trigger and flagged rather than reconciling, which was correct: this is a
+permitted-turn change outside the named bypass, and the plan's author does not get to grade the plan.
+
+**FOUNDER RULING: a regenerate may use ANY model it can afford. The premium/tier filter does NOT apply to
+regenerate; every budget and affordability filter applies in full.** `BILLING.md` §Notices 8 names
+regenerating as a paid action reading the same verdict, and it still does — **the verdict it reads is the
+money verdict.** Entitlement is what is exempted, not affordability. Legacy's carve-out ("the user already
+chose this model") is upheld on the entitlement axis and overruled on none, because legacy never exempted
+budget.
+
+**The kill switch is a THIRD category and it stays on regenerate — orchestrator call, and it is not a
+permission change.** A disabled model was already refused on regenerate; only the refusal code improves, from
+a generic unknown-model error to `MODEL_DISABLED`. Availability is not entitlement, and a soft-deleted model
+cannot be called at all (A2).
+
+**Amended criteria, replacing "inherited by every turn route" where they conflict:**
+
+- **The seam stays ONE call site and takes an explicit, typed decision about the premium gate.** The
+  exemption is **declared, never implicit** — it cannot be derived, because it is a product ruling — so the
+  type forces a new turn route to state its choice rather than inherit one silently. The declaration carries
+  the founder's reason.
+- Pinned in **both** directions across two routes: a zero-balance self-funding caller **regenerating** a
+  premium model **succeeds**; the same caller **sending** that model is refused `MODEL_TIER_LOCKED`.
+- **Budget and admission filters apply to regenerate in full** — pinned by a regenerate that cannot be
+  afforded being refused exactly as a send is. This is the half of the ruling that is easy to lose while
+  removing the other half.
+- The kill switch still applies to regenerate, pinned by `MODEL_DISABLED` rather than a generic refusal.
+- Owner-funded regenerates are unaffected — the gate no-ops when the sender is not the payer.
+
+**Accepted from cycle 1, no change required:** the kill switch moved into the seam **with** the tier gate
+rather than the tier gate alone. A tier-only seam would have flipped `/chat`'s existing gate order and
+changed the refusal code for a selection carrying both a disabled and a premium model. The justification is
+sound and `/chat` and `/chat/guest` are otherwise behaviourally unchanged.
+
+**RULED 2026-07-29 (a) — a regenerate may bypass premium for a free-tier caller so long as the budget covers
+it.** F5's correctness lens established the mechanism: **priority 2 and priority 4's basic-model term are the
+same predicate**, and `isPremiumModel: true` is supplied from exactly one place on the server — inside the
+tier gate. Exempting regenerate from that gate therefore lifted the free-allowance-is-basic-only rule with it;
+the two are not separable as the code stands, and **no implementer could have delivered one without the
+other.** Ruled: accept it. `BILLING.md` priority 4 and §Balance Consumption now state it — the ruling changing
+the design, not a doc softened toward the code. **The bound is real and recorded:** admission still measures
+the priced ceiling against one day's remaining allowance, so the reach is premium models cheap enough to fit
+inside a day, most often models premium by **recency** rather than by price.
+
+**Rejected — adding a money-side refusal.** It would have made the exemption an **empty set** for every
+self-funded caller: premium access requires a positive balance, so anyone holding one is already entitled, and
+the only caller the exemption could ever help is a lapsed payer whose remaining funding is exactly the free
+allowance. An exemption that helps nobody is decoration, and the honest alternative would have been to drop it
+outright.
+
+**MY OWN ERROR, recorded rather than quietly fixed: the fork comment I dictated is false.** Decision 4's text
+said no client surface exposes forking to a guest. A write-privileged link guest **does** get a Fork affordance
+rendered, so a guest can press a control whose route is session-classed and will refuse them. The comment must
+state what is true, and the product gap underneath — a visible control that cannot succeed — is real and
+separate.
+
+### F6 — A guest can stop the run it started
+
+**Design context.** `POST /chat/stop` is session-classed and gates on a user-keyed membership lookup, so a
+guest gets 401; the guest client calls it anyway and swallows the failure into `console.error`. Under the
+ruling the unstoppable run spends **the owner's** money, and `ARCHITECTURE.md` §Streaming's guarantee that a
+user can always abort a paid run is currently false for guests. The doc is the design; the code moves to it.
+
+**Acceptance criteria:**
+
+- Red first: a guest starts a run via `/chat/guest`, then `POST /chat/stop` with only the link credential →
+  **200**, not 401.
+- Authorization goes through the **same shared guest gate** as F4 — not a second resolution path.
+- A guest cannot stop a run in a conversation it is not a member of, nor through a revoked or expired link.
+- The client stops swallowing the stop failure; a guest's Stop behaves as a member's does.
+- The partial settles exactly as it does for a member — a user cancel bills consumed usage (ARCHITECTURE
+  §Streaming), and this path must not become a second settlement rule.
+
+**Files:** `apps/api/src/slices/chat/routes.ts`, `apps/web/src/hooks/chat/**`, tests.
+**Scoped checks:** `pnpm test:api`, `pnpm test:web`.
+**Sensitive:** money-adjacent (it settles a partial) — **2 independent auditors**.
+
+**SCOPE WIDENED 2026-07-29 — F6 owns the guest Fork control, a real product gap found by F5's fix cycle.**
+A write-privileged link guest **is rendered a Fork control** (`apps/web/src/lib/message-actions.ts` includes
+`fork` for `link-guest`/`write`, and the share page passes `onFork` unconditionally), while every fork route
+is session-classed and refuses them. **A visible control that cannot succeed is the same defect class as a
+composer that refuses a send the server accepts** — it is F4's bug in a different surface, found because a
+comment I dictated denied it.
+
+**Ruled: hide the control for link guests; leave the server affordance intact.** Founder decision 4 kept
+`/chat/guest`'s `forkId` acceptance deliberately, for a UI to be built later — that stands. What is wrong is
+offering the action today, not accepting it tomorrow. Pinned by a test that the Fork action is absent for a
+`link-guest` caller and present for a `write` member, so restoring it later is a deliberate edit rather than
+an accident.
+
+### G4 — Credential-gated public routes prove their authorization
+
+**Design context.** A guest-reachable route is `public` **plus** an in-handler credential gate, so
+`routeClass('public')` alone does not tell a reader whether a route is anonymous or credential-gated. **The
+tier-gate bypass is the proof that this costs real defects rather than merely readability** — a `public`
+route was added and one of its two gates was silently omitted. This is the repo's own idiom
+(`mutating-routes-prove-idempotency` does exactly this for the idempotency wrappers).
+
+**SCOPE WIDENED 2026-07-29 by F5's cycle-1 finding.** F5's seam is a route-level function, so "one call
+site, and the only production `resolveTurnContext` call lives inside it" is **grep-provable, not
+compiler-enforced** — and a fourth turn route added later would repeat F5's bypass exactly. G4 therefore
+enforces **two** properties, not one: public routes prove their authorization, **and turn routes prove they
+pass through the payer-resolution seam.** The second is the mechanical enforcement F5 could not give itself.
+
+**Acceptance criteria:**
+
+- An `arch:check` rule: every `public`-classed route taking a `:conversationId` param or reading the link
+  credential header must **lexically invoke the shared gate** in its terminal handler.
+- **Watched red on real code** — deleting a gate from a real route reddens the rule, demonstrated, not
+  asserted. The run's standard since B9.
+- **No importer allowlist and no ratchet.** The founder retired that mechanism in decision E; a rule that
+  needs a hand-maintained exception list reproduces the laundering hole it replaced.
+- Registered in `packages/config/arch/README.md`'s rules list.
+
+**Files:** `packages/config/arch/**`, tests.
+**Scoped checks:** `pnpm arch:check`, `turbo typecheck lint --filter=@hushbox/config`.
+**Sensitive:** no — 1 auditor.
+
+### F7 — The payer freeze resolves the candidate payer first (founder-ruled 2026-07-29)
+
+**Design context.** §Funding priority 1 compares the turn's **estimate** against headroom. The server freezes
+the payer with `turnEstimateNanoUsd: undefined`, so the comparison degenerates to "headroom > 0" — the code's
+own comment calls this a spec violation. **A member with a small group budget is frozen to `payer: owner`,
+admission then fails against the owner's scopes, and the member is refused permanently no matter how much
+money they personally hold** — while the doc says they fall through to their own funds. The client runs the
+comparison correctly (F2 pinned it), so client and server disagree about who pays.
+
+**The reason it was left undefined is a real circularity, and the ruling resolves it:** the payer determines
+the tier, the tier the ratios, the ratios the estimate, and the estimate the payer. **Ruled fix — resolve the
+candidate payer first, and re-price only on fall-through:** price at the **owner's** tier (the owner is the
+candidate, so that is the estimate priority 1 is asking about); fits ⇒ owner pays with that estimate; does not
+fit ⇒ a signed-in member falls through and the turn is **re-priced at the sender's tier**, a guest is refused.
+Terminating, deterministic, at most two evaluations, no I/O. Rejected: comparing at a deliberately
+conservative tier to avoid the second pass — it misprices on purpose.
+
+**Acceptance criteria:**
+
+- Red first: a member of a group conversation whose **headroom is positive but smaller than the turn's
+  estimate**, with sufficient personal funds, sends successfully **charged to themselves**. Today they are
+  refused.
+- The server passes a real estimate into the shared funding decision. **There is no second funding
+  implementation and no test asserting the client and server agree** — they call the same shared function, so
+  the pin is on the server's behaviour directly (Global Constraint 5 bans agreement cross-checks).
+- Both branches pinned: owner-funded when the estimate fits, self-funded when it does not, **with the
+  fall-through turn priced at the sender's tier** rather than the owner's.
+- A guest is still refused on the same boundary — never falls through to personal funds (§Group Funding 2).
+- The `funding-decision.ts` comment describing the violation is **removed**, not amended. A comment
+  documenting a defect outlives the defect and becomes a wrong comment.
+- The §Notices 5 payer-change disclosure fires on the fall-through, since that is exactly the case it exists
+  for — a member charged personally where they expected the owner to pay.
+
+**Files:** `apps/api/src/slices/chat/domain/turn-context.ts`,
+`packages/shared/src/affordability/billing/funding-decision.ts` (comment only), tests.
+**Scoped checks:** `pnpm test:api`, `pnpm test:shared`.
+**Sensitive:** money — **2 independent auditors**.
+**Ordering:** after **F5**, which moves the tier gate onto the same seam. F7 builds on the seam as F5 leaves
+it, not as it stands now.
+
+**COUPLING RECORDED 2026-07-29 — F7 will meet `turn-context.ts` as F8 leaves it, not as it stands.** F8
+found that the defect lived in `resolveTurnContext` itself: it returned the payer as the **sender's** id for a
+user sender and the owner's only for a guest — the exact session-kind dependence F8 exists to remove. F8 now
+reads the payer **off the wallet the funding decision chose**, so the payer and the debited wallet cannot name
+different people. The three branches of `resolvePayerWallet` are otherwise untouched, and F7's change sits in
+the same function on different lines. **The one coupling: if F7 adds a fourth wallet-materialization branch,
+that branch must set the payer on the wallet it returns.**
+
+**AMENDED 2026-07-29 after cycle 1 — two corrections, one of them mine.**
+
+**The backfill criterion was WRONG and is withdrawn.** Global Constraint 7 states there are **zero existing
+users**: no data-migration backfill, no coexistence windows. I wrote a criterion requiring one anyway; the
+implementer followed the criterion over the constraint and **disclosed the conflict**, which was the right call
+given that I had created it. **A rename preserves values, and with no production rows there is nothing whose
+meaning needs correcting** — dev and CI data is reseeded. **Remove the backfill.** A data migration that
+implies existing data is precisely what the constraint bans.
+
+**RULED IN — the simplification F8 identified and correctly declined to make unilaterally.** With the field
+finally meaning the payer, owner-funding is derivable as **payer ≠ sender** with no database read, which
+deletes `isOwnerFundedTurn`'s recovery-by-comparison entirely — **the very defect class F8 found in its own
+change.** Equivalent on every case: a link guest has no sender id, so the comparison is true and the guest is
+owner-funded; a member paying for themselves compares equal; an owner sending in their own conversation
+compares equal and is self-funding. Removing the class beats pinning it — the same shape as C3's derived
+recognition and the compile-time consumed set.
+
+**Flagged for the auditors, not ruled:** the run-key row's scope moved from the sender to the payer, so
+owner-funded turns now share the owner's idempotency namespace. Uniqueness is unaffected (a fresh
+client-minted uuid per turn), but it is a genuine change of principal on an idempotency boundary and deserves
+a deliberate look rather than an assumption.
+
+**SUPERSEDED 2026-07-29 by two later rulings, recorded here so the record is not read as an implementer
+deviation.** F8's verification auditor flagged that this section still said "both stay" while cycles 4 and 5
+**deleted two tests** under briefs issued after it. Those deletions were authorised and their soundness is
+verified: differentiating the pair forced the payer-named test from a refusal into an admit, it then strictly
+dominated a neighbour, and cycle 2's fixture correction had already made a third identical. **Both deletions
+were proven strictly dominated by comment-stripped diff and probe, with no lost pin** — the flat-fallback path
+is still exercised by three surviving tests. The reasoning below stands for the next case; the disposition of
+this one was: differentiate the survivor, delete what it strictly dominates.
+
+**The original re-ruling, kept for its reasoning — DIFFERENTIATE the pair, do
+not delete either.** F8's auditor diffed the two bodies with comments stripped: they are **byte-identical apart
+from the `it(...)` string** — same seeding, same budgets, same estimate, same assertion. So "each must redden
+where the other does not" cannot be met by naming, and my own fallback condition ("that is evidence one is
+redundant") had been reached. **The resolution is neither deletion nor acceptance: give the payer-named test
+the assertion it exists for.** The money-loss defect it guards was _group scopes silently not emitted_, so it
+must assert the emitted scope ids contain the member scope — which the cap-named test does not assert. Then the
+two fail for different reasons, which is what I asked for and what naming alone could never deliver.
+
+**Superseded first ruling, kept because the reasoning still applies to the next case:**
+F8 corrected three stale fixtures and reported that the corrected member-cap refusal test is now near-identical
+to its cycle-1 pin, declining to delete either on its own judgment. **That was the right instinct — dropping a
+money test to resolve an overlap is exactly the decision an implementer should hand back.** Both stay. The
+criterion is testable rather than a matter of taste: **each must carry a name stating what it uniquely pins,
+and each must be able to redden where the other does not.** If no such pair of names can be written, that is
+evidence one is redundant — report it rather than deleting.
+
+**The three stale fixtures are the finding, not the fix.** They built the payer and sender as the same id while
+naming the **owner's** wallet — a shape F8 has now made unproducible. One failed outright; **two passed
+vacuously**, silently no longer exercising the caps in their own names. That is the run's recurring class found
+a third way: not a test that cannot fail, but a test whose _inputs_ drifted out of the domain it claims to
+cover.
+
+### F10 — Premium-derived model surfaces read the payer's snapshot
+
+**Design context.** F4's correctness lens found two surfaces still reading the **unscoped** funding door,
+`useSpendable(null)`: default-model resolution and model validation. For a link guest that query is disabled,
+so `canAccessPremium` is `false` and the guest's **default model** and **strongest-model text** are chosen as
+if the payer had no premium access — while the composer and the produced option sets grade the same guest at
+the payer's `paid` tier. The same surfaces misgrade an **owner-funded member** identically, so this is not a
+guest bug; it is the last place the client still answers a payer question from a sender-scoped read.
+
+It predates F4 and F4 correctly declined it: its stop-and-report trigger forbade moving a non-guest's
+experience, and this moves members. Given its own task the move is the point.
+
+**Acceptance criteria:** both surfaces read the payer-scoped snapshot; premium availability at every surface
+matches the produced option sets for the same caller; pinned for an owner-funded **member** and an
+owner-funded **guest**, both of whom must see what the payer can reach. No surface may call the unscoped door
+for a premium decision.
+**Files:** `apps/web/src/hooks/models/{use-resolve-default-model,use-model-validation}.ts`, tests.
+**Scoped checks:** `pnpm test:web`.
+**Sensitive:** no — 1 auditor. **Ordering:** after F4 is clean.
+
+### F9 — `PaidRunIdentity.userId` is named for what it means (micro-task)
+
+**Design context.** F8 renamed the payer field through the API slices but deliberately left the **shared wire**
+field `PaidRunIdentity.userId` alone rather than renaming it across `packages/shared`, `packages/realtime` and
+F5's in-flight file mid-cycle. **That scope call is accepted** — but the residual is the same trap F8 and the
+`payerTier` rename both exist to close: a field named `userId` that means the payer, sitting beside
+`senderUserId`, is under-named rather than ambiguous, and the next reader will cross them. Its docstring
+already says "who pays"; after F8 it finally does. Recorded as its own task rather than a follow-up, because
+this run's bar is no follow-ups.
+
+**ALSO F9's, added 2026-07-29 — it was called F9 territory by F8 and then appeared in no one's criteria.**
+`contextSenderUserId`'s flat fallback (sender absent ⇒ the sender is the payer field) is a surviving pre-F8
+assumption, now reachable only from tests since all three paid route bodies always set the sender. **It is what
+let the stale fixtures look valid** — the vacuity class F8 found four instances of. Removing the optionality
+reaches `packages/shared` and `packages/realtime`, which is exactly F9's cut.
+
+**Acceptance criteria:** the field is renamed to name the payer across `packages/shared`, `packages/realtime`
+and every consumer; no behaviour changes and no value moves; the rename is provable as mechanical by diff.
+**Files:** `packages/shared/**`, `packages/realtime/**`, `apps/api/src/slices/chat/routes.ts` and consumers.
+**Scoped checks:** `pnpm test:shared`, `pnpm test:realtime`, `pnpm test:api`.
+**Sensitive:** no — 1 auditor. **Ordering:** after **F5**, **F7** and **F8** are all clean; it touches their files.
+
+**REDESIGNED 2026-07-29 after an analyst — and the headline is that `BILLING.md` ALREADY RULED THIS.**
+§Math & Terms states it outright: _"A decision that gates pricing may consume only bounds, never prices … the
+payer is decided on `minTurnCost` at the candidate payer's tier … One pass, no circularity."_ **My
+candidate-payer-first design was a rediscovery of a rule already written down**, and neither the founder nor I
+checked before approving it. The doc's own precedence rule (§Math & Terms is controlling; later sections
+"define no arithmetic of their own") settles the estimate-versus-`minTurnCost` ambiguity: **`minTurnCost`**.
+
+**THREE OF THE FOUR BLOCKERS ARE REFUTED AGAINST THE CODE:**
+
+- **Smart Model has no circularity.** The balance-**independent** minimum is already shipped and is exactly
+  §Smart Model 5's threshold. The implementer read the candidate **set** (balance-dependent) rather than the
+  **minimum** (not).
+- **Media has no circularity either** — its line items are per-unit with no tier ratio, so a media turn's
+  minimum **is** its deterministic estimate and is payer-independent. The real cost is plumbing: unit parsing
+  currently sits downstream of the freeze.
+- **The hot path already reads the catalog on every paid send — twice.** The kill-switch check reads the whole
+  table one line _after_ the freeze, and the build reads it again. Pricing at the freeze adds **zero** new
+  reads if the existing read is hoisted, and can reduce them.
+
+**AND A PREMISE OF MINE WAS STALE.** I wrote that the client evaluates priority 1 correctly so client and
+server disagree. **The client passes `0n` for a text turn, deliberately does not pass the group dimension, and
+replaces its own verdict with the served payer.** There is **one** estimate-blind authority, not two
+disagreeing — which is good news for scope and fatal for one criterion (below).
+
+**THE DESIGN, amended twice, both simplifications:**
+
+- **ONE evaluation at the freeze, not two.** The candidate payer's tier is provably `paid` whenever priority 1
+  can matter (headroom > 0 ⇒ owner balance > 0 ⇒ paid tier), and **the sender-tier re-price already happens
+  downstream for free** when the budget's funding is the sender's wallet. The second pass I designed is
+  unnecessary.
+- **`minTurnCost` must be priced at the `eligible` corner** — fixed costs plus the reasoning-floor and
+  minimum-output terms — which is what the client already computes and what the shipped Smart-Model minimum
+  computes. The doc's literal formula at §Math & Terms omits those terms and would **not** be sufficient.
+
+**The producer lives in `packages/shared` on the published money surface**, never re-composed in `apps/api` —
+ARCHITECTURE's one-estimator rule and the money barrel's own "if a consumer needs one of these, the producer
+is missing a function".
+
+**THE PROPERTY TO PIN IS A BICONDITIONAL, and it is what makes `minTurnCost` the right threshold rather than
+merely a smaller one:** the output ceiling is money-bounded by the payer's funding, so `headroom ≥ minTurnCost`
+⇒ a runnable ceiling exists ⇒ the hold priced against it is ≤ headroom ⇒ admission's group scope passes.
+Without that pin a future change to the ceiling solve silently re-creates the permanent-refusal class inside
+the band between `minTurnCost` and the hold.
+
+**FILES — my list was wrong and is replaced:** `apps/api/src/slices/chat/routes.ts` (hoist the read, price,
+pass), a **new shared producer** and its barrel entry in `packages/shared/src/affordability/`,
+`chat/domain/turn-context.ts`, `affordability/billing/funding-decision.ts` (**the comment AND the field
+rename** `turnEstimateNanoUsd` → `minTurnCostNanoUsd`), `affordability/billing/client-billing.ts` (header),
+`apps/web/src/hooks/billing/use-resolve-billing.ts` (header), `billing/domain/spendable.ts` (comment), tests.
+**Four wrong comments, not one.**
+
+**OUT OF SCOPE, recorded:** `use-budget-calculation.ts` composes the minimum inside `apps/web`. The moment the
+server needs the same quantity, that composition must move into the shared money layer — writing a second one
+in `apps/api` is the duplication CODE-RULES bans and **no linter would catch it.**
+
+**§NOTICES 5 IS REMOVED FROM F7 AND GIVEN ITS OWN TASK — founder-ruled 2026-07-29: "the disclosure should
+always be correct."** No server-side option can satisfy it, because the client no longer evaluates priority 1
+at all: it renders the **served** payer, which is estimate-blind by design. So F7 fixes who pays, and **F13**
+makes the disclosure true. Splitting them is not deferral — F13 reverses a deliberate race-driven decision and
+deserves its own design rather than riding inside a money fix. **F7 is UNBLOCKED.**
+
+**`BILLING.md` corrected 2026-07-29 under the same ruling** (both precision fixes, never weakenings): the
+Funding Decision Matrix now says **`minTurnCost`** in both places it said "estimate", **with the reason** — a
+full estimate's ceiling is bounded by the payer's own funding, so pricing one to choose the payer would need
+the answer first; and §Math & Terms' `minTurnCost` formula now names the **`eligible` corner** explicitly,
+including the fixed terms and the reasoning term its own definitions already imply, with the warning that
+dropping them yields a number that is smaller but **not sufficient**.
+
+### F13 — The payer-change disclosure is always correct
+
+**Design context.** Founder-ruled 2026-07-29: _"the disclosure should always be correct."_ §Notices 5 requires
+an affirmative pre-send disclosure when group headroom cannot cover the turn and a signed-in member falls
+through to personal funds — _"switching who pays is not a detail to discover from a balance later."_ **Today
+it cannot fire, and F7 makes that worse rather than better:** F7 makes the fall-through actually happen, so a
+member will be charged personally with no warning at all.
+
+**Why no server-side fix reaches it.** The client stopped evaluating priority 1 — it passes `0n` for a text
+turn, deliberately withholds the group dimension, and **replaces its own verdict with the served payer**. To
+decide pre-send that the payer is about to change, the client needs **two** numbers: the owner's headroom and
+the member's own spendable. **That is exactly what was collapsed to one**, deliberately, to kill a
+settle-then-release race — so this is a reversal to be designed, not a field to add back.
+
+**Acceptance criteria:**
+
+- The client can determine, before the send, that this turn will be charged to the **member** rather than the
+  owner, and says so — copy derived from a typed reason (§Notices 1), naming what it means rather than an
+  amount (§Notices 6).
+- **It applies the same shared `minTurnCost` rule the server applies** — one implementation, imported, never a
+  client re-derivation. If the client cannot reach that rule without a second funding authority, **stop and
+  report**: that would be re-creating what F3, F4 and E1 removed.
+- **The race that motivated the collapse must not return.** Establish what it was — a settle-then-release
+  window — and show why the new shape cannot reproduce it. **This is the criterion most likely to be skipped,
+  because the race is invisible in a green suite.**
+- Pinned three ways: the disclosure fires when the fall-through will happen; it does **not** fire when the
+  owner will pay; and it does not fire for a link guest, who never falls through.
+
+**Files:** `apps/web/src/hooks/billing/**`, `packages/shared/src/affordability/**`, the composer, possibly the
+served funding shape, tests.
+**Scoped checks:** `pnpm test:web`, `pnpm test:shared`, `pnpm test:api` if the wire shape moves.
+**Sensitive:** money — 2 independent auditors. **Ordering:** after F7, whose behaviour it discloses.
+
+### F14 — The payer freeze prices Smart Model and media turns too
+
+**Design context.** F7 landed the `minTurnCost` comparison for **text** turns and shipped the other two shapes
+as **typed exemptions** — declared, not silent, exactly as its brief required. Both are blocked on
+**ownership, not design**: Smart Model's balance-independent minimum needs a pool-candidate projection whose
+helpers are private to another slice's module and on no barrel (the fix is ~3 lines — one exported function
+and two barrel entries — in a file F7 does not own), and media's storage leg lives in D3's file.
+**Re-deriving either inside the route would be the second implementation this run has spent itself
+deleting**, which is why F7 correctly stopped.
+
+**Acceptance criteria:** both exemptions are removed and the comparison covers all three shapes · the Smart
+Model minimum comes from the **existing shipped** balance-independent producer, never a re-derivation · media
+is priced through its own deterministic per-unit path, not a per-token approximation · the typed exemption
+mechanism is **deleted**, not left with an empty set — a type that permits an exemption nobody uses is an
+invitation · pinned for each shape at the same boundary the text arm is pinned at.
+**ALSO F14's, carried on F7's auditor's recommendation:** the route supplies the classifier reserve into
+`minTurnCost` while the money core derives its own. **Both funnel through one primitive, so this is not a
+duplication defect** — but they can select different **engines** and different prompted lists, and **nothing
+pins that the route's figure is ≥ the core's for the same turn.** If the route's is ever smaller, an `auto`
+turn's minimum under-states the hold and **the permanent-refusal band reopens for that shape alone.** The pin
+is unreachable from `packages/shared`, so it belongs here — and F14 already opens the file and its barrel.
+
+**Files:** `apps/api/src/slices/chat/routes.ts`, `models/domain/smart-model-candidates.ts` and the models
+barrel, `models/domain/estimate-run.ts`, tests.
+**Scoped checks:** `pnpm test:api`, `pnpm test:shared`. **Sensitive:** money — 2 independent auditors.
+**Ordering:** after D3 and F7 are clean.
+
+### F15 — The cushion belongs inside the min, and one function answers "what can this user spend"
+
+**FOUNDER-RULED 2026-07-29.** Found by F7's auditor, pre-existing, in nobody's file list.
+
+**The defect.** F7 made the payer freeze compare a real `minTurnCost` against **group headroom** —
+`min(memberCapRemaining, conversationCapRemaining, ownerBalance)`. But once the payer is frozen, the turn's
+**ceiling is solved against the payer's wallet spendable**, which carries the paid **$0.50 cushion**. So the
+freeze consults one number and the solve consults another. **Worked, on the corrected fixture:** headroom
+10,000,000n ⇒ the solve funds against 510,000,000n ⇒ hold ≈ 60,561,164n ⇒ admission checks it against the
+member scope of 10,000,000n ⇒ **refused.** Without the cushion the same headroom yields 9,999,614n and passes.
+**A member clears the freeze and is refused anyway — the same class F7 closed, in a narrower band.**
+
+**THE RULING: the cushion applies to the OWNER'S BALANCE TERM INSIDE the min, not on top of the min.**
+
+`headroom = min(memberCapRemaining, conversationCapRemaining, ownerSpendable)`, where `ownerSpendable` is the
+owner's balance **plus the cushion on the paid tier** — which is what "spendable" already means everywhere
+else.
+
+**Why this is right, and why the orchestrator's first proposal (strip the cushion from group headroom) was
+wrong:** stripping it would make **the same wallet behave differently depending on who is sending** — an owner
+at a zero balance could fund their own turn on the cushion but not a member's, with the same money. The
+cushion belongs to the **wallet**, not to the transaction. Putting it inside the min keeps wallet behaviour
+identical regardless of sender, and leaves the cap as an **independent term the cushion never enters** — so
+**the cushion can never lift a member above the allocation the owner set**, by construction rather than by
+accident. Where it does bite is when the owner's own balance is the binding term: an owner may overdraw their
+own wallet by the cushion to fund a member, which is correct because it is their wallet.
+
+**THE SECOND HALF, WHICH IS EASY TO LOSE:** moving the cushion fixes the _number_. **The solve must also
+consult the min's OUTPUT rather than re-deriving from the payer's wallet.** If it keeps reading the wallet
+directly, the same disagreement recurs at a different magnitude. The invariant is that **the freeze and the
+solve consult one value**; which value it is, is the ruling above.
+
+**THE THIRD PART — and it closes something this run already found and never assigned.** F3 recorded that the
+cushion is resolved **two ways that genuinely disagree on the same input**: a shared tier-keyed helper
+(paid-only, free ⇒ 0) and a server-side **wallet-type-keyed** one that maps a purchased wallet to paid
+unconditionally ⇒ 500,000,000n. It was logged as "the dangerous kind of duplication" because it **had already
+corrupted an agent's reasoning** — it is why the orchestrator relayed a wrong premise about free-tier funding
+to the founder. **Founder-ruled: one code path.** One function answers "what is this user's spendable
+balance", cushion included on the paid tier, and every caller consults it — the min's owner term, the
+self-funded path, and the served figure.
+
+**Acceptance criteria:**
+
+- `ownerSpendable` inside the min comes from **the one spendable function**; the cushion is applied there and
+  nowhere else in this path.
+- **The ceiling is solved against the min's output.** Pinned by the worked case: a member with a 1¢ allocation
+  and a solvent owner is **admitted**, end to end through **real admission** rather than at the freeze alone.
+- **The cushion cannot lift a member above their allocation** — pinned directly, since this is the property
+  the design buys.
+- **An owner whose own balance is the binding term may overdraw it by the cushion** to fund a member — the
+  other half, pinned too, or the fix is indistinguishable from the orchestrator's rejected version.
+- **The two cushion implementations are collapsed to one**, with a sweep proving no second resolution
+  survives. **No cross-check test asserting they agree** — that is the banned form; delete one.
+- No self-funded turn's cushion behaviour moves.
+- `BILLING.md` §Group Funding 1 currently says the payer's tier drives "ratios, cushion, premium, modality".
+  **Surface a proposed correction** distinguishing pricing inputs from how far a cap may be exceeded; the
+  founder rules on the wording.
+
+**Files:** `apps/api/src/slices/chat/domain/{turn-definition,turn-context}.ts`,
+`apps/api/src/slices/billing/domain/spendable.ts`, `packages/shared/src/affordability/**`, tests.
+**Scoped checks:** `pnpm test:api`, `pnpm test:shared`. **Sensitive:** money — 2 independent auditors.
+**Ordering:** after F7.
+
+### F8 — `usage_records` records the payer, unambiguously (founder-ruled 2026-07-29, option A)
+
+**Design context.** The column records the **initiator** — except on a guest turn, where the initiator has no
+`users` row and the **owner** is written instead. **A column whose meaning depends on the sender's session
+kind cannot be aggregated correctly by anyone:** a "what did I spend" query today sums a mix of turns the user
+paid for and turns they merely sent. `ARCHITECTURE.md` §Data model and `BILLING.md` §Group Funding 3 both say
+the row records payer **and** sender; the sender is already stored explicitly in `senderUserId` /
+`senderLinkId`, so by elimination the remaining role is the payer. **Both docs become true; neither changes.**
+
+**The duplication question was asked and answered.** The payer's wallet is on the row and a wallet has one
+owner, so a payer user id **is** derivable — it is a second copy in the sense our rules police. Option B
+(drop the payer user; the payer is the wallet) is the cleaner architecture and was **not** chosen: the founder
+ruled A, which keeps payer-scoped aggregates a single-table scan and keeps payer identity on the row
+independently of whether wallets survive deletion, given financial rows are retained and pseudonymized rather
+than deleted.
+
+**Acceptance criteria:**
+
+- The column names the payer and is populated with the payer on **every** write path — member turns,
+  owner-funded member turns, and guest turns alike. One meaning, no session-kind dependence.
+- A migration ships with the schema change (CI fails on drift), and it **backfills historical rows from the
+  row's own wallet**, which is exact rather than approximate: the payer is `wallets.userId` for the row's
+  `walletId`. Rows whose wallet is already null stay null.
+- **Every existing consumer is enumerated and each one's intended role is stated.** A consumer that wants
+  _activity_ attribution is repointed to `senderUserId` / `senderLinkId`; a consumer that wants _money_ keeps
+  the payer column. **Any consumer whose intent is genuinely ambiguous is reported, not guessed** — this task
+  changes what existing endpoints return, and picking silently would ship a user-visible change nobody ruled.
+- `SET NULL` pseudonymization on deletion is preserved for the renamed column.
+- Owner-funded member turns are pinned two-sidedly: the payer column names the **owner**, the sender columns
+  name the **member**, and both are independently queryable (§Group Funding 3).
+
+**Files:** `packages/db/src/schema/usage-records.ts` + the generated migration,
+`apps/api/src/slices/billing/domain/charge.ts`, every enumerated consumer, tests.
+**Scoped checks:** `pnpm test:db`, `pnpm test:api`, plus migration-drift.
+**Sensitive:** money **and** schema — **2 independent auditors**.
+
 ### The long-term boundary decision — analyst material, awaiting the founder
 
 **MY RECOMMENDATION WAS REFUTED, AND THE REFUTATION IS THE MOST USEFUL THING HERE.** I proposed relocating the price
@@ -3230,6 +4210,38 @@ steps and must be taken, not aggregated.
 
 ## Lane E — Client surfaces (depends on B5, B6, B7, B8)
 
+**AMENDED 2026-07-29 after cycle 1 — the criterion spanned TWO mechanisms and I named a DEAD ONE as the wire.**
+
+**My file list was wrong.** It named `packages/shared/src/schemas/api/sse-events.ts` as the wire the effort
+crosses. That module is **dead code**: a binary-inclusive sweep of all eighteen of its exported symbols finds
+zero consumers outside the file and its own test, and its doc comment cites a source file that no longer
+exists. Nobody could have satisfied my criterion through it. **It is also a deletion candidate** — recorded
+for whoever owns cleanup, not for D2.
+
+**The criterion is narrowed to the history read, which is what D2 delivered.** The effort reaches the client
+by two independent routes, and only one is D2's: the **history read** (the badge on a message the client
+fetches) and the **live finish frame** (the badge appearing as the turn completes). The live route is stamped
+in `workflows/nodes/model-call-execution.ts` — **D3's tree, out of D2's bounds** — so D2 could not have taken
+it without reaching into another live task.
+
+**The consequence is user-visible and must not be lost:** with only the history half, the effort badge appears
+on reload but **not live**. That is D4.
+
+### D4 — The effort badge appears live, not only on reload
+
+**Design context.** D1 persists the resolved effort; D2 surfaces it on the history read. **The live route is
+separate** — the finish frame carries provider metadata stamped in the model-call execution node — so a user
+watching their own turn complete sees no badge until they reload. D2 correctly declined to reach into another
+task's tree and reported it instead.
+
+**Acceptance criteria:** the resolved effort rides the finish frame and the badge renders **without a reload**
+· `null` and `off` stay distinguishable on this route exactly as they are on the history route — **the same
+collapse D1 exists to prevent, arriving by a second path** · one source: the live value and the persisted
+value are the same resolution, not two derivations that agree · pinned live and on reload for the same turn.
+**Files:** `apps/api/src/slices/workflows/nodes/model-call-execution.ts`, `packages/shared/src/inference.ts`,
+the client's stream handling, tests. **Scoped checks:** `pnpm test:api`, `pnpm test:web`.
+**Sensitive:** no — 1 auditor. **Ordering:** after D3 releases the workflows tree.
+
 ### E1 — Every surface renders the produced sets (depends on B5, B6, B8, F3)
 
 **RULED 2026-07-28 — THE SEND GATE CONSUMES `admissible` ONLY FOR TEXT.** E1's surface auditor found by execution
@@ -3273,7 +4285,7 @@ violation sitting in a file E1 was not granted. All four are added to E1's Files
 checked rather than following the wrong pointer, and established `NOTICE_COPY` is a total
 `Record<NoticeReason, …>` with `REFUSAL_CODES ⊂ NOTICE_REASONS`, so no reason can lack copy.
 
-### E1 — Every surface renders the produced sets
+### E1 — amendments added during execution
 
 **Added item — a THIRD phrasing of two conditions B7 single-homed still ships in the picker.**
 `model-selector/model-list-item.tsx` renders "Top up … to unlock" and "Sign up … to access" as its premium-locked
@@ -3412,6 +4424,15 @@ role, mode, privilege and streaming state with no money check.
 **Files:** `apps/web/src/stores/message-queue.ts`, `apps/web/src/hooks/chat/use-authenticated-chat.ts`, `apps/web/src/lib/message-actions.ts`, `apps/web/src/components/chat/input/prompt-input.tsx`, `apps/web/src/components/chat/message/message-item.tsx`, tests.
 **Scoped checks:** `pnpm test:web`.
 **Sensitive:** no.
+
+**SCOPE WIDENED 2026-07-29 — E2 owns the CLIENT half of the regenerate ruling, and without it the ruling is
+invisible.** F5 exempted regenerate from the premium gate server-side and then reported the gap itself: the
+regenerate affordance carries only a message id, so the verdict the button reads is the composer's. **If the
+client still applies the premium filter to a regenerate, a free-tier payer can never reach the exemption and
+the server change is API-only.** E2's clause — every paid action reads the same verdict — is exactly where
+this belongs, and it now reads: the same verdict, **minus entitlement for a regenerate, money in full**.
+Pinned two-sidedly on the client the way F5 pinned it on the server: the regenerate control is enabled for a
+premium model a free-tier payer can afford, and disabled when they cannot afford it.
 
 ### E3 — Freshness
 
@@ -3745,6 +4766,39 @@ missed all three.** That was an orchestrator bookkeeping error, not a scope chan
 **Scoped checks:** `pnpm test:shared`, `pnpm test:web`; `pnpm lint:duplication` on the changed paths.
 **Sensitive:** no.
 
+**G2 ALSO OWNS A CROSS-BOUNDARY MIRROR D2's AUDITOR FOUND (added 2026-07-29).** `apps/web/src/hooks/chat/chat.ts`
+hand-declares an interface mirroring the server's history view schema — **a cross-boundary sync contract, which
+`CODE-RULES` §One Implementation, Shared bans by name.** It is entirely pre-existing: several fields were
+already mirrored, and D2 added one line in the established shape rather than introducing the pattern.
+Collapsing it onto the shared schema is an architecture decision D2 was not scoped to make. **The test is the
+usual one: if the two drift, does something break? They must agree field-for-field, so yes.**
+
+**G2 ALSO OWNS TWO ITEMS F10 FOUND AND CORRECTLY DID NOT TOUCH (added 2026-07-29).**
+
+- **A fourth premium authority exists and is DEAD.** `useTierInfo()` derives premium access from the
+  **balance** — i.e. the sender's — and its only consumer never destructures it. F10's third-surface
+  stop-trigger did not fire because it is not a live surface, but it is a fourth answer to a question that
+  should have exactly one, sitting where a future reader will find and use it. **Delete it, and confirm by
+  sweep that nothing consumes it.**
+- **`'new'` as the pre-creation route id now appears in a SIXTH file with no shared constant.** That is a
+  mirrored literal — the shape `CODE-RULES` §One Implementation, Shared bans by name — and collapsing it
+  touches five files F10 does not own. **One constant, every site importing it.**
+
+**G2 ALSO OWNS THE RESIDUE F4 COULD NOT DELETE (added 2026-07-29).** F4 removed the dead `group` parameter
+from `ClientBillingInput` as its criteria required, and then found a second copy of the same shape:
+`payerSizingTier` now has **zero production callers**, and `ClientFundingContext.group` survives only to feed
+it. That is the identical "live invitation" the deleted parameter was — a client-side path to a second funding
+authority, kept alive by one unused consumer. F4 correctly declined to widen its own money-critical change to
+chase it. **G2 deletes both, and the test is the one F4's criteria used: if it would let a caller reassemble a
+funding decision on the client, it goes.**
+
+**SCOPE WIDENED 2026-07-29 — G2 now owns all 15 walled `apps/web` specifier lines, not 3.** They were the
+relocation's stated precondition and were left **unowned** when E1 closed clean without them (E1's criteria
+were about rendering the produced sets, not specifiers). G2 already owned `use-media-cost-estimate.ts`;
+it now owns the other five files too — `hooks/billing/use-budget-calculation.{ts,test.ts}`,
+`hooks/billing/use-prompt-budget.{ts,test.ts}` and `hooks/chat/use-reasoning-effort.ts`. **G2 runs after F4,
+which edits four of those files**, so G2 closes the specifiers against the tree as F4 leaves it.
+
 ### G3 — E2E specs, authored not run
 
 **Objective:** the flows this run changes are covered at the level that would catch them, delivered
@@ -3793,6 +4847,640 @@ run:
 **Sensitive:** money — 2 independent auditors.
 
 ---
+
+## Tasks added 2026-07-29 — late-surfaced work, placed in their lanes
+
+**Why they exist as a batch:** the founder asked whether any work lacked a task. Fourteen items did. Six of
+them were **my omission** — I said I would write the boundary decisions up as tasks while F5 ran and the
+link-guest work displaced it. The rest surfaced from audits. The bar is explicit: **by the end of this run, no
+work is without a task.**
+
+### G5 — The money internals move to `@hushbox/pricing`
+
+**Design context.** Founder-approved 2026-07-29. `BILLING.md` §What is enforced claims deep imports do not
+resolve; today they do, from both apps. The export map gates **paths, not importers**, so only the package
+graph can enforce it: `apps/api` declares the new package, `apps/web` cannot, and `@hushbox/shared` re-exports
+the public surface. Rejected alternatives are recorded in §The long-term boundary decision — relocating price
+**owners** was disqualified four independent ways.
+
+**The line is DISCOVERED, not chosen. FIRST STEP, before any file moves: measure the internals-only dependency
+closure.** The 2026-07-25 analysis measured a **different cut** — the whole money layer, which dragged in the
+model descriptor and the modality enum, "i.e. it is shared-core renamed". The internals-only closure is
+**unmeasured**. Move the largest set whose closure stays inside money: clean throughout ⇒ move everything and
+leave shared a re-export file; drags shared-core in at some point ⇒ **that point is the boundary**.
+
+**Acceptance criteria:** the closure measured and reported before any move · the package created and declared
+by `apps/api` and **not** by `apps/web` · `packages/shared`'s export map collapses to `.` + `./affordability`,
+making "deep imports do not resolve" **true** · two pins without prose — an assertion the package is
+unresolvable from `apps/web`, and a lint rule banning `../../packages/` relative escapes, since that route
+exists in the repo today and defeats any export map · no behaviour change, provable by diff.
+**Precondition:** G2's 15 walled `apps/web` specifier lines closed first, or they become hard build errors.
+**Files:** `packages/shared/**`, the new package, `apps/api/**` specifier rewrites (59 lines across ~20 files).
+**Scoped checks:** every package suite; repo-wide `pnpm typecheck`; `pnpm lint:unused`.
+**Sensitive:** money — 2 independent auditors. **Ordering:** after G2.
+
+### G6 — Retire the intra-`apps/api` owner/consumer rule
+
+**Design context.** Founder-approved 2026-07-29, **reversing the 2026-07-28 ruling**. With the package graph
+enforcing the boundary the doctrine actually names, the intra-api rule guards what the graph already does.
+Deletes the arch rule, `PRICE_OWNERS`, `PENDING_CONSUMER_CLOSURES`, the cap, the ratchet **and the laundering
+hole** — with no importer allowlist there is nothing to launder past.
+
+**A consequence nobody had named, and it must land in the same change:** two consumer-only subpaths become
+deletable when six `apps/api/src/slices/workflows/**` files move to `chooseFrom`/`wireFor`. **If G6 lands
+without them, the one-producer intent is silently dropped** — that is precisely the tracking the retired rule
+was doing.
+**Files:** `packages/config/arch/**`, the six `workflows/**` files, tests.
+**Scoped checks:** `pnpm arch:check`, `pnpm test:api`, `turbo typecheck lint --filter=@hushbox/config`.
+**Sensitive:** no — 1 auditor. **Ordering:** after G5.
+
+### G7 — One storage-fee seam
+
+**Design context.** `BILLING.md` names **one** storage-money function; the code has **three** scattered
+computations. Reclassified from a doc correction to implementation work under the founder's standing rule —
+the doc is the design, the code moves to it. Surfaced by B8's auditor, which found a third the implementer's
+own enumeration had missed.
+**Acceptance criteria:** one seam, all three call sites through it, no second computation of storage money
+anywhere; amounts provably unchanged at each site (this is a collapse, not a re-pricing — **any moved amount
+is a stop-and-report**).
+**Files:** `packages/shared/src/affordability/**`, `apps/api/**` call sites, tests.
+**Scoped checks:** `pnpm test:shared`, `pnpm test:api`. **Sensitive:** money — 2 independent auditors.
+
+### C4 — `chooseFrom` takes a refined classifier answer, not a bare `string`
+
+**Design context.** The no-bare-`string` rule is the design; the code takes one. Reclassified to implementation
+work by the founder. The brander stays exempt — you cannot brand a string without a function that takes one.
+**Acceptance criteria:** a refined type whose only constructor validates against the offered set, so an answer
+that was never offered is unrepresentable rather than rejected at runtime; every caller converted; the brander's
+exemption documented at its definition.
+**Files:** `packages/shared/src/affordability/**`, `apps/api/src/slices/**` callers, tests.
+**Scoped checks:** `pnpm test:shared`, `pnpm test:api`. **Sensitive:** no — 1 auditor.
+
+### D3 — The consumed set is computed once, at compile time
+
+**Design context.** Today the estimator walks the **definition** (driving the storage reserve) and the
+interpreter walks the **compiled** graph (driving what settlement persists). They cannot disagree today —
+they differ only on container ids, which are never priced — but **nothing gates that, and divergence
+under-reserves storage.** Founder-ruled: stop asking twice. The compiled graph carries the consumed set,
+computed at the single point where a definition becomes a compiled form, and both consumers read that field.
+**One derivation, two readers** — the same shape as C3's derived recognition. **A cross-check test proving the
+two walks agree is banned by Global Constraint 5**; removing the class is the point.
+**Acceptance criteria:** one derivation site; both consumers read the field; no walk of the other
+representation survives for this purpose; a pin that the storage reserve and the persisted set come from the
+same value.
+**Files:** `apps/api/src/slices/workflows/engine/**`, `apps/api/src/slices/models/domain/estimate-run.ts`, tests.
+**Scoped checks:** `pnpm test:api`. **Sensitive:** money — 2 independent auditors.
+
+**AMENDED 2026-07-29 after D3 returned NEEDS_CONTEXT without editing a file. Three corrections, two of them
+to my own §Design context.**
+
+**MY STATED DIRECTION WAS WRONG.** I wrote that divergence between the two walks **under-reserves** storage.
+It **over**-reserves: `branch`, `loop` and `subWorkflow` consume through an **edge only** — no `in` field on
+the definition, but a required `in` port after compile — so the definition-side walk cannot see them and
+counts more as consumed-and-therefore-not-persisted than the compiled walk does. **My stop-trigger 1 was
+therefore built on a false premise** (it told the implementer to stop and report a live under-reservation),
+and the implementer was right not to stop on it. No production code builds a branch or loop today, so the
+divergence is unreachable as well as harmless.
+
+**MY FILES LIST WAS WRONG, and it is what blocked the task.** The single derivation point is in
+`workflows/compile/compile-definition.ts` — **no placement inside `engine/**`reaches the chat build path** —
+and I granted`engine/**`only. Corrected: D3 owns`workflows/compile/compile-definition.ts`,
+`workflows/engine/**`except`settlement.ts`, `models/domain/estimate-run.ts`**and its fixtures**, and`chat/domain/turn-definition.ts`.
+
+**A THIRD READER EXISTS, and it cannot be left behind.** `fitAnswerCapToCeiling` builds its own estimate run
+over a **bare, storage-stamped definition** and holds no compiled form at all. Changing the estimator's
+signature breaks it — but **leaving it on the old shape is worse**, because its whole contract is to price
+through the one estimator admission uses, so it would newly disagree with admission. It lives in
+`chat/domain/turn-definition.ts`, which is **C5's territory while C5 runs**, so **D3 is sequenced behind C5**
+and takes that file as C5 leaves it.
+
+**RULED — the re-pricing is accepted, and it is an improvement rather than a concession.** Collapsing onto the
+compiled walk moves **no** amount on any definition production builds, and **lowers** the reserve on
+branch/loop-fed definitions from over-reserve to exact. `reserve ⊇ bill` still holds — exact still covers the
+bill — and an over-reserve is a real cost to a user whose funds are held against work that will not happen.
+**Required with it:** a pin that the exact reserve still covers the bill on a branch/loop definition,
+constructed in a test even though production builds none, so the improvement is proven rather than assumed.
+
+**The fixture rewrite is IN SCOPE and budgeted.** Every `estimate-run` fixture uses empty edges — i.e.
+non-compilable definitions — and C3's storage pin expresses consumption through a node's ports with no edge,
+so an edge-based derivation flips it. That pin must be re-expressed against a compilable definition, **not
+deleted**: it is a real C3 property and the new shape must still carry it.
+
+**Also assigned:** `packages/shared/src/workflow.ts:147` ships the comment "(D3, dimension-composed)" — a plan
+identifier in shipped code, Global Constraint 8, sibling to the ones already queued for the close-phase batch.
+It joins that batch.
+
+### B10 — `AdmissionRefusalReason` splits by scope, and the cost-circuit trip gets its own copy
+
+**Design context.** `INSUFFICIENT_ADMISSION` has three producers, and one is unlike the others: a **cost-circuit
+trip** is not a refusal to start — the run was accepted, work happened, and the platform **absorbed** the cost.
+Neither "your balance can't cover this" nor "wait for the run to finish" is true, the user did nothing wrong,
+and they are not billed. **Founder-ruled: a generic "something went wrong", implying neither fault nor a
+payable amount.** `send_cannot_start` currently has no producer; it gets one from the split.
+**Acceptance criteria:** the reason type distinguishes the three producers; each has exactly one wording
+(§Notices 2); the cost-circuit arm names no amount and offers no payment action (§Notices 6, §Notices 3 — a
+false path is forbidden); `send_cannot_start` is produced where the split says it is.
+**Files:** `packages/shared/src/affordability/**` (reasons + copy), `apps/api/src/slices/workflows/engine/**`,
+`apps/web/**` consumers, tests.
+**Scoped checks:** `pnpm test:shared`, `pnpm test:api`, `pnpm test:web`. **Sensitive:** no — 1 auditor.
+
+### G8 — Fix the standing `template-html` failure
+
+**Design context.** Founder-ruled 2026-07-29: fix it. It is pre-existing and unrelated to this run's work, but
+**it blocks the `apps/api` coverage gate for every task in the run** — vitest suppresses the coverage report
+when any test fails, so a red suite yields no table and the exit code says nothing about coverage. Every task
+since has worked around it with scoped runs that give only a lower bound.
+**Acceptance criteria:** the failing assertion is fixed at its cause, not by loosening the assertion or
+deleting the case; `pnpm test:api` produces a coverage table again; the per-file gate is then re-established as
+a usable signal for the rest of the run.
+**Files:** the notifications template test and whatever it exercises. **Scoped checks:** `pnpm test:api`.
+**Sensitive:** no — 1 auditor. **Ordering:** early — it unblocks a gate everything else depends on.
+
+### F11 — `distinctUsageModels` stays payer-scoped, with the reason recorded
+
+**Design context.** F8's auditors flagged this as the one genuinely arguable reader of the payer column, and
+reported it rather than picking. **Orchestrator ruling: payer-scoped.** It sits in a panel whose other tiles
+share one row set with a money numerator and average-cost-per-message as its quotient. Sender-scoping this one
+tile would show a member **models they did not pay for**, inflating the count against the spend beside it —
+two numbers on one screen disagreeing. Consistency on a billing screen beats semantic purity for one tile.
+**Acceptance criteria:** the reader is payer-scoped and **the reason is recorded at the call site**, so the next
+reader does not "fix" it; a pin that an owner-funded member's count reflects what they paid for.
+**Files:** the usage read and its tests. **Scoped checks:** `pnpm test:api`. **Sensitive:** no — 1 auditor.
+
+### F12 — A trial's remaining message count is served by a public route
+
+**Design context.** Founder-ruled 2026-07-29: a new public route with all normal protections and rate limiting.
+F3 withdrew this criterion as unservable and **the criterion was mine, written before I checked the auth
+model** — `/billing/spendable` is billing-token-classed and the route class refuses trial-session principals on
+**every** class, deliberately. The counters are chat-owned, keyed on the trial token plus a hashed IP, and
+increment-only. So the read belongs with its data, not with billing.
+**Acceptance criteria:** a public chat-side route serving the caller's **own** remaining count and nothing else
+· all normal protections — the same in-handler credential gate pattern its siblings use, and **rate limiting
+that applies before any DB work** (G9's rule) · no other principal's count is reachable, and the route is not
+an oracle for whether a given token exists · the composer reads one number from one source.
+**Files:** `apps/api/src/slices/chat/**`, `packages/shared/src/schemas/api/**`, `apps/web/**`, tests.
+**Scoped checks:** `pnpm test:api`, `pnpm test:shared`, `pnpm test:web`. **Sensitive:** yes — 3-lens panel.
+
+### G9 — Rate limiting applies before any action, everywhere
+
+**Design context.** Founder ruling 2026-07-29: _"all rate limiting should apply before any and all actions."_
+The guest send violates it today — its limiter is keyed on the **resolved** `linkId`, so resolving the
+credential **is** a DB read, and the 401 path returns before the limiter is ever reached. An attacker sending
+garbage credentials never gets limited and costs one indexed lookup per request. It is not an oversight but a
+consequence of choosing a precise key: per-link limiting is better for real users than per-IP, yet the
+identifier only exists after the lookup.
+**The design, approved: two limiters, not one.** An IP-keyed throttle **before** resolution bounding
+unauthenticated floods, and the existing per-link limiter after it bounding authenticated abuse. That is
+already the shape the public share read uses, so it is a repo pattern rather than a new mechanism.
+**Acceptance criteria:** **a sweep first** — every route that resolves a credential with a DB read before
+limiting is enumerated, including the guest funding read and the WS upgrade, and each is either fixed or
+recorded with a reason · the pre-resolution limiter is IP-keyed and fires before any query · the post-resolution
+limiter is unchanged in behaviour · limiter class follows `CODE-RULES` §Security (an abuse throttle here, not
+attempt-reservation — the credential is a key, not a guessable secret) · pinned by a test that a request with
+an **invalid** credential is limited without reaching a query.
+**Files:** `apps/api/src/app.ts`, the affected route files, the limiter registry, tests.
+**Scoped checks:** `pnpm test:api`. **Sensitive:** yes (auth-adjacent) — 3-lens panel.
+
+### E5 — A failed funding read says so instead of waiting silently
+
+**Design context.** Raised by F4 as a consequence of its own fix: nothing is fabricated when the funding read
+fails, which is correct — but the composer then sits in the neutral pending state **indefinitely**, and no
+"could not read your funding" copy exists. A silent wait is not a truthful state; it is an unstated one.
+**ALSO E5's, added 2026-07-29 — the THIRD instance of the keying, which is the threshold I set.** F4's fixer
+was told that a third instance would mean the shape needs one shared helper rather than three parallel
+corrections. It found one: a gate keyed on a _pending_ flag rather than on absence, reaching only an
+informational notice — blast radius checked rather than assumed, gating no send and selecting no funding
+source. **Ruled: one shared helper for all three keyings.** Absence, not pending, is the question every one of
+them is asking.
+
+**Acceptance criteria:** a failed read renders a typed error state with copy derived from a reason
+(§Notices 1), naming an action the user can take (§Notices 3 — retry is an action, waiting forever is not) ·
+the send stays blocked while funding is unknown · nothing is fabricated and no amount is shown · pinned for
+both a guest and an authenticated caller.
+**Files:** `apps/web/src/hooks/billing/**`, `packages/shared/src/error-codes.ts`, the composer, tests.
+**Scoped checks:** `pnpm test:web`, `pnpm test:shared`. **Sensitive:** no — 1 auditor. **Ordering:** after F4.
+
+**G3 ALSO OWNS AN E2E COMMENT AND ALLOWLIST YOUR OWN COMMIT FALSIFIED (added 2026-07-29).**
+`e2e/admin/newsletter.spec.ts` states that the email base template "deliberately links its display font from
+fonts.googleapis.com (mail clients fetch it)" and **sanctions that host in the test's external-network
+allowlist, twice.** Founder commit `a0a0f4c6` removed that link and G8 proved the removal must stand — the
+remote stylesheet leaked the recipient's IP and an open-signal at render. **So the comment now reads as a
+design rationale a future reader could act on by re-adding the very tag G8 just proved should stay gone**, and
+the allowlist silently permits an edge the preview no longer requests. Pre-existing and not G8's; found only
+because G8's report asserted a repo-wide negative that its auditor re-ran and falsified.
+**Fix:** correct the comment to what is true and **narrow the allowlist**, since a permission nothing needs is
+a permission nothing guards.
+
+### G10 — Re-examine the thirteen tasks cleaned before the coverage traps were known
+
+**Design context.** Thirteen tasks closed before three separate coverage lies were understood: stacked
+`--coverage.include` does **not** accumulate (a false green), missing driving suites produce a false red, and a
+red suite suppresses the coverage table entirely so the gate's exit code says nothing. The founder deferred
+this; it is now a task so it is a decision rather than an omission.
+**Acceptance criteria:** each of the thirteen re-measured with a scope that carries its files' real exercisers,
+after G8 restores the gate; every shortfall listed with its file and figure; **no test written to raise a
+number** — a genuine shortfall becomes its own task with the behaviour it should cover named.
+**Scoped checks:** per package. **Sensitive:** no — 1 auditor. **Ordering:** after G8; last in the run.
+
+### C5 — A trial turn on `auto` is classified, not silently degraded
+
+**Design context.** Founder-approved 2026-07-29 after measurement. **The money question was answered
+decisively: classifier + answer at the cheapest reachable model is 847,780 nano-USD against a 10,000,000
+ceiling — 11.8× under, with 91.5% of the cap unused.** The classifier alone is 5.06% of the ceiling, and
+catalog admission's price floor bounds it structurally at ≥471,040 nano whatever the catalog does. **The
+hypothesised defect — a ceiling priced against the answer alone while the classifier is billed — was
+REFUTED:** every trial path that runs a classifier prices it in.
+
+**The real defect is the opposite one.** A trial user cannot reach `auto` at all: `auto` is the client's
+**persisted default**, the menu offers it unconditionally "for every tier including trial", the trial page
+sends it — and the server accepts it and compiles the turn **reasoning-free** whenever there are ≥2 real
+choices. That is a **silent static fallback**, which `BILLING.md` §Reasoning Effort 5 forbids **by name**, on a
+path §Trial Usage names explicitly. The doc is right and the code is wrong.
+
+**Acceptance criteria:**
+
+- The trial pinned+auto turn routes through the **existing** paid-path compiler. **No new pricing logic** —
+  the paid path already resolves `auto` by classifier and the canonical estimator already prices the
+  classifier reserve, so the fitted cap covers classifier + answer by construction.
+- **The money test is written FIRST and must be red before the classifier is wired:** a trial send at a model
+  priced so the answer fits the ceiling but answer + classifier reserve does not is **refused**. Wiring the
+  classifier before this pin exists would ship the over-spend this task was sent to prevent.
+- The reasoning-free fallback is **deleted**, not bypassed. Where no classifier can be built, the send fails
+  with a typed error (§Effort 5) — never a static pick.
+- **The hazard, verified and handed over:** the paid compiler hardcodes the chat storage hooks, so reusing it
+  as-is would stamp storage onto a turn that **never persists** — the class B5 closed. The hooks become a
+  parameter.
+- Accepted cost: ~0.05¢ absorbed per trial turn, already bounded by the daily trial cap.
+  **CORRECTED 2026-07-29 — the "1–3 of ~190 models" figure I relayed to the founder is NOT a catalog
+  property.** An auditor derived the actual band: the new refusal fires only when the classifier reserve
+  exceeds the slack the pre-existing model gate left, which needs both a low output rate and a prompt whose
+  own input cost already sits within the reserve of the ceiling. **For ordinary prompts the newly-refused set
+  is EMPTY; it grows with very long resent histories.** So it is a per-basis measurement, not an invariant,
+  and the direction is conservative. Recorded before anyone treats the number as a catalog fact.
+
+**CRITERION NARROWED 2026-07-29 to what it can honestly mean.** "The reasoning-free fallback is deleted" holds
+wherever a real choice exists **and is affordable**. An auditor found one arm still reaching a reasoning-free
+trial `auto` turn — a model whose ladder has ≥2 rungs, **none affordable at the fitted cap**, so the only
+affordable choice is `off`. **Whether that is a banned static fallback or a permitted deterministic
+single-choice pick is C6's question**, asked once for both paths. C5's obligation is narrower and absolute:
+**pin that arm** with a fixture whose fitted cap sits between the minimum-answer floor and the lowest rung's
+budget, so the behaviour cannot change silently while its correctness is being ruled.
+
+**Files:** `apps/api/src/slices/chat/domain/{turn-definition,smart-model-turn}.ts`, `chat/routes.ts` (trial
+arm), tests. **Scoped checks:** `pnpm test:api`. **Sensitive:** money — 2 independent auditors.
+
+### E6 — Smart Model with `auto` is reachable from the client
+
+**Design context.** The server builds and correctly prices the Smart-Model classifier path, including the
+model list in the classifier prompt; **the client withholds the effort selection for that model id**, so the
+path is unreachable except by hand-crafted API call. Recorded in the plan since the effort work and owned by
+nobody. H1's end-to-end proof depends on it.
+**Acceptance criteria:** the client sends the effort selection for the Smart Model like any other model; a
+Smart-Model turn on `auto` classifies both model and effort; pinned end to end.
+**Files:** `apps/web/src/hooks/chat/use-reasoning-effort.ts` and its callers, tests.
+**Scoped checks:** `pnpm test:web`. **Sensitive:** no — 1 auditor. **Ordering:** after C5.
+
+### G11 — The trial ceiling and its output-token figure stop being mirrored constants
+
+**Design context.** Two hand-written literals restate values computed elsewhere, which `CODE-RULES`
+§One Implementation, Shared bans by name — "a mirrored constant" is the smell, not the solution. The 1¢ trial
+ceiling exists both as a computed constant and as a literal in the server's trial gate, so **changing the cap
+in cents silently desynchronises client gating from server gating**. The trial's affordability output-token
+figure likewise restates a multiplier times the minimum-output floor, and the two must agree for the
+model-level and send-level trial legs to stay coherent.
+**Acceptance criteria:** each value has exactly one definition and every consumer imports it; a change to the
+source constant provably moves both legs; no cross-check test is added (that would pin the agreement rather
+than remove the drift — Global Constraint 5).
+**Files:** `apps/api/src/slices/models/domain/trial-eligibility.ts`, `packages/shared/src/affordability/**`,
+tests. **Scoped checks:** `pnpm test:api`, `pnpm test:shared`. **Sensitive:** money — 2 independent auditors.
+
+### G12 — Source files stop being invisible to the repo's own grep
+
+**Design context.** Two source files contain a **raw NUL byte** in a string literal, which makes `ugrep` treat
+them as binary and skip them with no match, no warning and exit 0 — see §Known Breakage. One of them is the
+money layer's single `apps/web` adapter hook, so **every mandated vocabulary sweep in this run silently
+excluded the file most likely to contain what it sought.** The tooling lies quietly, which is the worst way
+for tooling to lie.
+**Acceptance criteria:** both files express the NUL through an escape (`\u0000`) rather than a literal byte,
+so they are text to every tool · behaviour provably identical — the separator is the same character · a check
+that fails if a tracked source file gains a raw NUL again, so this cannot silently return.
+**Files:** `apps/web/src/hooks/billing/use-turn-options.ts`, `apps/web/src/lib/conversation-socket-registry.ts`,
+plus wherever the guard lives. **Scoped checks:** `pnpm test:web`. **Sensitive:** no — 1 auditor.
+**Ordering:** early — it makes every later sweep trustworthy.
+
+### G13 — Close the `platform/dev` branch-coverage shortfall the restored gate exposed
+
+**Design context.** G8 restored the `apps/api` coverage gate, and **its first green run immediately caught a
+live shortfall**: `src/platform/dev/routes.ts` is at 94.11% branch against a 95% floor. The file itself is
+unmodified; its integration test is being edited by a concurrent workstream, and F8's payer rename also reached
+several `platform/dev` consumers. **So the first job is attribution, not coverage.**
+
+**Acceptance criteria:** the shortfall is **attributed** before it is closed — this run's doing, another
+workstream's, or pre-existing and merely newly visible — with the evidence stated · if it is this run's, the
+uncovered branches are covered by a test that names the behaviour it exercises · **no test is written merely to
+raise a number**; if the uncovered branches are unreachable, that is the finding and the code should lose them
+rather than gain a test · the gate passes at the file level afterwards.
+**Files:** `apps/api/src/platform/dev/**`, tests. **Scoped checks:** `pnpm test:api` (serialised — one api
+suite at a time). **Sensitive:** no — 1 auditor.
+
+**RULED 2026-07-29 on D3's deviation — ACCEPTED, and my criterion's wording was the weaker design.** I wrote
+that both consumers must **read a field on the compiled form**. The estimator instead **calls the one
+derivation**, because its slice cannot import the workflows slice (a real barrel cycle — workflows imports the
+models barrel at runtime in three files) and because §D3's own amendment already requires the estimator to keep
+pricing **bare, storage-stamped definitions**, which forecloses reading a compiled field at all.
+
+**The shipped form is stronger than the one I specified, and the reason generalises:** a field can be handed to
+the estimator alongside a _different_ definition than the one it was derived from — so "read the field" would
+have **created** a drift mode that "call the function" structurally cannot have. Forcing it would also have
+required a second parameter across ~22 call sites in files this task does not own. **The criterion's goal was
+no-possible-disagreement; the field was one route to it and turns out to be the worse route.**
+
+### C7 — The classifier slot actually classifies
+
+**Design context — this is larger than the task that found it, and it was found by an auditor attributing OUT
+of scope rather than charging it to C5.** The lone `smartModel` slot compiles declaring `classify: { model:
+false, effort: true }`, and the estimator **holds the classifier reserve for it** — but **no classifier
+generation can occur for a slot-shaped graph.** The only producer of the decision fan-in is the multi-model
+classifying graph; the slot performs no classification of its own. With no envelope on the port the decided
+effort is `undefined`, and **the answer runs with no reasoning wire at all.**
+
+**So today an `auto` turn reserves roughly half a million nano for a call that cannot happen, and answers at
+the provider default.** It is **money-safe** — a strict over-reserve, `reserve ⊇ bill` intact — and it is
+**not** trial-specific: the paid pinned+auto and Smart-Model arms have the same hole. **The run has been
+building on "auto is classifier-driven" while the wire that would make it so does not exist.** The plan
+half-knew this: §classifier-marker already says "whoever later wires the Smart-Model-slot arm".
+
+**Acceptance criteria:** a slot-shaped `auto` turn produces a real classifier decision and the answer carries
+the decided reasoning wire, pinned end to end rather than at the compiler · the reserve is held **because** a
+call happens, so the over-reserve becomes an exact reserve · pinned for trial **and** paid, since both arms
+share the hole · **if the decision cannot be produced for a slot without a graph reshape, stop and report** —
+that is a design question, not an implementation detail.
+**Files:** `apps/api/src/slices/chat/domain/smart-model-turn.ts`, `apps/api/src/slices/workflows/**`,
+`apps/api/src/slices/models/domain/estimate-run.ts`, tests.
+**Scoped checks:** `pnpm test:api`. **Sensitive:** money — 2 independent auditors.
+**Ordering:** after D3, which owns the workflows compile step.
+
+### C6 — The PAID path stops degrading reasoning-free on an unaffordable classified turn
+
+**Design context.** C5 removed the silent static fallback on the **trial** path and reported, correctly, that
+**the paid path still does the same thing**: an unaffordable classified turn degrades to reasoning-free rather
+than refusing. C5's stop-and-report rule forbade it from touching non-trial behaviour, so it flagged instead —
+the right call, and it means the clause `BILLING.md` §Reasoning Effort 5 states ("never a silent static
+fallback") is still false on the **larger** user base.
+
+**The question this task must answer first, because it is not obvious:** is degrading on _unaffordability_
+the same defect as degrading on _choice_? C5's trial defect was a turn silently losing reasoning it could
+afford. This is a turn that genuinely cannot afford the classified form. §Effort 5's text admits no exception —
+"if no classifier can be built, the send fails with a typed error" — but whether "cannot afford it" counts as
+"cannot build it" is a reading, and the answer decides whether this is a defect or a documented carve-out.
+**Establish the reading, then act on it; if the doc needs a carve-out, that is a founder correction, not a code
+accommodation.**
+
+**Acceptance criteria:** the reading is stated with the doc text that decides it · if it is a defect, an
+unaffordable classified paid turn refuses with a typed error and the degradation is deleted, pinned in both
+directions · paid behaviour that is **affordable** is byte-identical either way · C5's `unaffordable` build
+variant, which currently maps back to `fallback` for the paid path precisely to keep it byte-identical, is
+consumed rather than laundered.
+**Files:** `apps/api/src/slices/chat/domain/{turn-definition,smart-model-turn}.ts`, tests.
+**Scoped checks:** `pnpm test:api`. **Sensitive:** money — 2 independent auditors. **Ordering:** after C5.
+
+### E7 — The trial picker greys what the trial gate will refuse
+
+**Design context.** C5 priced the classifier reserve into the trial gate, which is correct — and it means
+**1–3 models of ~190 now fail the gate that passed it before.** C5 flagged that the picker does not grey them,
+which is outside its ownership. Without this the trial user picks a model, sends, and is refused by something
+the picker told them was available — a direct violation of `BILLING.md` §Affordability's presented-⟺-feasible
+rule, and exactly the class this whole run exists to close (it is F4's composer bug in a third surface).
+
+**Acceptance criteria:** a trial caller's produced option set accounts for the classifier reserve, so a model
+the trial gate will refuse is greyed with a reason rather than offered · the greying comes from the **same**
+producer the gate uses, never a second calculation · pinned by a model priced so the answer fits and answer +
+reserve does not — the same fixture shape C5's money pin uses.
+**Files:** `apps/web/src/hooks/billing/**` or the produced-set path, tests.
+**Scoped checks:** `pnpm test:web`, `pnpm test:shared`. **Sensitive:** no — 1 auditor. **Ordering:** after C5.
+
+## Lane S — The spec contract suite (founder-commissioned and approved 2026-07-29)
+
+**Read this section alone and you have everything. It assumes no prior context.**
+
+### Why it exists, and what it deliberately does not do
+
+`BILLING.md` is normative — its clauses **are** acceptance criteria. Today, verification that the code obeys
+it is distributed across fifty tasks and their auditors and **runs once**. This run found the doc and the code
+disagreeing **ten times**, every one caught by a human reading two documents side by side. Nothing repeats
+that after the run ends.
+
+**Founder-ruled: Class B is the priority — code that violates the doc.** A scenario suite is written against
+the code, so it agrees with the code by construction and catches **zero** doc-is-wrong drift. That other class
+(a doc naming a function that does not exist, a stated constant that has drifted) needs a **reference
+resolver**, which is explicitly **not** what this lane builds. Do not expand Lane S to chase it.
+
+### What already exists — extend, do not duplicate
+
+- **The pattern is already built, once, for one section.** `funding-decision.contract.test.ts` is a typed
+  scenario table with `it.each` over two legs, boundary pairs, and a header documenting its own vacuity limit.
+  It works and it is the template.
+- **Citation practice exists at scale** — 116 clause citations across 54 test files, already formatted as
+  `§<Section> <n>` matching the doc's own numbering. **The forward half is free; only the reverse index is
+  missing.**
+- **Property suites already own the quantified invariants** (`turn-options.property`, `.completeness`,
+  `.agreement`, `.re-partition`). **The boundary: scenario modules own clause-shaped point and boundary claims
+  — "when X, then Y". Property suites keep "for all X".** A clause phrased as a universal stays where it is.
+- **Fishery factories are the wrong shape and must not be extended for this** — they produce insertable DB
+  rows with faker randomness; the money layer consumes projections and uses a seeded PRNG.
+
+### The Scenario contract
+
+```ts
+type ClauseId = string; // exact heading text + number, e.g. '§Group Funding 2'
+
+type Scenario<In, Out> = {
+  readonly clause: ClauseId;
+  readonly name: string;
+  readonly build: () => In; // production constructors ONLY, never hand-assembled
+  readonly expected: Out; // a VALUE, never a thunk — you cannot compute what you cannot call
+  readonly inversion: (input: In) => In; // an input change that MUST alter the outcome
+  readonly pairedWith?: string; // sibling scenario name across a threshold
+};
+```
+
+**`expected` is a value, not a function, and that is load-bearing.** A computed expectation is a second
+implementation of the code under test; a captured one makes the suite a characterization of current behaviour,
+bugs included.
+
+### The runner enforces four properties — each kills a species found in this run
+
+`runContract<In, Out>({ doc, subject, scenarios, axes })` emits, per scenario, the outcome test and the
+inversion test; per pair, a difference assertion; and once per suite, the axis counters.
+
+1. **`toEqual` against the WHOLE returned outcome**, never a predicate over it — kills the scenario whose
+   **name claims an outcome its assertion never checks**. Twenty-one such scenarios exist today in one file,
+   all reducible to a single relational property.
+2. **The inversion must produce a different outcome** — kills assertions that cannot fail, mechanically rather
+   than by review. Deliberately weak (`not.toEqual`): it proves the scenario is **sensitive to its input**, not
+   what the input becomes. A stronger form would demand a second hand-authored fact.
+3. **Boundary-pair members must differ** — stops "one nano below" degrading into a copy of "exactly covering".
+4. **Reachable-domain counters per declared axis** — kills fixtures that drift out of the domain they claim.
+   **Not theoretical: `presented ⟺ feasible` is currently swept over one tier of four, and the trial tier is
+   precisely where this run found it violated.**
+
+### Where everything lives
+
+- **`packages/config/spec-contract/`** — the runner, the `Scenario` type, the clause parser, the registry
+  type. **Generic over `In`/`Out`, so it takes no dependency on the money layer.** `packages/config` already
+  hosts the arch harness and the vendored ESLint rules and is a devDependency everywhere. **This placement is
+  justified by the founder's "generalizable, not a one-off" requirement — without that it would be speculative
+  hoisting, which our rules ban.**
+- **`<section>.scenarios.ts`** — plain modules exporting `readonly Scenario[]`, beside the code they exercise.
+- **`<section>.contract.test.ts`** — imports the scenarios and the runner. **Splitting data from driver is
+  what lets the gate read citations without running a test suite.**
+- **Integration clauses** — colocated in `apps/api/src/slices/<slice>/` as `.contract.integration.test.ts`,
+  using the same runner. Only clauses genuinely about **persistence or concurrency** go here; the api suite is
+  a hostile host (one suite at a time repo-wide, catalog-lock contention).
+- **`scripts/check-contracts.ts`** — the gate.
+
+### The gate, the registry, and how a second doc is added
+
+```ts
+export const REGISTERED_DOCS = [
+  {
+    doc: 'docs/BILLING.md',
+    clauseShape: 'numbered-under-h2',
+    scenarios: 'packages/shared/src/affordability/spec/*.scenarios.ts',
+  },
+];
+```
+
+The gate parses each registered doc into clause ids, imports the scenario modules, collects their `clause`
+fields, and **fails in both directions**: a clause nobody cites (printing the id **and its text**, so the
+person who added it sees exactly what to write), and a citation naming a clause that does not exist — which is
+what catches the doc being renumbered out from under the tests.
+
+**Exact heading text only. An alias map would be the sync contract our rules ban**, so the gate's first
+landing includes fixing the citation drift that already exists (`§Multi-Model 2` vs the heading
+"Multi-Model Turns"; `§Notices 5` vs `§Notices & Refusals 4`) — roughly a dozen citations.
+
+**The uncovered remainder is a ratchet, not a promise:** an exported list with its length pinned by a second
+assertion. Shrinking is free; growing means editing a number and stating why. **This mechanism is already
+validated in this repo** by the money-internals arch rule's allowlist.
+
+**Adding a second doc later is one registry entry.** `DOCUMENTS.md` (10 numbered clauses) is the plausible
+next registrant. **Docs with no numbered clauses cannot be registered without a different `clauseShape`
+parser** — `ARCHITECTURE.md`'s 51 bold bullets are topology commitments, not per-input falsifiable assertions.
+
+### CI and pre-push — both, and where
+
+- **CI:** `pnpm contracts:check` as a standalone gate in the same family as `arch:check`, `lint:duplication`,
+  `lint:unused` and `verify:bundle`. It belongs **beside `arch:check`** — both are structural checks the
+  compiler cannot express.
+- **Pre-push:** added to the husky hook alongside ESLint, typecheck and tests. Cost is negligible (parse
+  markdown, import plain modules) against a hook that already runs the full suite.
+
+### Three limits, stated so nobody over-trusts the harness
+
+- **A citation is a claim, not proof.** The gate proves nobody **forgot** a clause. It cannot tell that a
+  scenario citing a clause asserts anything relevant to it.
+- **The inversion proves sensitivity, not correctness.** A scenario can be sensitive to its input and still
+  assert the wrong outcome.
+- **Nothing mechanically enforces that `expected` was hand-derived** rather than pasted from a run. The
+  rate-arithmetic arch rule catches the obvious form and is syntactic, so it can be evaded. **The defence
+  there is review, and saying so is better than implying the harness closes it.**
+
+### S1 — The runner, the types, and §Catalog Admission as the pilot
+
+**Why that section:** 7 numbered clauses over 68 lines and three pure exported functions, with no tier,
+funding, hold or prompt-basis coupling; a hard numeric boundary yielding a natural pair; an **ordering** claim
+(an exemption that must never bypass the price floor) that only a scenario table states well; a scope claim; a
+pool-relative claim; and **two persistence clauses**, so the pilot tests the pure-versus-integration boundary
+honestly. Its code is settled, so the pilot races no implementer.
+
+**Acceptance criteria:** the runner enforces all four properties, **each proven by a deliberately-broken
+example scenario showing the runner reddens** · all 7 clauses cited · fixtures through production constructors
+· **no arithmetic on a rate-typed value anywhere in the file**.
+**Sensitive:** no — 1 auditor.
+
+**ABANDON CRITERIA — any one, and stop at S3 rather than expanding:** two or more clauses cannot be expressed
+without test-side rate arithmetic · more than ~70% of scenarios are renames of assertions that already exist
+(it is a parallel implementation) · the citation gate needs more than ~5 alias entries (the format is not a
+real convention) · `inversion` cannot be written for more than 2 of the 7 (those clauses are structural and
+belong in `arch:check`) · the file trips the pole heuristic.
+
+### S2 — The gate, the registry, the ratchet, the wiring, and the arch rule
+
+**Acceptance criteria:** the gate fails in both directions with the clause text in its message · the registry
+holds exactly one entry · the ratchet's length assertion is present and the existing citation drift is fixed ·
+`pnpm contracts:check` wired into **CI beside `arch:check`** and into **pre-push** · plus an arch rule: **no
+test file in the money tree may perform arithmetic on a rate- or nano-typed value.** That rule is the
+enforceable form of "the factory never computes an expectation", and it kills a species live today — a test
+re-deriving a production clamp over randomized draws, where inverting the clamp and "fixing" both goes green.
+**Sensitive:** no — 1 auditor.
+
+### S3 — Repair what the survey found in the suites that already exist
+
+Independent of whether the lane expands. **Three verified defects:** an invariant suite family sweeping one
+tier of four, on the invariant this run found violated at the untested tier · a 21-scenario file whose
+assertion is outcome-blind, rebuilt on the working template with whole-outcome comparison · a test that
+re-derives a production formula to compute its own expectation. Plus two plan-identifier leaks in test names.
+**Sensitive:** no — 1 auditor.
+
+### S4 — A live clause violation found during the survey
+
+`BILLING.md` states normatively that **the nano constants are the source and any float derives from them**,
+because a float expressed as its own computation from the cost model is a second implementation free to drift.
+The storage-rate module repeats the contract in its own docstring. **Two float constants are computed
+independently from the cost model rather than derived from their nano constants**, and their consumer is the
+**published fee copy in the legal terms**.
+
+**Its existing pin copies the source expression verbatim and cannot fail.** The values are numerically equal
+today, so the violation is structural and green — which is why nothing found it. **The fix is structural:**
+derive the floats from the nano constants, and pin it with a rule that no float storage rate may be computed
+from the monthly-cost inputs. **A value-equality test would be green before and after and prove nothing.**
+**Sensitive:** money — 2 independent auditors.
+
+### S5+ — Section expansion, and the triage rule that governs it
+
+One module per remaining section — reservation and the hold, group and owner payment, modalities and media,
+reasoning effort, Smart Model, multi-model, notices, trial, billing flow. **Sequenced after S1 proves the
+design and S2 makes it enforceable**, gated by S1's abandon criteria, and **ordered by where verification has
+been thinnest rather than by clause count** — modalities and media first (barely touched this run), then
+reservation and group/owner payment (money-critical and heavily changed), with §Funding Decision Matrix last
+since it already has a working table.
+
+**FOUNDER-RULED: fix and escalate. A red contract has exactly three dispositions, and the implementer
+classifies BEFORE touching anything:**
+
+1. **The code violates the doc** → fix the code. The expected case and the reason the lane exists.
+2. **The doc is wrong** → **stop and report**; the founder corrects the doc.
+3. **The contract misread the clause** → fix the contract, **and state why the misreading was available** — an
+   ambiguous clause is itself a doc defect worth recording, and that record is how the doc gets sharper.
+
+**THE BAN THAT MAKES IT REAL: a contract may never be weakened to make it pass.** If it can only pass by
+asserting less than the clause says, that is disposition 2 or 3 — never a quiet edit to the assertion. **This
+single rule is the difference between a spec suite and an expensive way to freeze current behaviour.**
+
+**A fix that exceeds its section task becomes its own task rather than being crammed in.** The section task
+finds and classifies everything and fixes what is clearly a defect; anything that would change behaviour the
+founder would want to rule on is escalated with the clause text and the observed behaviour.
+
+**AND THE INVERSION WORTH STATING NOW: a section whose contracts all pass on the first run should be
+scrutinised, not celebrated.** It means either the clauses were written from the code — so they assert what
+the code does rather than what it should — or the contracts are vacuous. Given this run found the doc and code
+disagreeing ten times, a clean first run on a substantial section is evidence of a weak suite, not a healthy
+codebase.
+
+### Not work, recorded so it is not rediscovered
+
+- **A read-privileged link guest is served the funding snapshot.** Inside decision 2's accepted disclosure
+  band; refusing naively would leave that guest's composer permanently pending, which is worse than the one bit
+  it learns. **Accepted — no task.**
+- **The NUL guard covers linted source types only** (`ts/tsx/js/jsx/mjs/cjs`). A raw NUL in `.json`, `.yml`,
+  `.md` or `.sh` would still pass unseen, and closing that needs a CI step G12 considered and rejected.
+  **Accepted:** the guard covers every file type where string literals live and where the class actually
+  occurred, and the rejected mechanism costs more than the residual risk. Recorded so the limit is a decision
+  rather than an oversight.
+- **`.astro` is excluded from the guard's globs, measured rather than assumed** — the astro parser hard-fails a
+  raw NUL as a parse error before any lint rule runs, so the rule could never fire there. The reason is
+  recorded in the config itself.
 
 ## Dependency graph
 

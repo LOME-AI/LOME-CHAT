@@ -17,7 +17,7 @@ import {
 import { toBase64 } from '@hushbox/shared';
 import { isUniqueViolationOn, unavailableError } from '../../../lib/errors/index.js';
 import { errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
-import type { MemberPrivilege } from '@hushbox/shared';
+import type { MemberPrivilege, ResolvedReasoningEffort } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { DbWriter } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -999,14 +999,19 @@ function contentItemsByMessage(
       .orderBy(asc(contentItems.position), asc(contentItems.id)),
     storeFailure
   ).andThen((rows) =>
-    reasoningTokensByContentItem(
+    generationFactsByContentItem(
       db,
       rows.map((row) => row.id)
-    ).map((reasoningByItem) => {
+    ).map((factsByItem) => {
       const byMessage = new Map<string, ContentItemRow[]>();
       for (const row of rows) {
         const list = byMessage.get(row.messageId) ?? [];
-        list.push({ ...row, reasoningTokens: reasoningByItem.get(row.id) ?? null });
+        const facts = factsByItem.get(row.id);
+        list.push({
+          ...row,
+          reasoningTokens: facts?.reasoningTokens ?? null,
+          reasoningEffort: facts?.reasoningEffort ?? null,
+        });
         byMessage.set(row.messageId, list);
       }
       return byMessage;
@@ -1014,34 +1019,57 @@ function contentItemsByMessage(
   );
 }
 
+/** What one content item's completion rows contribute to the history read. */
+interface ItemReasoningFacts {
+  readonly reasoningTokens: number;
+  readonly reasoningEffort: ResolvedReasoningEffort | null;
+}
+
 /**
- * The persisted reasoning-token spend per content item, summed over the
- * billed generations anchored to it (`usage_records` → `llm_completions`,
- * both billing-owned, read-only here exactly like `content_items`). A
- * multi-step generation records one completion row per step under the same
- * anchor, so the wire count is the item's total; an item with no completion
- * row (user text, media, pre-feature rows) is absent from the map.
+ * The persisted reasoning facts per content item, over the billed generations
+ * anchored to it (`usage_records` → `llm_completions`, both billing-owned,
+ * read-only here exactly like `content_items`). One query serves both facts:
+ * they live on the same row, and the message list must never read a row twice.
+ * An item with no completion row (user text, media) is absent from the map.
+ *
+ * The two facts aggregate differently and the difference is load-bearing:
+ *
+ * - Tokens are a spend, so they SUM. A multi-step generation records one
+ *   completion row per step under the same anchor, and the item's count is
+ *   their total.
+ * - The level is a decision taken once for the whole generation, so it is
+ *   TAKEN, never folded. Every step of one generation records the same level,
+ *   while an auxiliary charge anchored to the same item (a classifier's)
+ *   records none — so the level is the one non-null row's, and null survives
+ *   only when no row recorded a level at all. A `null` here means no reasoning
+ *   wire was sent; `off` means reasoning was resolved to none.
  */
-function reasoningTokensByContentItem(
+function generationFactsByContentItem(
   db: DbWriter,
   contentItemIds: readonly string[]
-): ResultAsync<Map<string, number>, DomainError> {
-  if (contentItemIds.length === 0) return okAsync(new Map<string, number>());
+): ResultAsync<Map<string, ItemReasoningFacts>, DomainError> {
+  if (contentItemIds.length === 0) return okAsync(new Map<string, ItemReasoningFacts>());
   return fromPromise(
     db
       .select({
         contentItemId: usageRecords.contentItemId,
         reasoningTokens: llmCompletions.reasoningTokens,
+        reasoningEffort: llmCompletions.reasoningEffort,
       })
       .from(usageRecords)
       .innerJoin(llmCompletions, eq(llmCompletions.usageRecordId, usageRecords.id))
       .where(inArray(usageRecords.contentItemId, [...contentItemIds])),
     storeFailure
   ).map((rows) => {
-    const byItem = new Map<string, number>();
+    const byItem = new Map<string, ItemReasoningFacts>();
     for (const row of rows) {
+      /* v8 ignore next -- unreachable: SQL `IN` never matches NULL, so the anchor-less usage records this narrowing satisfies the nullable column for are already excluded by the where clause */
       if (row.contentItemId === null) continue;
-      byItem.set(row.contentItemId, (byItem.get(row.contentItemId) ?? 0) + row.reasoningTokens);
+      const prior = byItem.get(row.contentItemId);
+      byItem.set(row.contentItemId, {
+        reasoningTokens: (prior?.reasoningTokens ?? 0) + row.reasoningTokens,
+        reasoningEffort: prior?.reasoningEffort ?? row.reasoningEffort,
+      });
     }
     return byItem;
   });

@@ -85,7 +85,7 @@ const DELETED_TABLES = ['flow_runs', 'exports', 'admin_pending_actions', 'projec
 const NOT_NULL_PARTIAL_INDEXES = [
   'ledger_entries_payment_id_idx',
   'ledger_entries_usage_record_id_idx',
-  'usage_records_user_id_idx',
+  'usage_records_payer_user_id_idx',
   'usage_records_content_item_id_idx',
   'usage_records_conversation_id_idx',
   'usage_records_sender_user_id_idx',
@@ -550,7 +550,7 @@ describe('migrations against local Postgres', () => {
       const [usageRecord] = await db
         .insert(usageRecords)
         .values({
-          userId,
+          payerUserId: userId,
           runId: randomUUID(),
           modelId: `test/model-${suffix}`,
           providerName: 'test-provider',
@@ -756,7 +756,7 @@ describe('migrations against local Postgres', () => {
       const [usageRecord] = await db
         .insert(usageRecords)
         .values({
-          userId,
+          payerUserId: userId,
           contentItemId: contentItem.id,
           runId: randomUUID(),
           modelId: `test/model-${suffix}`,

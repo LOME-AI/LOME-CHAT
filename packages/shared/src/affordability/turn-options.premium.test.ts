@@ -54,11 +54,11 @@ const SELECTION: Selection = {
   webSearch: false,
 };
 
-function fundingAt(tier: UserTier): FundingSnapshot {
+function fundingAt(payerTier: UserTier): FundingSnapshot {
   return {
     spendableNanoUsd: nanoUSD(1_000_000_000n),
     heldNanoUsd: nanoUSD(0n),
-    tier,
+    payerTier,
     payer: 'self',
   };
 }

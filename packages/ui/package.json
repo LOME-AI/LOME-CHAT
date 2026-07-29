@@ -16,6 +16,7 @@
     "./accessibility/styles": "./src/components/accessibility/styles/index.css",
     "./accessibility/init-script": "./src/components/accessibility/lib/init-script.ts",
     "./accessibility/lib/sentence-chunker": "./src/components/accessibility/lib/sentence-chunker.ts",
+    "./accessibility/lib/fast-start-splitter": "./src/components/accessibility/lib/fast-start-splitter.ts",
     "./accessibility/lib/document-reader": "./src/components/accessibility/lib/document-reader.ts",
     "./accessibility/lib/tts-stream-feeder": "./src/components/accessibility/lib/tts-stream-feeder.ts",
     "./accessibility/lib/tts-engine": "./src/components/accessibility/lib/tts-engine.ts",

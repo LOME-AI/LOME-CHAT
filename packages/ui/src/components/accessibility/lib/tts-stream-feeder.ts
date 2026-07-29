@@ -13,17 +13,9 @@
 // further sentences mid-flight, and observe start/end to track which
 // message's audio is currently active.
 
+import { createFastStartSplitter } from './fast-start-splitter';
 import { SentenceChunker } from './sentence-chunker';
-import { SPLIT_WORD_THRESHOLD, splitSentence } from './sentence-splitter';
 import type { TtsService, TtsVoice } from './tts-engine';
-
-/**
- * The opening sentences of a chat reply use a halved word threshold so they
- * split more aggressively and the user hears audio sooner. Downstream
- * sentences inference in parallel with playback, so aggressive splitting
- * past this count is wasted overhead.
- */
-const FAST_START_SENTENCE_COUNT = 3;
 
 export interface TtsStreamFeeder {
   /** Feed a streamed token chunk. Speaks any newly-completed sentences. */
@@ -63,10 +55,12 @@ export interface CreateTtsStreamFeederOptions {
 export function createTtsStreamFeeder(options: CreateTtsStreamFeederOptions): TtsStreamFeeder {
   const { tts, voice, isEnabled, isStreamMuted, onStreamStart, onStreamEnd } = options;
   const chunker = new SentenceChunker();
+  // One splitter per feeder: the fast-start budget is spent on the opening
+  // sentences of this stream.
+  const splitter = createFastStartSplitter();
   let started = false;
   let endCalled = false;
   let pendingSpeaks = 0;
-  let sourceSentenceCount = 0;
 
   function tryFinish(): void {
     if (endCalled && pendingSpeaks === 0) {
@@ -75,12 +69,7 @@ export function createTtsStreamFeeder(options: CreateTtsStreamFeederOptions): Tt
   }
 
   function speakSplit(sentence: string): void {
-    const threshold =
-      sourceSentenceCount < FAST_START_SENTENCE_COUNT
-        ? Math.ceil(SPLIT_WORD_THRESHOLD / 2)
-        : SPLIT_WORD_THRESHOLD;
-    sourceSentenceCount += 1;
-    for (const piece of splitSentence(sentence, threshold)) {
+    for (const piece of splitter.split(sentence)) {
       attemptSpeak(piece);
     }
   }

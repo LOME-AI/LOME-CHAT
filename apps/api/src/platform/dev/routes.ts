@@ -335,8 +335,14 @@ async function seedGroupChatWork(
 }
 
 async function revokeShareWork(db: Database, shareId: string): Promise<{ rowsAffected: number }> {
-  const deleted = await db.delete(sharedMessages).where(eq(sharedMessages.id, shareId));
-  return { rowsAffected: deleted.rowCount ?? 0 };
+  // RETURNING hands back the deleted rows, so the count is an array length.
+  // The driver's own `rowCount` is typed nullable, which would force a
+  // fallback that a DELETE can never reach.
+  const deleted = await db
+    .delete(sharedMessages)
+    .where(eq(sharedMessages.id, shareId))
+    .returning({ id: sharedMessages.id });
+  return { rowsAffected: deleted.length };
 }
 
 function setVersionWork(version: string): Promise<{ version: string }> {
@@ -748,7 +754,10 @@ export function createDevManifest() {
           return {
             id,
             category: message.payload.category,
-            tag: message.collapseKey ?? null,
+            // Every captured message carries the collapse alias: the capture
+            // wrap is installed on the mock partitions the composite sender
+            // dispatches to, below the point where the composite stamps it.
+            tag: message.collapseKey,
             title: copy.title,
             body: copy.body,
             payload: message.payload,

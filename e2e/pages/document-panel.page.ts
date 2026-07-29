@@ -323,20 +323,30 @@ export class DocumentPanelPage {
    * height of a line. A strip that shows one line of a run's output reads the
    * same in text as one that shows five and scrolls.
    *
+   * `contentHeight` is the strip's content box — `clientHeight` less its own
+   * vertical padding — because only that band holds lines. Judging a padded
+   * `clientHeight` in line units silently credits the strip with the padding's
+   * worth of lines it does not show.
+   *
    * `lineHeight` is the shortest line rather than the first, so a line long
    * enough to wrap on a narrow panel cannot inflate the unit that the strip's
    * own height is judged in.
    */
   async consoleMetrics(): Promise<{
     clientHeight: number;
+    contentHeight: number;
     scrollHeight: number;
     lineHeight: number;
   }> {
     return this.consoleOutput().evaluate((element) => {
       const lines = [...element.children].map((line) => line.getBoundingClientRect().height);
       if (lines.length === 0) throw new Error('the console strip has no lines');
+      const style = globalThis.getComputedStyle(element);
+      const verticalPadding =
+        Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
       return {
         clientHeight: element.clientHeight,
+        contentHeight: element.clientHeight - verticalPadding,
         scrollHeight: element.scrollHeight,
         lineHeight: Math.min(...lines),
       };

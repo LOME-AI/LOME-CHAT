@@ -1,4 +1,8 @@
-import { frontendEnvSchema, type ContentItemResponse } from '@hushbox/shared';
+import {
+  frontendEnvSchema,
+  type ContentItemResponse,
+  type ResolvedReasoningEffort,
+} from '@hushbox/shared';
 
 const env = frontendEnvSchema.parse({
   VITE_API_URL: import.meta.env['VITE_API_URL'] as unknown,
@@ -135,6 +139,14 @@ export interface Message {
    * 0) for a zero-reasoning message so no thinking line renders.
    */
   reasoningTokens?: number;
+  /**
+   * The level this assistant message's generation reasoned at, from the
+   * history read's persisted per-item level. Drives the effort badge on the
+   * nametag. Absent means no level was recorded and no badge renders — which
+   * is a different state from `off`, the level a user who chose Min runs at,
+   * and that one badges.
+   */
+  reasoningEffort?: ResolvedReasoningEffort;
 }
 
 /**

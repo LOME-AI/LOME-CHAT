@@ -30,6 +30,7 @@ import {
   readActiveHolds,
   readBudgetScopeHolds,
   readFundingSnapshot,
+  readGuestFundingSnapshot,
 } from './spendable.js';
 import type { AdmissionDeps, BudgetScope } from './admission.js';
 import type {
@@ -413,7 +414,7 @@ describe('readFundingSnapshot — owner-funded means owner-priced (BILLING §Gro
   it("serves the PAYER's tier, not the free-tier sender's", async () => {
     const group = await seedGroup();
     const served = await snapshot(group.senderUserId, group.conversation);
-    expect(served.tier).toBe('paid');
+    expect(served.payerTier).toBe('paid');
   });
 
   it('names the owner as the payer of a funded group turn', async () => {
@@ -513,7 +514,7 @@ describe('readFundingSnapshot — owner-funded means owner-priced (BILLING §Gro
   it("serves the sender's own free-tier figures on fall-through", async () => {
     const group = await seedGroup({ memberSpentNanoUsd: MEMBER_CAP });
     const served = await snapshot(group.senderUserId, group.conversation);
-    expect(served.tier).toBe('free');
+    expect(served.payerTier).toBe('free');
   });
 
   it('treats a negative owner balance as zero group headroom (BILLING §Group Funding 6e)', async () => {
@@ -559,14 +560,14 @@ describe('readFundingSnapshot — owner-funded means owner-priced (BILLING §Gro
     const userId = await createUser();
     await seedWallet(userId, 1_000_000_000n);
     const served = await snapshot(userId);
-    expect(served.tier).toBe('paid');
+    expect(served.payerTier).toBe('paid');
   });
 
   it('serves the free tier for a caller with a zero purchased balance', async () => {
     const userId = await createUser();
     await seedWallet(userId, 0n);
     const served = await snapshot(userId);
-    expect(served.tier).toBe('free');
+    expect(served.payerTier).toBe('free');
   });
 
   it('fails closed with a typed unavailable error when Redis is down mid-group-read', async () => {
@@ -579,6 +580,166 @@ describe('readFundingSnapshot — owner-funded means owner-priced (BILLING §Gro
         conversationFunding: factsReader(group.conversation),
         now: NOW,
       }
+    );
+    expect(result._unsafeUnwrapErr().code).toBe('unavailable');
+  });
+});
+
+describe('readGuestFundingSnapshot — a link guest is served its payer (BILLING §Group Funding 1, 6)', () => {
+  const OWNER_BALANCE = 5_000_000_000n; // $5 in the owner's purchased wallet
+  const LINK_ALLOWANCE = 900_000_000n; // $0.90 allocated to the link's member row
+
+  /**
+   * A conversation whose owner funds it and one member row carrying the link's
+   * allowance. The row is seeded as a plain member because the producer
+   * consumes only its `memberId` — whether that row belongs to a user or to a
+   * shared link is resolved a layer up, and the route tests exercise the real
+   * link-guest row end to end.
+   */
+  async function seedFundedLink(
+    options: { linkAllowanceNanoUsd?: bigint; ownerBalanceNanoUsd?: bigint } = {}
+  ): Promise<{ ownerWalletId: string; conversation: ConversationFundingFacts }> {
+    const ownerUserId = await createUser();
+    const ownerWalletId = await seedWallet(
+      ownerUserId,
+      options.ownerBalanceNanoUsd ?? OWNER_BALANCE
+    );
+    const conversationId = crypto.randomUUID();
+    await db.insert(conversations).values({
+      id: conversationId,
+      userId: ownerUserId,
+      title: BYTES,
+      conversationBudgetNanoUsd: 4_000_000_000n,
+    });
+    createdConversationIds.push(conversationId);
+    const memberRows = await db
+      .insert(conversationMembers)
+      .values({
+        conversationId,
+        userId: await createUser(),
+        privilege: 'write',
+        visibleFromEpoch: 1,
+        acceptedAt: NOW,
+      })
+      .returning({ id: conversationMembers.id });
+    const memberId = memberRows[0]?.id;
+    if (memberId === undefined) throw new Error('member seed failed');
+    await db.insert(memberBudgets).values({
+      memberId,
+      budgetNanoUsd: options.linkAllowanceNanoUsd ?? LINK_ALLOWANCE,
+      spentNanoUsd: 0n,
+    });
+    await db.insert(conversationSpending).values({ conversationId, spentNanoUsd: 0n });
+    return {
+      ownerWalletId,
+      conversation: {
+        conversationId,
+        memberId,
+        ownerUserId,
+        conversationBudgetNanoUsd: 4_000_000_000n,
+      },
+    };
+  }
+
+  it("serves the owner as payer, at the owner's tier", async () => {
+    const seeded = await seedFundedLink();
+    const served = await readGuestFundingSnapshot(deps, {
+      conversation: seeded.conversation,
+      now: NOW,
+    });
+    expect(served._unsafeUnwrap().payer).toBe('owner');
+    expect(served._unsafeUnwrap().payerTier).toBe('paid');
+  });
+
+  it("serves the link's hold-aware remaining as the guest's spendable", async () => {
+    const seeded = await seedFundedLink();
+    const served = await readGuestFundingSnapshot(deps, {
+      conversation: seeded.conversation,
+      now: NOW,
+    });
+    expect(served._unsafeUnwrap().spendableNanoUsd).toBe(LINK_ALLOWANCE);
+  });
+
+  it('serves an unallocated link zero spendable, never unlimited', async () => {
+    const seeded = await seedFundedLink({ linkAllowanceNanoUsd: 0n });
+    const served = await readGuestFundingSnapshot(deps, {
+      conversation: seeded.conversation,
+      now: NOW,
+    });
+    expect(served._unsafeUnwrap().spendableNanoUsd).toBe(0n);
+  });
+
+  it('serves the figure admission gates the guest turn on', async () => {
+    // The two-sided pin: the served number IS the gate. An estimate of exactly
+    // the served spendable admits; one nano more refuses. Nothing between the
+    // read and the gate may re-derive it.
+    const seeded = await seedFundedLink();
+    const read = await readGuestFundingSnapshot(deps, {
+      conversation: seeded.conversation,
+      now: NOW,
+    });
+    const served = read._unsafeUnwrap();
+    const scopes = [
+      {
+        scopeId: memberBudgetScopeId(seeded.conversation.memberId),
+        remainingNanoUsd: LINK_ALLOWANCE,
+      },
+      {
+        scopeId: conversationBudgetScopeId(seeded.conversation.conversationId),
+        remainingNanoUsd: 4_000_000_000n,
+      },
+    ];
+    const refused = await admitRun(deps, {
+      walletId: seeded.ownerWalletId,
+      holdId: crypto.randomUUID(),
+      estimateNanoUsd: served.spendableNanoUsd + 1n,
+      deadlineSeconds: 300,
+      concurrentRunCap: RUN_CAP,
+      budgets: scopes,
+      now: NOW,
+    });
+    expect(refused._unsafeUnwrap()).toEqual({ admitted: false, reason: 'budget-exceeded' });
+    const admitted = await admitRun(deps, {
+      walletId: seeded.ownerWalletId,
+      holdId: crypto.randomUUID(),
+      estimateNanoUsd: served.spendableNanoUsd,
+      deadlineSeconds: 300,
+      concurrentRunCap: RUN_CAP,
+      budgets: scopes,
+      now: NOW,
+    });
+    expect(admitted._unsafeUnwrap().admitted).toBe(true);
+    await redis.del(
+      BILLING_KEYS.scopeHolds.buildKey(memberBudgetScopeId(seeded.conversation.memberId)),
+      BILLING_KEYS.scopeHolds.buildKey(
+        conversationBudgetScopeId(seeded.conversation.conversationId)
+      ),
+      BILLING_KEYS.walletHolds.buildKey(seeded.ownerWalletId),
+      BILLING_KEYS.walletSnapshot.buildKey(seeded.ownerWalletId)
+    );
+  });
+
+  it('reports an active member-scope hold as held, so spendable + held is the hold-blind remaining', async () => {
+    const seeded = await seedFundedLink();
+    const estimate = 300_000_000n;
+    const scopeKey = BILLING_KEYS.scopeHolds.buildKey(
+      memberBudgetScopeId(seeded.conversation.memberId)
+    );
+    await redis.hset(scopeKey, { run: `${String(estimate)}:${String(NOW.getTime() + 60_000)}` });
+    const read = await readGuestFundingSnapshot(deps, {
+      conversation: seeded.conversation,
+      now: NOW,
+    });
+    const served = read._unsafeUnwrap();
+    expect(served.spendableNanoUsd + served.heldNanoUsd).toBe(LINK_ALLOWANCE);
+    await redis.del(scopeKey);
+  });
+
+  it('fails closed with a typed unavailable error when Redis is down', async () => {
+    const seeded = await seedFundedLink();
+    const result = await readGuestFundingSnapshot(
+      { redis: deadRedis, db, stores },
+      { conversation: seeded.conversation, now: NOW }
     );
     expect(result._unsafeUnwrapErr().code).toBe('unavailable');
   });
@@ -607,8 +768,8 @@ describe('readFundingSnapshot — the self-funded arm', () => {
     expect(Object.keys(served).toSorted((a, b) => a.localeCompare(b))).toEqual([
       'heldNanoUsd',
       'payer',
+      'payerTier',
       'spendableNanoUsd',
-      'tier',
     ]);
 
     // Behavioral pin: the served number IS the admission gate — an estimate of
@@ -720,7 +881,7 @@ describe('readFundingSnapshot — the free-tier arm (BILLING §Funding, §User T
     const { userId } = await seedFreePayer();
 
     const served = await view(userId);
-    expect(served.tier).toBe('free');
+    expect(served.payerTier).toBe('free');
     expect(served.spendableNanoUsd).toBe(DAILY_ALLOWANCE_NANO_USD);
   });
 
@@ -796,7 +957,7 @@ describe('readFundingSnapshot — the free-tier arm (BILLING §Funding, §User T
     // draws the free wallet and the daily allowance is the whole gate.
     const { userId, freeWalletId } = await seedFreePayer(-600_000_000n);
     const served = await view(userId);
-    expect(served.tier).toBe('free');
+    expect(served.payerTier).toBe('free');
     expect(served.spendableNanoUsd).toBe(DAILY_ALLOWANCE_NANO_USD);
     const scopes = await allowanceScopes(userId, NOW);
 

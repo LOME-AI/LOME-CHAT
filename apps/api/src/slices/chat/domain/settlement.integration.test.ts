@@ -44,7 +44,7 @@ import {
 } from '../../billing/index.js';
 import { claimKeyRow, runSettlement } from '../../../lib/idempotency/index.js';
 import { createConversationsStores } from '../../conversations/index.js';
-import { errAsync, okAsync } from '../../../lib/result/index.js';
+import { errAsync } from '../../../lib/result/index.js';
 import { domainWireCode, unavailableError } from '../../../lib/errors/index.js';
 import { createChatStores } from '../adapters/stores.js';
 import { CHAT_TURN_ROUTE } from './constants.js';
@@ -60,7 +60,6 @@ import type {
   SettlementRequest,
 } from '@hushbox/shared';
 import type { SettlementTx } from '../../../lib/idempotency/index.js';
-import type { ResultAsync } from '../../../lib/result/index.js';
 import type { ChatStores } from '../ports/stores.js';
 
 /**
@@ -332,8 +331,8 @@ function commitFor(
     readonly regenerate?: RegenerateAction;
     /** The pre-minted media persistence identities, keyed by charge key. */
     readonly mediaPlans?: ReadonlyMap<string, MediaPersistPlan>;
-    /** The recovered funding decision; defaults to personal (no group accrual). */
-    readonly ownerFunded?: ResultAsync<boolean, never>;
+    /** The derived funding decision; defaults to personal (no group accrual). */
+    readonly ownerFunded?: boolean;
     /** The resolved sender principal (a link guest, or a member ≠ the payer). */
     readonly sender?: SenderPrincipal;
     readonly conversationsStores?: (
@@ -346,7 +345,7 @@ function commitFor(
       conversationId: fixture.conversationId,
       epochNumber: 1,
       walletId: fixture.walletId,
-      userId: fixture.userId,
+      payerUserId: fixture.userId,
       ...(options.sender === undefined ? {} : { sender: options.sender }),
       runId,
       userMessage: options.userMessage ?? { id: crypto.randomUUID(), content: PROMPT },
@@ -356,7 +355,7 @@ function commitFor(
     },
     stores,
     billingStores: createBillingStores(),
-    ownerFunded: options.ownerFunded ?? okAsync(false),
+    ownerFunded: options.ownerFunded ?? false,
     readEpochPublicKey,
     now: () => NOW,
     newId: () => crypto.randomUUID(),
@@ -1852,6 +1851,15 @@ describe('chat settlement commit (multi-model siblings)', () => {
   });
 });
 
+/**
+ * A fixture whose payer and sender are different people: the owner pays, the
+ * member sends, and `sender` carries the member the way a run identity does.
+ */
+type GroupFixture = Fixture & { readonly sender: SenderPrincipal };
+
+/** A fixture that may or may not split payer from sender (a solo turn does not). */
+type MaybeGroupFixture = Fixture & { readonly sender?: SenderPrincipal };
+
 describe('group-budget accrual (owner-funded, cumulative)', () => {
   const stores = createBillingStores();
   // The full charged amount for a single-model turn (marked-up model cost + the
@@ -1861,14 +1869,16 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
 
   /**
    * A GROUP turn fixture: a distinct owner (the payer, with the wallet) and a
-   * distinct sender (a member the owner funds for). The returned `Fixture` binds
-   * `userId` to the SENDER and `walletId` to the OWNER's wallet — exactly the
-   * split production wires (owner pays, sender is attributed).
+   * distinct member who sends, whom the owner funds. The returned fixture binds
+   * `userId` AND `walletId` to the OWNER — the payer is by definition the owner
+   * of the wallet the turn debits — while the sending member rides `sender`.
+   * That is the shape the route freezes onto an owner-funded run; a payer who is
+   * not the debited wallet's owner is not a state the system can reach.
    */
   async function seedGroupFixture(options: {
     readonly conversationBudgetNanoUsd: bigint;
     readonly memberBudgetNanoUsd?: bigint;
-  }): Promise<Fixture> {
+  }): Promise<GroupFixture> {
     const owner = await seedFixture();
     await db
       .update(conversations)
@@ -1888,12 +1898,13 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
       });
     }
     return {
-      userId: senderId,
+      userId: owner.userId,
       walletId: owner.walletId,
       conversationId: owner.conversationId,
       memberId,
       epochPrivateKey: owner.epochPrivateKey,
       epochPublicKey: owner.epochPublicKey,
+      sender: { kind: 'user', userId: senderId, memberId },
     };
   }
 
@@ -1920,7 +1931,7 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
   async function runUsageSenders(runId: string) {
     return db
       .select({
-        userId: usageRecords.userId,
+        payerUserId: usageRecords.payerUserId,
         senderUserId: usageRecords.senderUserId,
         senderLinkId: usageRecords.senderLinkId,
       })
@@ -1937,9 +1948,9 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
   }
 
   async function settleTurn(
-    fixture: Fixture,
+    fixture: MaybeGroupFixture,
     req: SettlementRequest,
-    ownerFunded: ResultAsync<boolean, never> = okAsync(true)
+    ownerFunded = true
   ): Promise<string> {
     const runId = crypto.randomUUID();
     const fence = await claimFence(fixture.userId, req.runKey, runId);
@@ -1950,6 +1961,7 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
       commit: commitFor(fixture, runId, createChatStores(), {
         userMessage: { id: crypto.randomUUID(), content: PROMPT },
         ownerFunded,
+        ...(fixture.sender === undefined ? {} : { sender: fixture.sender }),
       }),
     });
     await hook(req);
@@ -2053,7 +2065,7 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
    * epoch) and a distinct member SENDER who has their OWN purchased wallet and
    * pays for themselves. `walletId` binds to the SENDER's wallet (not the
    * owner's) — exactly the payer the route freezes when the group headroom fell
-   * to ≤ 0, so settlement recovers "personal" and accrues no group spend.
+   * to ≤ 0, so settlement is told "personal" and accrues no group spend.
    */
   async function seedPersonalGroupFixture(): Promise<Fixture> {
     const owner = await seedFixture();
@@ -2080,10 +2092,10 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
 
   it('self-funds a group turn on the sender own wallet and writes NO group spend (personal fall-through)', async () => {
     // The payer is the SENDER's own wallet (route fell through: group headroom
-    // ≤ 0). Settlement recovers "personal", so the charge hits the sender's
+    // ≤ 0). Settlement is told "personal", so the charge hits the sender's
     // wallet and neither the member nor the conversation spend row moves.
     const fixture = await seedPersonalGroupFixture();
-    const runId = await settleTurn(fixture, request(crypto.randomUUID()), okAsync(false));
+    const runId = await settleTurn(fixture, request(crypto.randomUUID()), false);
 
     expect(await runUsageTotal(runId)).toBe(perTurnCharge);
     // No group attribution: the (absent) member row stays absent and the
@@ -2136,7 +2148,8 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
       complete: keyRowCompletion({ runId }),
       commit: commitFor(fixture, runId, boomStores, {
         userMessage: { id: crypto.randomUUID(), content: PROMPT },
-        ownerFunded: okAsync(true),
+        ownerFunded: true,
+        sender: fixture.sender,
       }),
     });
     await expect(hook(request(runKey))).rejects.toThrow(/persist boom/);
@@ -2175,7 +2188,8 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
       complete: keyRowCompletion({ runId }),
       commit: commitFor(fixture, runId, createChatStores(), {
         userMessage: { id: crypto.randomUUID(), content: PROMPT },
-        ownerFunded: okAsync(true),
+        ownerFunded: true,
+        sender: fixture.sender,
         conversationsStores: faultingConversationsStores,
       }),
     });
@@ -2238,7 +2252,7 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
       commit: commitFor(owner, runId, createChatStores(), {
         userMessage: { id: userMessageId, content: PROMPT },
         sender: { kind: 'linkGuest', linkId, memberId: guestMemberId },
-        ownerFunded: okAsync(true),
+        ownerFunded: true,
       }),
     });
     await hook(request('guest-run'));
@@ -2281,7 +2295,9 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
     // guest rides the link column (it has no users row), the owner the payer
     // column — recoverable without the batchId → messages join.
     const usage = await runUsageSenders(runId);
-    expect(usage).toEqual([{ userId: owner.userId, senderUserId: null, senderLinkId: linkId }]);
+    expect(usage).toEqual([
+      { payerUserId: owner.userId, senderUserId: null, senderLinkId: linkId },
+    ]);
   });
 
   it('stamps the sender from identity.sender even when it differs from the attributed userId', async () => {
@@ -2319,29 +2335,28 @@ describe('group-budget accrual (owner-funded, cumulative)', () => {
       db,
       fence,
       complete: keyRowCompletion({ runId }),
-      // Deliberately column-independent: identity.userId is the OWNER while the
-      // member sends, so senderUserId cannot be a copy of identity.userId — it
-      // has to be threaded from identity.sender. (In production, owner funding
-      // moves only the wallet; the attributed userId stays the member.)
+      // Deliberately column-independent: identity.payerUserId is the OWNER
+      // while the member sends, so senderUserId cannot be a copy of the payer —
+      // it has to be threaded from identity.sender.
       commit: commitFor(owner, runId, createChatStores(), {
         userMessage: { id: crypto.randomUUID(), content: PROMPT },
         sender: { kind: 'user', userId: memberUserId, memberId },
-        ownerFunded: okAsync(true),
+        ownerFunded: true,
       }),
     });
     await hook(request('member-run'));
 
     expect(await runUsageSenders(runId)).toEqual([
-      { userId: owner.userId, senderUserId: memberUserId, senderLinkId: null },
+      { payerUserId: owner.userId, senderUserId: memberUserId, senderLinkId: null },
     ]);
   });
 
   it('self-funds a solo turn: records the same principal as both payer and sender', async () => {
     const fixture = await seedFixture();
-    const runId = await settleTurn(fixture, request(crypto.randomUUID()), okAsync(false));
+    const runId = await settleTurn(fixture, request(crypto.randomUUID()), false);
 
     expect(await runUsageSenders(runId)).toEqual([
-      { userId: fixture.userId, senderUserId: fixture.userId, senderLinkId: null },
+      { payerUserId: fixture.userId, senderUserId: fixture.userId, senderLinkId: null },
     ]);
   });
 });

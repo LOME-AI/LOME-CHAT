@@ -138,7 +138,7 @@ async function seedFixture(
 function chargeInput(fixture: ChargeFixture, overrides?: Partial<ChargeInput>): ChargeInput {
   return {
     walletId: fixture.walletId,
-    userId: fixture.userId,
+    payerUserId: fixture.userId,
     // Solo turn by default: the payer is also the sender.
     sender: { kind: 'user', userId: fixture.userId },
     runId: crypto.randomUUID(),
@@ -174,7 +174,7 @@ async function deleteSeededRows(): Promise<void> {
     .select({ id: wallets.id })
     .from(wallets)
     .where(inArray(wallets.userId, createdUserIds));
-  await db.delete(usageRecords).where(inArray(usageRecords.userId, createdUserIds));
+  await db.delete(usageRecords).where(inArray(usageRecords.payerUserId, createdUserIds));
   await deleteLedgerRowsFor(walletRows.map((row) => row.id));
   if (createdConversationIds.length > 0) {
     await db.delete(conversations).where(inArray(conversations.id, createdConversationIds));
@@ -249,7 +249,7 @@ describe('chargeWithinTx', () => {
     // Owner-funded shape: the payer column carries the charged wallet's owner,
     // the sender column carries the member who sent the turn — both queryable
     // without a message join.
-    expect(rows[0]?.userId).toBe(fixture.userId);
+    expect(rows[0]?.payerUserId).toBe(fixture.userId);
     expect(rows[0]?.senderUserId).toBe(senderUserId);
     expect(rows[0]?.senderLinkId).toBeNull();
   });
@@ -271,7 +271,7 @@ describe('chargeWithinTx', () => {
       .select()
       .from(usageRecords)
       .where(eq(usageRecords.id, result.usageRecordId));
-    expect(rows[0]?.userId).toBe(fixture.userId);
+    expect(rows[0]?.payerUserId).toBe(fixture.userId);
     expect(rows[0]?.senderLinkId).toBe(linkId);
     expect(rows[0]?.senderUserId).toBeNull();
   });
@@ -295,7 +295,7 @@ describe('chargeWithinTx', () => {
     // deletion; only the sender reference is scrubbed.
     expect(rows).toHaveLength(1);
     expect(rows[0]?.senderUserId).toBeNull();
-    expect(rows[0]?.userId).toBe(fixture.userId);
+    expect(rows[0]?.payerUserId).toBe(fixture.userId);
     expect(rows[0]?.costNanoUsd).toBe(1_150_000_000n);
   });
 
@@ -640,7 +640,7 @@ describe('chargeWithinTx', () => {
           chargeWithinTx(stores, tx, {
             ...chargeInput(owner),
             walletId: participant.walletId,
-            userId: participant.userId,
+            payerUserId: participant.userId,
             idempotencyKey: `race:${crypto.randomUUID()}`,
             conversationId: owner.conversationId,
           })
@@ -842,7 +842,7 @@ describe('settlement concurrency model — FOR UPDATE row-lock serialization', (
     const usage = await db
       .select()
       .from(usageRecords)
-      .where(eq(usageRecords.userId, fixture.userId));
+      .where(eq(usageRecords.payerUserId, fixture.userId));
     expect(usage).toHaveLength(2);
     const legs = await db
       .select()

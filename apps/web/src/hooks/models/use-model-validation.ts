@@ -1,43 +1,10 @@
 import * as React from 'react';
-import { tierCanAccessPremium } from '@hushbox/shared';
 import { useSession } from '@/lib/auth';
 import { useModelStore } from '@/stores/model';
-import { useSpendable } from '@/hooks/billing/use-spendable.js';
+import { usePayerPremiumAccess } from '@/hooks/models/use-payer-premium-access.js';
 import { useModels, getAccessibleModelIds } from '@/hooks/models/models.js';
-import type { Model, ChatModality, UserTier } from '@hushbox/shared';
+import type { Model, ChatModality } from '@hushbox/shared';
 import type { SelectedModelEntry } from '@/stores/model';
-import type { ModelsData } from '@/hooks/models/models.js';
-
-interface ValidationStateParams {
-  modelsData: ModelsData | undefined;
-  isSessionPending: boolean;
-  isAuthenticated: boolean;
-  /** The PAYER's served tier (`GET /billing/spendable`); absent while it loads. */
-  servedTier: UserTier | undefined;
-}
-
-type ValidationState = { isReady: false } | { isReady: true; canAccessPremium: boolean };
-
-/**
- * Premium access from the SERVED tier, never from a balance: the balance
- * endpoint is not an affordability input (BILLING §Affordability 4), and the
- * tier that decides premium is the payer's, which the funding snapshot names.
- * This hook only CHOOSES a fallback — it greys nothing — but choosing from a
- * second derivation of the same fact is how the two drift.
- */
-function getValidationState(params: ValidationStateParams): ValidationState {
-  const { modelsData, isSessionPending, isAuthenticated, servedTier } = params;
-
-  if (!modelsData) return { isReady: false };
-  if (isSessionPending) return { isReady: false };
-  if (isAuthenticated && servedTier === undefined) return { isReady: false };
-
-  // Unauthenticated payers have no endpoint by design; no tier reaches premium
-  // except paid, so their answer is the same either way.
-  const canAccessPremium = servedTier !== undefined && tierCanAccessPremium(servedTier);
-
-  return { isReady: true, canAccessPremium };
-}
 
 interface ValidateModalityParams {
   modality: ChatModality;
@@ -76,9 +43,19 @@ function validateModality(params: ValidateModalityParams): SelectedModelEntry[] 
 
 const MODALITIES: readonly ChatModality[] = ['text', 'image', 'audio', 'video'];
 
-export function useModelValidation(): void {
+/**
+ * Prunes persisted model selections the catalog no longer carries, and
+ * substitutes the strongest reachable text model when that empties the text
+ * selection.
+ *
+ * `conversationId` names the payer whose tier decides reachability: this hook
+ * only CHOOSES a fallback and greys nothing, but choosing at the sender's tier
+ * inside an owner-funded conversation contradicts the option sets the composer
+ * renders for the same caller.
+ */
+export function useModelValidation(conversationId: string | null): void {
   const { data: session, isPending: isSessionPending } = useSession();
-  const { data: spendableData } = useSpendable(null);
+  const access = usePayerPremiumAccess(conversationId);
   const { data: modelsData } = useModels();
   const selections = useModelStore((state) => state.selections);
   const setSelectedModels = useModelStore((state) => state.setSelectedModels);
@@ -97,22 +74,14 @@ export function useModelValidation(): void {
   }, [session?.user, isSessionPending, activeModality, setActiveModality]);
 
   React.useEffect(() => {
-    const isAuthenticated = Boolean(session?.user);
-    const state = getValidationState({
-      modelsData,
-      isSessionPending,
-      isAuthenticated,
-      servedTier: spendableData?.tier,
-    });
-
-    if (!state.isReady || !modelsData) return;
+    if (access.isPending || !modelsData) return;
 
     const { models, premiumIds } = modelsData;
-    const { canAccessPremium } = state;
+    const { canAccessPremium } = access;
 
     const { strongestId } = getAccessibleModelIds(models, premiumIds, canAccessPremium);
     const strongestModel = models.find((m) => m.id === strongestId);
-    // The strongest pin is only a usable text fallback when the user can
+    // The strongest pin is only a usable text fallback when the payer can
     // actually reach it; substituting an inaccessible (premium-for-this-tier)
     // model would re-trigger the filter on the next pass and loop forever. An
     // absent pin (no candidate/popularity signal) yields no fallback.
@@ -133,5 +102,5 @@ export function useModelValidation(): void {
         setSelectedModels(modality, next);
       }
     }
-  }, [modelsData, session?.user, isSessionPending, spendableData, selections, setSelectedModels]);
+  }, [modelsData, access, selections, setSelectedModels]);
 }

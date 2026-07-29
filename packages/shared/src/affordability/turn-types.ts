@@ -32,7 +32,18 @@ export type NonEmpty<T> = readonly [T, ...T[]];
 export interface FundingSnapshot {
   readonly spendableNanoUsd: NanoUSD;
   readonly heldNanoUsd: NanoUSD;
-  readonly tier: UserTier;
+  /**
+   * The PAYER's tier, never the sender's. The name carries the distinction
+   * because a link guest's two tiers differ — `guest` answers who is sending,
+   * this answers what funds the turn — and a composer holding both under one
+   * name will eventually cross them (§User Tiers).
+   */
+  readonly payerTier: UserTier;
+  /**
+   * Structural, not funding-derived: a link guest's payer is the conversation's
+   * owner whether or not the owner's funds cover. Zero spendable is not a third
+   * kind of payer, which is why this union stays closed at two.
+   */
   readonly payer: 'self' | 'owner';
 }
 

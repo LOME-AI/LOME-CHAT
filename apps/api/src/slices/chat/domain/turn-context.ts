@@ -107,6 +107,45 @@ export interface PayerFunding {
  */
 export type FundingDecisionInputs = Omit<FundingInputs, 'isPremiumModel'>;
 
+/** Why a turn carries no comparable `minTurnCost`. */
+export type UnpricedTurnReason =
+  /**
+   * A media generation. Its minimum IS its deterministic per-unit price and
+   * depends on no payer, but the unit parsing that yields it (rate key,
+   * requested units, estimated output bytes) lives downstream of this freeze —
+   * so the exemption is declared rather than assumed.
+   */
+  | 'media-per-unit'
+  /**
+   * A Smart Model turn. Its minimum is §Smart Model 5's balance-independent
+   * threshold over the candidate pool, which this seam cannot build.
+   */
+  | 'smart-slot-pool'
+  /**
+   * No selected model prices: unknown, unexposed, or missing a rate or a
+   * context length. The turn build refuses it on its own, so who would have
+   * paid never matters.
+   */
+  | 'model-not-priceable';
+
+/**
+ * The turn's `minTurnCost` at the CANDIDATE PAYER's tier, priced by the route
+ * BEFORE the payer is frozen — the bound §Funding Decision Matrix priority 1
+ * compares against group headroom. A discriminated union rather than an
+ * optional amount so a turn whose shape carries no comparable minimum has to
+ * say which shape it is: `undefined` on its own is indistinguishable from a
+ * caller that forgot to price one, which is exactly how the comparison
+ * degenerated to `headroom > 0` before.
+ */
+export type TurnMinCost =
+  | { readonly kind: 'priced'; readonly nanoUsd: bigint }
+  | { readonly kind: 'unpriced'; readonly reason: UnpricedTurnReason };
+
+/** The amount the funding core compares, or `undefined` for an unpriced shape. */
+function comparableNanoUsd(minTurnCost: TurnMinCost): bigint | undefined {
+  return minTurnCost.kind === 'priced' ? minTurnCost.nanoUsd : undefined;
+}
+
 /**
  * The turn's SENDER as the route resolved it server-side — a full-session user
  * (by `userId`) or a link guest (by the `linkId` its credential resolved to).
@@ -136,10 +175,11 @@ export interface TurnContext {
    */
   readonly senderId: string;
   /**
-   * The paying user account: the member for a user sender (byte-identical to the
-   * legacy path, incl. an owner-funded user turn attributing usage to the
-   * initiator), the conversation OWNER for a guest sender (a guest has no
-   * account). The charge always debits `walletId`, resolved in lockstep.
+   * The paying user account — the owner of `walletId`, whoever that is: the
+   * sender when they fund themselves, the conversation OWNER on an owner-funded
+   * turn (a member's or a guest's alike). It never depends on the sender's
+   * principal kind, which is what makes the billed row's payer column
+   * aggregatable; who SENT rides `sender`.
    */
   readonly payerUserId: string;
   /**
@@ -229,6 +269,12 @@ function requireFork(
 /** The payer wallet plus its spendable funds — the shape the funding decision yields. */
 interface PayerWallet {
   readonly walletId: string;
+  /**
+   * The wallet's owner — the paying account. Minted by the same branch that
+   * chose the wallet, so the payer identity and the debited wallet cannot name
+   * different people; the billed row records this as its payer.
+   */
+  readonly payerUserId: string;
   readonly funding: PayerFunding;
 }
 
@@ -254,8 +300,7 @@ interface ResolvedPayer {
  * the only balance gate, so a purchased balance of `≤ 0` (a spent-down or
  * negative wallet) falls through to the free wallet, whose sole ceiling is the
  * daily allowance (emitted by the admission hook, which recovers the free-tier
- * decision from the payer wallet's type the same way owner-funding is recovered
- * from the payer wallet identity). A genuinely absent purchased wallet cannot
+ * decision from the payer wallet's type). A genuinely absent purchased wallet cannot
  * fund a turn (forbidden); the free wallet is provisioned alongside it at
  * registration. The funding mirrors what legacy fed its budget math: the
  * purchased balance for the paid tier, the REMAINING daily allowance for the
@@ -276,6 +321,7 @@ function senderPayerWallet(
       return okAsync<SelfFunding, DomainError>({
         wallet: {
           walletId: purchased.id,
+          payerUserId: userId,
           funding: { remainingNanoUsd: purchased.balanceNanoUsd, kind: 'purchased' },
         },
         callerPurchasedBalanceNanoUsd: purchased.balanceNanoUsd,
@@ -289,35 +335,12 @@ function senderPayerWallet(
     return readBalance(billing, db, userId, now).map((balance) => ({
       wallet: {
         walletId: free.id,
+        payerUserId: userId,
         funding: { remainingNanoUsd: balance.allowance.remainingNanoUsd, kind: 'free' as const },
       },
       callerPurchasedBalanceNanoUsd: purchased.balanceNanoUsd,
     }));
   });
-}
-
-/**
- * Whether a run is OWNER-FUNDED — the drift-free recovery of the route-time
- * funding decision at the admission and settlement seams. The route encodes the
- * decision in the payer wallet it froze into the run identity: a group turn with
- * positive group headroom is funded from the OWNER's wallet, a solo turn or a
- * fallen-through group turn from the SENDER's OWN wallet. So a run is
- * owner-funded exactly when its payer wallet is NOT one of the sender's own
- * wallets — a pure function of stable data (wallet ownership never drifts), so
- * payer, group-scope emission, and group-spend attribution can never disagree.
- * The `senderUserId === ownerUserId` (solo) case is self-consistent: the payer
- * is then the sender's own wallet, so this returns false (personal) — the
- * callers additionally short-circuit solo before reaching here.
- */
-export function isOwnerFundedTurn(
-  billing: BillingStores,
-  db: Database,
-  senderUserId: string,
-  payerWalletId: string
-): ResultAsync<boolean, DomainError> {
-  return billing
-    .readWallets(db, senderUserId)
-    .map((wallets) => !wallets.some((wallet) => wallet.id === payerWalletId));
 }
 
 /** The inputs the group funding decision reads the durable spend/cap rows against. */
@@ -327,24 +350,32 @@ interface GroupFundingArgs {
   readonly memberId: string;
   readonly conversationId: string;
   readonly conversationBudgetNanoUsd: bigint;
+  /** Priced by the route at the candidate payer's tier, above this freeze. */
+  readonly minTurnCost: TurnMinCost;
 }
 
 /**
  * Picks the payer wallet — the single funding decision, made ONCE at route time
- * (mirroring legacy `fundingSource`), whose outcome the admission and settlement
- * seams recover (via `isOwnerFundedTurn` for a user, or unconditionally for a
- * guest — a guest is never the payer).
+ * (mirroring legacy `fundingSource`). It records the wallet's owner as the run's
+ * payer, so the admission and settlement seams read who paid off the run identity
+ * rather than re-deriving it from wallet ownership.
  *
  * A SOLO turn (a user sender who owns the conversation) funds from the owner's
  * own wallet — the personal path, unchanged. A GROUP turn (a user sender ≠ owner,
  * or ANY link guest) computes the effective group headroom =
  * `min(memberRemaining, conversationRemaining, ownerBalance)` (legacy
- * `effectiveBudgetCents`, nano-USD): `> 0` funds from the OWNER's wallet
- * (owner-funded — both group caps gate admission and settlement accrues group
- * spend); `≤ 0` — any dimension exhausted/absent, or the owner in the red — a
- * USER sender falls through to its OWN wallet (self-funded — no group scopes, no
- * group accrual), while a LINK GUEST is DENIED (it holds no wallet to fall
- * through to). An absent member-budget row reads a zero cap.
+ * `effectiveBudgetCents`, nano-USD): headroom that COVERS THE TURN'S MINIMUM
+ * funds from the OWNER's wallet (owner-funded — both group caps gate admission
+ * and settlement accrues group spend); headroom that cannot — exhausted, absent,
+ * the owner in the red, or simply too small for this turn — falls a USER sender
+ * through to its OWN wallet (self-funded — no group scopes, no group accrual)
+ * and DENIES a LINK GUEST (it holds no wallet to fall through to). An absent
+ * member-budget row reads a zero cap.
+ *
+ * Comparing the minimum rather than mere positivity is what keeps the two
+ * outcomes reachable: headroom below it can never fund this turn, so freezing
+ * the owner as payer would hand admission a scope it must refuse, and the same
+ * send would be refused on every retry.
  */
 function resolvePayerWallet(
   billing: BillingStores,
@@ -365,7 +396,10 @@ function resolvePayerWallet(
         conversationRemainingNanoUsd: 0n,
         ownerPurchasedBalanceNanoUsd: self.callerPurchasedBalanceNanoUsd,
         callerOwnPurchasedBalanceNanoUsd: self.callerPurchasedBalanceNanoUsd,
-        turnEstimateNanoUsd: undefined,
+        // Carried on both branches so the field means one thing — this turn's
+        // minimum — rather than "the group comparison ran". A solo turn never
+        // reaches priority 1, so nothing reads it here.
+        minTurnCostNanoUsd: comparableNanoUsd(args.minTurnCost),
       },
     }));
   }
@@ -385,17 +419,13 @@ function resolvePayerWallet(
     // is `self` regardless of its value — the real balance is read below and
     // frozen for the tier gate. `isPremiumModel` is `false`: who-pays is
     // tier-agnostic (the route's tier gate re-runs the core with the model).
-    // No turn estimate is available here, and the ordering is why: the payer
-    // must be frozen BEFORE the turn is priced, because the turn's output
-    // ceiling is bounded by what the payer can pay. The consequence, which this
-    // ordering does not excuse: priority 1's estimate clause cannot run here, so
-    // a member whose group headroom is positive but too small for the turn is
-    // frozen as owner-funded and then refused by admission's per-scope check,
-    // while the same shared core on the client falls that member through to
-    // personal funds — the two verdicts differ. BILLING §Funding Decision Matrix
-    // priority 1 and §Group Funding 6(a) rule the fall-through; 6(b)'s hard
-    // refusal covers only the race case, where the client's retry re-resolves,
-    // and this case is deterministic — the retry re-resolves to the same refusal.
+    // The minimum arrives priced at the CANDIDATE payer's tier, which the route
+    // can do without knowing the answer because it is a bound: priority 1 can
+    // only matter when headroom is positive, which requires a positive owner
+    // balance and therefore a paid-tier owner. A member who falls through is
+    // re-priced downstream for free — the turn budget below carries the
+    // sender's own wallet, so the ceiling and the storage stamp size at the
+    // sender's tier.
     const groupInputs: FundingDecisionInputs = {
       isSolo: false,
       isGuest: args.sender.kind === 'linkGuest',
@@ -403,13 +433,14 @@ function resolvePayerWallet(
       conversationRemainingNanoUsd: conversationRemaining,
       ownerPurchasedBalanceNanoUsd: ownerBalance,
       callerOwnPurchasedBalanceNanoUsd: 0n,
-      turnEstimateNanoUsd: undefined,
+      minTurnCostNanoUsd: comparableNanoUsd(args.minTurnCost),
     };
     const decision = resolveFunding({ ...groupInputs, isPremiumModel: false });
     if (decision.payer === 'owner') {
-      // Owner-funded: the spendable funds are the group MIN itself (legacy
-      // `computeEffectivePayerBalance`), the tightest of the three caps — not
-      // the raw owner balance. The same MIN drives the core's verdict.
+      // Owner-funded: the group MIN covers this turn's minimum, so the spendable
+      // funds are that MIN itself (legacy `computeEffectivePayerBalance`), the
+      // tightest of the three caps — not the raw owner balance. The same MIN
+      // drives the core's verdict.
       const effective = groupEffectiveRemainingNanoUsd(
         memberRemaining,
         conversationRemaining,
@@ -423,6 +454,7 @@ function resolvePayerWallet(
         : okAsync<ResolvedPayer, DomainError>({
             wallet: {
               walletId: ownerPurchased.id,
+              payerUserId: args.ownerUserId,
               funding: { remainingNanoUsd: effective, kind: 'purchased' },
             },
             inputs: groupInputs,
@@ -475,6 +507,13 @@ export function resolveTurnContext(
     readonly forkId?: string | undefined;
     /** The clock the free payer's daily allowance is keyed by (UTC day). */
     readonly now: Date;
+    /**
+     * The turn's minimum cost, priced by the route before this call. Required:
+     * a payer chosen without it is chosen against `headroom > 0`, which admits
+     * turns admission then refuses. A shape with no comparable minimum says so
+     * through {@link TurnMinCost} rather than by omission.
+     */
+    readonly minTurnCost: TurnMinCost;
   }
 ): ResultAsync<TurnContext, DomainError> {
   const stores = deps.conversations(db);
@@ -496,6 +535,7 @@ export function resolveTurnContext(
             memberId: member.id,
             conversationId: args.conversationId,
             conversationBudgetNanoUsd: facts.conversationBudgetNanoUsd,
+            minTurnCost: args.minTurnCost,
           },
           args.now
         ).map((payer) => {
@@ -509,10 +549,9 @@ export function resolveTurnContext(
             funding: payer.wallet.funding,
             sender: resolvedSender,
             senderId: args.sender.kind === 'user' ? args.sender.userId : args.sender.linkId,
-            // The member pays for a user turn (byte-identical to legacy, incl.
-            // owner-funded user turns attributing to the initiator); the owner
-            // pays for a guest turn (the guest has no account).
-            payerUserId: args.sender.kind === 'user' ? args.sender.userId : facts.ownerUserId,
+            // Read off the chosen wallet, never re-derived from the sender: the
+            // payer is by definition the account whose wallet this turn debits.
+            payerUserId: payer.wallet.payerUserId,
             fundingDecisionInputs: payer.inputs,
           };
         })

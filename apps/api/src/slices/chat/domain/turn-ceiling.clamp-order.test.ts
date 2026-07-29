@@ -103,7 +103,7 @@ const SELECTION: Selection = {
 const FUNDING: FundingSnapshot = {
   spendableNanoUsd: nanoUSD(SPENDABLE),
   heldNanoUsd: nanoUSD(0n),
-  tier: 'paid',
+  payerTier: 'paid',
   payer: 'self',
 };
 

@@ -332,6 +332,64 @@ describe('conversation runtime — claimRun', () => {
     });
     expect(replay).toEqual({ outcome: 'replay', response: { ok: true } });
   });
+
+  /**
+   * The payer is re-resolved on every POST of one client-minted key, and it
+   * MOVES: a group turn admitted against the owner's headroom resubmits as
+   * self-funded once that headroom crosses to ≤ 0 — very plausibly because the
+   * first attempt's own settlement consumed it. Scoping the key row on the payer
+   * would give the resubmit a fresh row: mid-run it would claim as a new
+   * executor (which the one-run-per-conversation block rejects instead of
+   * attaching), and post-settle it would re-execute instead of replaying,
+   * spending provider money on a turn that then aborts on the duplicate message
+   * id. Both pins below hold the payer's two values against one stable sender.
+   */
+  const OWNER_FUNDED: RunIdentity = {
+    ...IDENTITY,
+    userId: crypto.randomUUID(),
+    senderId: CLAIM_USER,
+  };
+  const SELF_FUNDED: RunIdentity = { ...IDENTITY, userId: CLAIM_USER, senderId: CLAIM_USER };
+
+  it('attaches a resubmit of a live run key whose payer changed between attempts', async () => {
+    const runKey = crypto.randomUUID();
+    const rt = runtime();
+    const first = await rt.claimRun({
+      runKey,
+      runId: crypto.randomUUID(),
+      bodyHash: 'h',
+      identity: OWNER_FUNDED,
+    });
+    expect(first.outcome).toBe('executor');
+    const resubmit = await rt.claimRun({
+      runKey,
+      runId: crypto.randomUUID(),
+      bodyHash: 'h',
+      identity: SELF_FUNDED,
+    });
+    expect(resubmit.outcome).toBe('attach');
+  });
+
+  it('replays a settled run key whose payer changed between attempts', async () => {
+    const runKey = crypto.randomUUID();
+    const rt = runtime();
+    const first = await rt.claimRun({
+      runKey,
+      runId: crypto.randomUUID(),
+      bodyHash: 'h',
+      identity: OWNER_FUNDED,
+    });
+    if (first.outcome !== 'executor') throw new Error('expected executor');
+    const flip = await succeedKeyRow(db, first.fence, { ok: true });
+    flip._unsafeUnwrap();
+    const resubmit = await rt.claimRun({
+      runKey,
+      runId: crypto.randomUUID(),
+      bodyHash: 'h',
+      identity: SELF_FUNDED,
+    });
+    expect(resubmit).toEqual({ outcome: 'replay', response: { ok: true } });
+  });
 });
 
 describe('conversation runtime — admission hook', () => {
@@ -426,7 +484,12 @@ describe('conversation runtime — admission hook', () => {
     const memberId = await addMember(conversationId, senderId);
     await db.insert(memberBudgets).values({ memberId, budgetNanoUsd: 1000n, spentNanoUsd: 2000n });
 
-    const context = paidRunContext({ userId: senderId, conversationId, walletId });
+    const context = paidRunContext({
+      userId: ownerId,
+      conversationId,
+      walletId,
+      sender: { kind: 'user', userId: senderId, memberId },
+    });
     const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
     const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
     expect(decision).toEqual({ admitted: false, code: 'INSUFFICIENT_ADMISSION' });
@@ -466,22 +529,6 @@ describe('conversation runtime — admission hook', () => {
       .values({ memberId, budgetNanoUsd: 1_000_000n, spentNanoUsd: 0n });
 
     const context = paidRunContext({ userId: senderId, conversationId, walletId: senderWalletId });
-    const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
-    const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
-    expect(decision.admitted).toBe(true);
-  });
-
-  it('admits a group turn within both the per-member and per-conversation caps (owner funds)', async () => {
-    const { userId: ownerId } = await seedWallet(10_000_000n);
-    const walletId = await ownerWalletId(ownerId);
-    const senderId = await seedBareUser();
-    const conversationId = await seedConversation(ownerId, 1_000_000n);
-    const memberId = await addMember(conversationId, senderId);
-    await db
-      .insert(memberBudgets)
-      .values({ memberId, budgetNanoUsd: 1_000_000n, spentNanoUsd: 0n });
-
-    const context = paidRunContext({ userId: senderId, conversationId, walletId });
     const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
     const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
     expect(decision.admitted).toBe(true);
@@ -546,9 +593,15 @@ describe('conversation runtime — admission hook', () => {
     expect(decision).toEqual({ admitted: false, code: 'INSUFFICIENT_ADMISSION' });
   });
 
-  it('admits an owner-funded group turn carrying an explicit USER sender principal', async () => {
-    // The resolved-sender path for a member (not the flat fallback): the sender
-    // rides the discriminated `sender`, and group scopes gate the same way.
+  it('binds an owner-funded group turn to BOTH group scopes when the run identity names the PAYER', async () => {
+    // The production shape of an owner-funded turn: the run's user id is the
+    // OWNER (who pays) and the member rides `sender`. Owner-funding is derived by
+    // comparing the two — keying that comparison on the payer alone would make it
+    // always false, conclude self-funded, and emit NO group scope, so a member
+    // would spend the owner's money with both caps silently absent. That failure
+    // is invisible to a verdict assertion: an ample owner balance admits the turn
+    // either way. Only the scopes the hold carries distinguish a turn the caps
+    // bound from a turn they were never applied to.
     const { userId: ownerId } = await seedWallet(10_000_000n);
     const walletId = await ownerWalletId(ownerId);
     const senderId = await seedBareUser();
@@ -559,7 +612,7 @@ describe('conversation runtime — admission hook', () => {
       .values({ memberId, budgetNanoUsd: 1_000_000n, spentNanoUsd: 0n });
 
     const context = paidRunContext({
-      userId: senderId,
+      userId: ownerId,
       conversationId,
       walletId,
       sender: { kind: 'user', userId: senderId, memberId },
@@ -567,6 +620,15 @@ describe('conversation runtime — admission hook', () => {
     const hooks: FlowHookBindings = runtime().bindHooks(context, DEFINITION);
     const decision = await hooks.admission({ definition: DEFINITION, estimate: nanoUSD(100n) });
     expect(decision.admitted).toBe(true);
+    if (!decision.admitted || decision.hold === undefined) {
+      throw new Error('expected a granted hold');
+    }
+    // The SENDER's durable member cap and the conversation cap, in that order —
+    // keyed to the member row and the conversation, never to the payer.
+    expect(decision.hold.scopeIds).toEqual([
+      `member:${memberId}`,
+      `conversation:${conversationId}`,
+    ]);
   });
 
   it('maps a non-unavailable admission failure (missing wallet) to INSUFFICIENT_ADMISSION', async () => {

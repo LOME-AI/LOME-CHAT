@@ -10,9 +10,11 @@ import {
   conversations,
   createDb,
   memberBudgets,
+  sharedLinks,
   users,
   wallets,
 } from '@hushbox/db';
+import { toBase64 } from '@hushbox/shared';
 import { applyPipeline } from '../../../middleware/pipeline.js';
 import { SESSION_COOKIE_NAME } from '../../../middleware/pipeline-session.js';
 import { okAsync } from '../../../lib/result/index.js';
@@ -23,6 +25,8 @@ import {
   resolveBudgetScopes,
 } from '../../billing/index.js';
 import { getConversationBudgets } from './budgets.js';
+import { getGuestFunding } from './guest-funding.js';
+import { LINK_CREDENTIAL_HEADER } from './index.js';
 import { createConversationsManifest, createConversationsStores } from '../index.js';
 import { createMembershipRevoker } from '../adapters/membership.js';
 import { createLinkResolutionAdapter } from '../../../adapters/link-resolution.js';
@@ -31,6 +35,10 @@ import type { BudgetScope } from '../../billing/index.js';
 import type { AppEnv, Bindings } from '../../../lib/context/index.js';
 import type { TelemetryEnv } from '../../../lib/telemetry/index.js';
 import type { RealtimeBroadcast } from '../ports/realtime.js';
+import type { GetSpendableResponse } from '@hushbox/shared';
+
+/** The guest funding read's wire body — the same snapshot `/billing/spendable` serves. */
+type GuestFundingBody = GetSpendableResponse;
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 const UPSTASH_REDIS_REST_URL = process.env['UPSTASH_REDIS_REST_URL'];
@@ -977,5 +985,177 @@ describe('budget edits below accrued spend (typed rejection)', () => {
     // The privilege refusal must win over the below-spent one: a non-owner may
     // not binary-search the conversation's accrued spend through cap probes.
     expect(response.status).toBe(403);
+  });
+});
+
+describe("the link guest's funding read (BILLING §Group Funding 1, 6)", () => {
+  const OWNER_BALANCE = 5_000_000_000n; // $5
+  const LINK_ALLOWANCE = 900_000_000n; // $0.90 allocated to the link
+
+  interface SeededLink {
+    conversationId: string;
+    guestKey: string;
+    linkId: string;
+    memberId: string;
+  }
+
+  /**
+   * A funded share link seated on a conversation: the shared_links row the
+   * credential resolves through, its own member row, and the per-link allowance
+   * the owner pre-allocated at mint (BILLING §Group Funding 6 — the row is
+   * keyed to the link, so every holder of the URL shares one cumulative cap).
+   */
+  async function seedFundedLink(
+    options: {
+      allowanceNanoUsd?: bigint;
+      ownerBalanceNanoUsd?: bigint;
+      revokedAt?: Date;
+      expiresAt?: Date;
+    } = {}
+  ): Promise<SeededLink> {
+    const owner = await newUser();
+    await seedPurchasedWallet(owner.userId, options.ownerBalanceNanoUsd ?? OWNER_BALANCE);
+    const { conversationId } = await seedConversation(owner.userId, [
+      { userId: owner.userId, privilege: 'owner' },
+    ]);
+    // Owner funding engages only once the owner sets a per-conversation cap: an
+    // unset cap is 0, not unlimited, and it clamps the whole headroom to zero.
+    await db
+      .update(conversations)
+      .set({ conversationBudgetNanoUsd: 4_000_000_000n })
+      .where(eq(conversations.id, conversationId));
+    const linkPublicKey = crypto.getRandomValues(new Uint8Array(32));
+    const linkRows = await db
+      .insert(sharedLinks)
+      .values({
+        conversationId,
+        linkPublicKey,
+        ...(options.revokedAt === undefined ? {} : { revokedAt: options.revokedAt }),
+        ...(options.expiresAt === undefined ? {} : { expiresAt: options.expiresAt }),
+      })
+      .returning({ id: sharedLinks.id });
+    const linkId = linkRows[0]?.id;
+    if (linkId === undefined) throw new Error('link seed failed');
+    const memberRows = await db
+      .insert(conversationMembers)
+      .values({
+        conversationId,
+        linkId,
+        privilege: 'write',
+        visibleFromEpoch: 1,
+        acceptedAt: new Date(),
+      })
+      .returning({ id: conversationMembers.id });
+    const memberId = memberRows[0]?.id;
+    if (memberId === undefined) throw new Error('guest member seed failed');
+    await db.insert(memberBudgets).values({
+      memberId,
+      budgetNanoUsd: options.allowanceNanoUsd ?? LINK_ALLOWANCE,
+      spentNanoUsd: 0n,
+    });
+    await db.insert(conversationSpending).values({ conversationId, spentNanoUsd: 0n });
+    return { conversationId, guestKey: toBase64(linkPublicKey), linkId, memberId };
+  }
+
+  async function guestGet(path: string, guestKey?: string): Promise<Response> {
+    const headers: Record<string, string> = {};
+    if (guestKey !== undefined) headers[LINK_CREDENTIAL_HEADER] = guestKey;
+    return app.request(path, { method: 'GET', headers }, testEnv);
+  }
+
+  it("serves an active guest its payer's snapshot", async () => {
+    const seeded = await seedFundedLink();
+    const res = await guestGet(`/conversations/${seeded.conversationId}/funding`, seeded.guestKey);
+    expect(res.status).toBe(200);
+    const body: GuestFundingBody = await res.json();
+    expect(body).toEqual({
+      spendableNanoUsd: String(LINK_ALLOWANCE),
+      heldNanoUsd: '0',
+      payerTier: 'paid',
+      payer: 'owner',
+    });
+  });
+
+  it('serves an unallocated link zero spendable, still naming the owner as payer', async () => {
+    const seeded = await seedFundedLink({ allowanceNanoUsd: 0n });
+    const res = await guestGet(`/conversations/${seeded.conversationId}/funding`, seeded.guestKey);
+    expect(res.status).toBe(200);
+    const body: GuestFundingBody = await res.json();
+    expect(body.spendableNanoUsd).toBe('0');
+    expect(body.payer).toBe('owner');
+  });
+
+  it('refuses a guest pointing its credential at a different conversation', async () => {
+    const seeded = await seedFundedLink();
+    const other = await seedFundedLink();
+    const res = await guestGet(`/conversations/${other.conversationId}/funding`, seeded.guestKey);
+    expect(res.status).toBe(404);
+  });
+
+  it('refuses a revoked link', async () => {
+    const seeded = await seedFundedLink({ revokedAt: new Date() });
+    const res = await guestGet(`/conversations/${seeded.conversationId}/funding`, seeded.guestKey);
+    expect(res.status).toBe(401);
+  });
+
+  it('refuses an expired link', async () => {
+    const seeded = await seedFundedLink({ expiresAt: new Date(Date.now() - 60_000) });
+    const res = await guestGet(`/conversations/${seeded.conversationId}/funding`, seeded.guestKey);
+    expect(res.status).toBe(401);
+  });
+
+  it('refuses a departed guest whose link is still live (the active-member gate)', async () => {
+    const seeded = await seedFundedLink();
+    await db
+      .update(conversationMembers)
+      .set({ leftAt: new Date() })
+      .where(eq(conversationMembers.id, seeded.memberId));
+    const res = await guestGet(`/conversations/${seeded.conversationId}/funding`, seeded.guestKey);
+    expect(res.status).toBe(404);
+  });
+
+  it('refuses an anonymous request carrying no credential at all', async () => {
+    const seeded = await seedFundedLink();
+    const res = await guestGet(`/conversations/${seeded.conversationId}/funding`);
+    expect(res.status).toBe(401);
+  });
+
+  it('refuses a full session — a caller with a wallet reads its own funding door', async () => {
+    const seeded = await seedFundedLink();
+    const member = await newUser();
+    const res = await app.request(
+      `/conversations/${seeded.conversationId}/funding`,
+      { method: 'GET', headers: { cookie: member.cookie } },
+      testEnv
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('fails closed when the conversation is gone under a live credential', async () => {
+    // Reached at the domain rather than through the route: a deleted
+    // conversation cascades its link away, so the route's own credential match
+    // refuses first. The guard still has to hold — an absent conversation has
+    // no owner to name as payer, and answering anything but not-found there
+    // would be inventing one.
+    const seeded = await seedFundedLink();
+    const outcome = await getGuestFunding(
+      {
+        stores: createConversationsStores(db),
+        billing: createBillingStores(),
+        db,
+        redis: new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN }),
+      },
+      {
+        conversationId: crypto.randomUUID(),
+        caller: {
+          kind: 'linkGuest',
+          linkId: seeded.linkId,
+          conversationId: seeded.conversationId,
+        },
+        now: new Date(),
+      }
+    );
+
+    expect(outcome._unsafeUnwrap()).toEqual({ refusal: 'not-found' });
   });
 });

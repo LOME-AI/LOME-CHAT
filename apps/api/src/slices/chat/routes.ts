@@ -10,6 +10,8 @@ import {
   buildTurnSystemPrompt,
   historyCharacterCount,
   imageConfigSchema,
+  minTurnCostNanoUsd,
+  priceableModelFrom,
   promptCharacterCount,
   resolveFunding,
   userOnlyMessageSchema,
@@ -19,6 +21,7 @@ import { defineSliceManifest, routeClass } from '../../middleware/pipeline-manif
 import { rateLimitByUser } from '../../middleware/rate-limit.js';
 import {
   CHAT_STREAM_USER_RATE_LIMIT,
+  CHAT_TURN_HOOKS,
   CHAT_TURN_INPUT,
   LINK_CREDENTIAL_HEADER,
   TRIAL_MESSAGE_COST_CAP_NANO_USD,
@@ -32,6 +35,7 @@ import {
   buildTurnDefinition,
   callerUserId,
   canRegenerate,
+  compileAutoEffortTurn,
   consumeChatStreamUserLimit,
   consumeTrialQuota,
   createErrorResponse,
@@ -45,6 +49,7 @@ import {
   listDescriptors,
   mockProviderEnabled,
   parseMockDirectives,
+  pickEffortClassifier,
   readIdempotencyKey,
   resolveCallerMember,
   resolveConversationCaller,
@@ -64,6 +69,8 @@ import type {
   ErrorCode,
   MockDirectives,
   ModelDescriptor,
+  NonEmpty,
+  PriceableModel,
   WorkflowDefinition,
 } from '@hushbox/shared';
 import type { RunStartBody } from '@hushbox/realtime';
@@ -76,6 +83,8 @@ import type {
   FundingDecisionInputs,
   RegenerateDecision,
   TurnBudget,
+  TurnContext,
+  TurnMinCost,
   TurnSender,
 } from './domain/index.js';
 
@@ -502,7 +511,7 @@ interface TierGateBody {
 }
 
 /**
- * The models the paid premium-tier gate judges for a send: the single text
+ * The models the paid premium-tier gate judges for a turn: the single text
  * model, or the multi-model list. A media (image/video) turn and the
  * Smart-Model sentinel are exempt (media is out of scope for the gate;
  * Smart Model derives its candidates from the affordable set already), so both
@@ -558,15 +567,115 @@ async function tierGateRejection(
  * every id the client selects directly (single, multi-model, media). The Smart
  * Model sentinel is not a catalog row and passes through: its candidates are
  * derived from the exposed catalog, which never contains a disabled model.
+ *
+ * It reads the RAW rows (a disabled model is invisible through every exposed
+ * read), so a caller holding an exposed snapshot skips it when that snapshot
+ * already accounts for every selected id — see {@link selectionFullyExposed}.
  */
 async function disabledModelRejection(
   c: Context<AppEnv>,
   body: { readonly model: string; readonly models?: readonly string[] | undefined }
 ): Promise<Response | null> {
-  const disabled = await findAdminDisabledModel({ db: c.var.db }, body.models ?? [body.model]);
+  const disabled = await findAdminDisabledModel({ db: c.var.db }, selectedModels(body));
   if (disabled.isErr()) return respondDomainError(c, disabled.error);
   if (disabled.value === undefined) return null;
   return c.json(createErrorResponse(ERROR_CODES.MODEL_DISABLED), 403);
+}
+
+/**
+ * Whether the exposed snapshot accounts for every selected model. Exposure
+ * filters on `adminDisabledAt IS NULL`, so an id PRESENT in it cannot be
+ * disabled; only an absent id needs the raw rows to tell "disabled" from
+ * "unknown" apart, which is the only question the kill-switch gate answers.
+ * The Smart Model sentinel is not a catalog row, so its absence says nothing.
+ */
+function selectionFullyExposed(
+  body: { readonly model: string; readonly models?: readonly string[] | undefined },
+  exposedCatalog: readonly ModelDescriptor[]
+): boolean {
+  const exposed = new Set(exposedCatalog.map((descriptor) => descriptor.id));
+  return selectedModels(body).every((id) => id === SMART_MODEL_ID || exposed.has(id));
+}
+
+/**
+ * The tier `minTurnCost` is priced at. The candidate payer of a group turn is
+ * the conversation owner, and priority 1 can only matter when the group
+ * headroom is positive — which requires a positive owner balance, and therefore
+ * a paid-tier owner (§User Tiers). So the candidate payer's tier is `paid`
+ * wherever the comparison has any effect, and one evaluation suffices: a member
+ * who falls through is re-priced at their own tier downstream, because the turn
+ * budget then carries the sender's own wallet.
+ */
+const CANDIDATE_PAYER_TIER = 'paid';
+
+/**
+ * The money-layer projection of every selected model, or `null` when any of
+ * them cannot be priced (unknown, unexposed, or missing a rate or a context
+ * length). All-or-nothing because a partial list would price a cheaper turn
+ * than the one being sent; the build refuses such a selection anyway.
+ */
+function priceableSiblings(
+  exposedCatalog: readonly ModelDescriptor[],
+  models: readonly string[]
+): NonEmpty<PriceableModel> | null {
+  const priceable: PriceableModel[] = [];
+  for (const id of models) {
+    const descriptor = exposedCatalog.find((entry) => entry.id === id);
+    const model = descriptor === undefined ? undefined : priceableModelFrom(descriptor);
+    if (model === undefined) return null;
+    priceable.push(model);
+  }
+  const [first, ...rest] = priceable;
+  /* v8 ignore next -- every body carries a `model` and a `models` list is
+     schema-bounded to at least one entry, so the selection is never empty;
+     this only narrows the non-empty shape for the compiler */
+  return first === undefined ? null : [first, ...rest];
+}
+
+/**
+ * The classifier reserve `minTurnCost` carries: the worst-case cost of the one
+ * classifier call an `auto` selection may buy (§Reserve ⟺ classify — the
+ * reserve rides on MAY run, not on did run). Every other selection buys no
+ * classifier, and a catalog with no priceable engine reserves nothing: the send
+ * refuses downstream, where the typed classifier-unavailable error lives.
+ */
+function classifierReserveNanoUsd(
+  exposedCatalog: readonly ModelDescriptor[],
+  reasoningEffort: ReasoningEffortSelection | undefined
+): bigint {
+  if (reasoningEffort !== 'auto') return 0n;
+  return pickEffortClassifier(exposedCatalog)?.classifierWorstCaseNanoUsd ?? 0n;
+}
+
+/**
+ * The turn's `minTurnCost` for the payer freeze, or the shape that carries
+ * none. Priced from the catalog snapshot the seam already holds, so no
+ * additional read reaches the database.
+ */
+function turnMinCost(
+  exposedCatalog: readonly ModelDescriptor[],
+  body: TurnContextRequest,
+  promptCharacterCount: number
+): TurnMinCost {
+  if (body.modality === 'image' || body.modality === 'video') {
+    return { kind: 'unpriced', reason: 'media-per-unit' };
+  }
+  if (body.model === SMART_MODEL_ID) return { kind: 'unpriced', reason: 'smart-slot-pool' };
+  const siblings = priceableSiblings(exposedCatalog, selectedModels(body));
+  if (siblings === null) return { kind: 'unpriced', reason: 'model-not-priceable' };
+  return {
+    kind: 'priced',
+    nanoUsd: minTurnCostNanoUsd({
+      siblings,
+      promptChars: promptCharacterCount,
+      tier: CANDIDATE_PAYER_TIER,
+      // Every paid chat turn persists; only the trial does not, and it never
+      // reaches this seam.
+      persists: true,
+      classifierReserveNanoUsd: classifierReserveNanoUsd(exposedCatalog, body.reasoningEffort),
+      webSearch: body.webSearchEnabled === true,
+    }),
+  };
 }
 
 /**
@@ -682,6 +791,10 @@ async function mediaDefinitionOrRefusal(
  * carries no tool loop), and a non-eligible model falls back, where `auto`
  * resolves deterministically (the sole real choice) or reasoning-free, with
  * no classifier call, charge, or reserve.
+ *
+ * An unaffordable classified turn also yields `null` on this path: admission is
+ * the balance gate for a paid send, so refusing here would pre-empt it. The
+ * trial arm, which has no gate behind the compile, answers that outcome itself.
  */
 async function pinnedAutoDefinitionOrNull(
   c: Context<AppEnv>,
@@ -691,7 +804,7 @@ async function pinnedAutoDefinitionOrNull(
   const auto = await buildAutoEffortTurnDefinition(
     { db: c.var.db, telemetry: c.var.logger },
     model,
-    { budget }
+    { budget, hooks: CHAT_TURN_HOOKS }
   );
   if (auto.isErr()) return respondDomainError(c, auto.error);
   return auto.value.kind === 'built' ? auto.value.definition : null;
@@ -793,22 +906,26 @@ function asTurnBuild(value: WorkflowDefinition | Response): MultiModelTurnBuild 
  * catalog subset and the fixed 1¢ per-message ceiling (trial has no wallet,
  * so the ceiling plays the balance's role); an empty eligible set refuses
  * with 402 TRIAL_MESSAGE_TOO_EXPENSIVE, the same refusal class as a concrete
- * over-cap model. Every other model runs the MODEL/AFFORDABILITY gate and the
- * single-model compile. Both paths run BEFORE the quota INCR — a refusal
- * burns no slot.
+ * over-cap model. Every other model runs the MODEL/AFFORDABILITY gate first,
+ * then the compile its effort selection calls for: the pinned+auto classifier
+ * stage on `auto`, the single-model compile otherwise. Every path runs BEFORE
+ * the quota INCR — a refusal burns no slot.
  */
 /**
  * Trial reasoning acceptance (G9): only levels whose shared-plan token cost
- * fits the 1¢ ceiling run; `auto` resolves to a fitting level or reasoning-
- * free. Computed through the same plan + headroom math the build prices with
- * — never a hardcoded level list. An unknown model falls through untouched
- * (the compile refuses it as unknown).
+ * fits the 1¢ ceiling run. Computed through the same plan + headroom math the
+ * build prices with — never a hardcoded level list. An unknown model falls
+ * through untouched (the compile refuses it as unknown).
+ *
+ * `auto` never reaches here — {@link trialAutoDefinitionOrRefusal} answers it
+ * first, and the parameter type says so — because auto on a trial send is the
+ * classifier's question exactly as it is on a paid one.
  */
 function trialReasoningOrRefusal(
   c: Context<AppEnv>,
   target: ModelDescriptor | undefined,
   budget: TurnBudget,
-  requested: ReasoningEffortSelection | undefined
+  requested: Exclude<ReasoningEffortSelection, 'auto'> | undefined
 ): { readonly response: Response } | { readonly selection: ReasoningEffortSelection | undefined } {
   if (requested === undefined || target === undefined) return { selection: requested };
   const decision = trialReasoningSelection(target, budget, requested);
@@ -883,23 +1000,74 @@ async function trialTurnDefinitionOrRefusal(
   // the gate and the compiled definition measure one prompt.
   const gateRejection = trialGateRejection(c, target, catalog.value, budget.promptCharacterCount);
   if (gateRejection !== null) return gateRejection;
-  const trialReasoning = trialReasoningOrRefusal(c, target, budget, body.reasoningEffort);
+  // `auto` is the classifier's question on every tier, so it is answered before
+  // the per-level acceptance gate — which never sees it.
+  const requested = body.reasoningEffort;
+  if (requested === 'auto') {
+    return trialAutoDefinitionOrRefusal(c, catalog.value, body.model, budget);
+  }
+  const trialReasoning = trialReasoningOrRefusal(c, target, budget, requested);
   if ('response' in trialReasoning) return trialReasoning.response;
-  // A model that cannot build a text turn — unknown, or a non-text
-  // (image/video) model — is refused here with a typed 400.
-  const definition = await buildTurnDefinition(
-    { db: c.var.db, telemetry: c.var.logger },
-    body.model,
-    {
-      hooks: TRIAL_TURN_HOOKS,
-      budget,
-      ...reasoningEffortOption(trialReasoning.selection),
-    }
-  );
+  return trialSingleTurnDefinition(c, body.model, budget, trialReasoning.selection);
+}
+
+/**
+ * The trial single-model compile — the shared tail of every non-Smart trial
+ * path. A model that cannot build a text turn (unknown, or a non-text
+ * image/video model) is refused here with a typed 400.
+ */
+async function trialSingleTurnDefinition(
+  c: Context<AppEnv>,
+  model: string,
+  budget: TurnBudget,
+  selection: ReasoningEffortSelection | undefined
+): Promise<WorkflowDefinition | Response> {
+  const definition = await buildTurnDefinition({ db: c.var.db, telemetry: c.var.logger }, model, {
+    hooks: TRIAL_TURN_HOOKS,
+    budget,
+    ...reasoningEffortOption(selection),
+  });
   return definition.match(
     (value) => value,
     (error) => respondDomainError(c, error)
   );
+}
+
+/**
+ * A trial send on `auto`, through the SAME pinned+auto compiler a paid send
+ * takes — under the trial policy and against the per-message ceiling standing in
+ * for a wallet. There is no trial-specific pricing here and none is needed: the
+ * canonical estimator already prices the classifier's reserve, so the fitted cap
+ * covers reserve plus answer by construction.
+ *
+ * The three outcomes are three different facts, and the trial arm is the one
+ * place where all three have to be told apart:
+ *
+ * - built ⇒ the classifier decides the level, as it does on a paid turn;
+ * - unaffordable ⇒ the ceiling does not cover the classified turn. A trial send
+ *   has no admission gate behind the compile, so this refuses. Running the turn
+ *   reasoning-free instead is the silent static fallback §Reasoning Effort 5
+ *   forbids by name;
+ * - fallback ⇒ the effort question is already settled (a non-reasoning model, or
+ *   a ladder with at most one real choice), so the regular compile resolves it
+ *   deterministically — no classifier call, no charge, no reserve.
+ *
+ * The catalog is the snapshot the eligibility gate already read, so the engine
+ * pick, the premium percentile and the compile cannot straddle a refresh.
+ */
+async function trialAutoDefinitionOrRefusal(
+  c: Context<AppEnv>,
+  catalog: readonly ModelDescriptor[],
+  model: string,
+  budget: TurnBudget
+): Promise<WorkflowDefinition | Response> {
+  const auto = compileAutoEffortTurn(catalog, model, budget, TRIAL_TURN_HOOKS);
+  if (auto.isErr()) return respondDomainError(c, auto.error);
+  if (auto.value.kind === 'built') return auto.value.definition;
+  if (auto.value.kind === 'unaffordable') {
+    return c.json(createErrorResponse(ERROR_CODES.TRIAL_MESSAGE_TOO_EXPENSIVE), 402);
+  }
+  return trialSingleTurnDefinition(c, model, budget, 'auto');
 }
 
 /**
@@ -1020,6 +1188,105 @@ async function resolveGuestSenderOrRefusal(
 }
 
 /**
+ * The turn fields the payer-resolution seam reads: the conversation and the
+ * optional branch the turn runs on, plus the client's model selection.
+ */
+interface TurnContextRequest extends TierGateBody {
+  readonly conversationId: string;
+  readonly forkId?: string | undefined;
+  /** Both feed `minTurnCost`: search is an additive cost, `auto` may buy a classifier. */
+  readonly webSearchEnabled?: boolean | undefined;
+  readonly reasoningEffort?: ReasoningEffortSelection | undefined;
+}
+
+/**
+ * Whether a turn route enforces the premium-tier gate. The seam takes it as a
+ * required argument rather than deriving it, because the exemption is a
+ * product ruling and nothing in the request implies it: a new turn route is
+ * forced to state its choice instead of silently inheriting one.
+ *
+ * `enforced` — the send paths. A caller funding a turn from their own wallet
+ * with no purchased balance cannot select a premium model.
+ *
+ * `exemptModelAlreadyChosen` — the regenerate path. A regenerate may run ANY
+ * model its payer can afford: the model was already chosen on the turn being
+ * regenerated, so entitlement was decided then, and re-deciding it would
+ * strand a caller on a reply they cannot re-run. ONLY entitlement is exempt —
+ * every budget and affordability filter still applies in full, as does the
+ * kill switch, because availability is not entitlement.
+ */
+type PremiumTierGateMode = 'enforced' | 'exemptModelAlreadyChosen';
+
+/**
+ * Who is sending the turn, and what the route decided about the premium-tier
+ * gate. Both are required, so a new turn route states its gate scope in the
+ * same breath as its sender rather than inheriting one by omission.
+ */
+interface GatedTurnCaller {
+  readonly sender: TurnSender;
+  readonly premiumTierGate: PremiumTierGateMode;
+  /**
+   * The prompt the turn will send, measured through the ONE shared counter —
+   * the same number the turn budget carries. It is an argument rather than a
+   * re-measurement because `minTurnCost` must be priced against the identical
+   * prompt admission is budgeted against.
+   */
+  readonly promptCharacterCount: number;
+}
+
+/**
+ * The ONE seam a paid turn route resolves its payer through, and therefore the
+ * one place the model-selection gates are applied. The tier gate is decided
+ * against the payer the context froze, so a route able to obtain a context
+ * without passing here ships a silent bypass — which is how the guest send
+ * came to accept a premium model from a free-tier sender. Every paid entrypoint
+ * (send, guest send, regenerate) resolves through here, and the tier gate's
+ * scope is the caller's declared {@link PremiumTierGateMode}.
+ *
+ * The kill switch applies to every route unconditionally and runs before the
+ * tier gate, so a selection carrying both a disabled model and a premium one
+ * answers the specific MODEL_DISABLED rather than a tier refusal. Returns the
+ * refusal response, or the resolved context.
+ */
+async function resolveGatedTurnContext(
+  c: Context<AppEnv>,
+  deps: ChatRouteDeps,
+  body: TurnContextRequest,
+  caller: GatedTurnCaller
+): Promise<Response | TurnContext> {
+  // The catalog snapshot is read ONCE here, above the freeze, and serves both
+  // gates below: the payer decision needs the selected models' rates to price
+  // `minTurnCost`, and the kill switch needs to know which selected ids the
+  // exposed set carries.
+  const catalog = await listDescriptors({ db: c.var.db, telemetry: c.var.logger });
+  if (catalog.isErr()) return respondDomainError(c, catalog.error);
+  const resolved = await resolveTurnContext(
+    { conversations: deps.conversations, billing: deps.billing },
+    c.var.db,
+    {
+      conversationId: body.conversationId,
+      sender: caller.sender,
+      forkId: body.forkId,
+      now: new Date(),
+      minTurnCost: turnMinCost(catalog.value, body, caller.promptCharacterCount),
+    }
+  );
+  if (resolved.isErr()) return respondDomainError(c, resolved.error);
+  if (!selectionFullyExposed(body, catalog.value)) {
+    const disabledRejection = await disabledModelRejection(c, body);
+    if (disabledRejection !== null) return disabledRejection;
+  }
+  if (caller.premiumTierGate === 'exemptModelAlreadyChosen') return resolved.value;
+  // The paid premium-tier gate (parallel to the trial gate): a direct-billing
+  // caller with no balance cannot select a premium model. It reads the funding
+  // primitives the context froze, so it follows the PAYER — an owner-funded
+  // turn is exempt whatever the sender could afford personally.
+  const tierRejection = await tierGateRejection(c, body, resolved.value.fundingDecisionInputs);
+  if (tierRejection !== null) return tierRejection;
+  return resolved.value;
+}
+
+/**
  * The chat turn's HTTP surface. The route resolves the run identity (paying
  * wallet, current epoch), compiles the single-model turn, and hands the run to
  * the conversation DO — the DO owns the referee claim, deadline, streaming, and
@@ -1051,40 +1318,27 @@ export function createChatManifest(deps: ChatRouteDeps) {
             return c.json(createErrorResponse(ERROR_CODES.VALIDATION), 400);
           }
 
-          const context = await resolveTurnContext(
-            { conversations: deps.conversations, billing: deps.billing },
-            c.var.db,
-            {
-              conversationId: body.conversationId,
-              sender: { kind: 'user', userId },
-              forkId: body.forkId,
-              now: new Date(),
-            }
-          );
-          if (context.isErr()) return respondDomainError(c, context.error);
-
-          // The admin kill switch outranks the tier gate: a disabled model is
-          // refused as disabled even for a caller with premium access.
-          const disabledRejection = await disabledModelRejection(c, body);
-          if (disabledRejection !== null) return disabledRejection;
-
-          // The paid premium-tier gate (parallel to the trial gate): a
-          // direct-billing caller with no balance cannot select a premium model.
-          const tierRejection = await tierGateRejection(
-            c,
-            body,
-            context.value.fundingDecisionInputs
-          );
-          if (tierRejection !== null) return tierRejection;
-
           // History always rides the hash normalized — absent and [] must
           // hash identically, so a client upgrade never causes a spurious 409.
-          // Normalized BEFORE the build: the same characters feed the
-          // output-token ceiling's input estimate.
+          // Normalized BEFORE the payer freeze: the same characters price the
+          // turn's minimum and, below, the output-token ceiling's input estimate.
           const history = normalizedHistory(body.history);
+          const promptCharacterCount = turnPromptCharacterCount(
+            body,
+            body.userMessage.content,
+            history
+          );
+
+          const context = await resolveGatedTurnContext(c, deps, body, {
+            sender: { kind: 'user', userId },
+            premiumTierGate: 'enforced',
+            promptCharacterCount,
+          });
+          if (context instanceof Response) return context;
+
           const budget: TurnBudget = {
-            promptCharacterCount: turnPromptCharacterCount(body, body.userMessage.content, history),
-            funding: context.value.funding,
+            promptCharacterCount,
+            funding: context.funding,
           };
           const definition = await turnDefinitionOrRefusal(c, deps, body, { userId, budget });
           if (definition instanceof Response) return definition;
@@ -1097,11 +1351,11 @@ export function createChatManifest(deps: ChatRouteDeps) {
             definition: definition.definition,
             inputs: turnInputs(definition, body.userMessage.content, history),
             history,
-            userId: context.value.payerUserId,
-            senderId: context.value.senderId,
-            sender: context.value.sender,
-            walletId: context.value.walletId,
-            epochNumber: context.value.epochNumber,
+            userId: context.payerUserId,
+            senderId: context.senderId,
+            sender: context.sender,
+            walletId: context.walletId,
+            epochNumber: context.epochNumber,
             userMessage: body.userMessage,
             ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
             // Run-scoped client context, never baked into the definition
@@ -1122,9 +1376,12 @@ export function createChatManifest(deps: ChatRouteDeps) {
       // guest SERVER-SIDE from its `x-link-public-key` credential (never a
       // client-claimed id), then gates on the active member row, its WRITE
       // privilege, and the typed conversation match, before deferring to the same
-      // turn-context/startRun path. A guest may fork exactly like a member —
-      // `body.forkId` is forwarded and validated downstream. The OWNER funds the
-      // turn; the guest is the sender.
+      // turn-context/startRun path. The server accepts a guest's `forkId` and
+      // validates it downstream, so a guest may send onto an existing branch.
+      // A write-privileged guest is also rendered a Fork control, while the
+      // fork-management routes are session-classed and answer 401 without a
+      // session — so pressing it cannot succeed. That gap is a product one and
+      // is not closed here. The OWNER funds the turn; the guest is the sender.
       .post(
         '/guest',
         routeClass('public'),
@@ -1150,30 +1407,26 @@ export function createChatManifest(deps: ChatRouteDeps) {
           );
           if (rateLimited !== null) return rateLimited;
 
-          const context = await resolveTurnContext(
-            { conversations: deps.conversations, billing: deps.billing },
-            c.var.db,
-            {
-              conversationId: body.conversationId,
-              sender,
-              forkId: body.forkId,
-              now: new Date(),
-            }
-          );
-          if (context.isErr()) return respondDomainError(c, context.error);
-
-          // Same point in the flow as the paid send's gate: after the caller is
-          // resolved and gated, before the turn build's generic unknown refusal.
-          const disabledRejection = await disabledModelRejection(c, body);
-          if (disabledRejection !== null) return disabledRejection;
-
           const history = normalizedHistory(body.history);
+          const promptCharacterCount = turnPromptCharacterCount(
+            body,
+            body.userMessage.content,
+            history
+          );
+
+          const context = await resolveGatedTurnContext(c, deps, body, {
+            sender,
+            premiumTierGate: 'enforced',
+            promptCharacterCount,
+          });
+          if (context instanceof Response) return context;
+
           const budget: TurnBudget = {
-            promptCharacterCount: turnPromptCharacterCount(body, body.userMessage.content, history),
-            funding: context.value.funding,
+            promptCharacterCount,
+            funding: context.funding,
           };
           const definition = await turnDefinitionOrRefusal(c, deps, body, {
-            userId: context.value.payerUserId,
+            userId: context.payerUserId,
             budget,
           });
           if (definition instanceof Response) return definition;
@@ -1187,11 +1440,11 @@ export function createChatManifest(deps: ChatRouteDeps) {
             inputs: turnInputs(definition, body.userMessage.content, history),
             history,
             // The OWNER pays (payerUserId); the guest is the sender.
-            userId: context.value.payerUserId,
-            senderId: context.value.senderId,
-            sender: context.value.sender,
-            walletId: context.value.walletId,
-            epochNumber: context.value.epochNumber,
+            userId: context.payerUserId,
+            senderId: context.senderId,
+            sender: context.sender,
+            walletId: context.walletId,
+            epochNumber: context.epochNumber,
             userMessage: body.userMessage,
             ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
             // Run-scoped client context, never baked into the definition
@@ -1229,17 +1482,23 @@ export function createChatManifest(deps: ChatRouteDeps) {
             return c.json(createErrorResponse(ERROR_CODES.VALIDATION), 400);
           }
 
-          const context = await resolveTurnContext(
-            { conversations: deps.conversations, billing: deps.billing },
-            c.var.db,
-            {
-              conversationId: body.conversationId,
-              sender: { kind: 'user', userId },
-              forkId: body.forkId,
-              now: new Date(),
-            }
+          // Normalized and measured BEFORE the payer freeze: the re-run prompt
+          // + resent history price the turn's minimum and, below, the
+          // output-token ceiling's input estimate. Absent and [] hash
+          // identically, so a client upgrade never causes a spurious 409.
+          const history = normalizedHistory(body.history);
+          const promptCharacterCount = turnPromptCharacterCount(
+            body,
+            body.userMessage.content,
+            history
           );
-          if (context.isErr()) return respondDomainError(c, context.error);
+
+          const context = await resolveGatedTurnContext(c, deps, body, {
+            sender: { kind: 'user', userId },
+            premiumTierGate: 'exemptModelAlreadyChosen',
+            promptCharacterCount,
+          });
+          if (context instanceof Response) return context;
 
           const decision = await canRegenerate(deps.conversations(c.var.db), {
             conversationId: body.conversationId,
@@ -1253,13 +1512,10 @@ export function createChatManifest(deps: ChatRouteDeps) {
           if (rejection !== null) return rejection;
 
           // Symmetric with `/chat`: absent `models` is the single-model
-          // regenerate (`model` is the anchor); two or more fans out. The
-          // re-run prompt + resent history feed the same output-token ceiling.
-          // Normalized like the send route: absent and [] hash identically.
-          const history = normalizedHistory(body.history);
+          // regenerate (`model` is the anchor); two or more fans out.
           const budget: TurnBudget = {
-            promptCharacterCount: turnPromptCharacterCount(body, body.userMessage.content, history),
-            funding: context.value.funding,
+            promptCharacterCount,
+            funding: context.funding,
           };
           // The SAME resolver as the send paths — a regenerate resolves media
           // lists, the Smart Model sentinel, multi-model fan-out, and the
@@ -1294,11 +1550,11 @@ export function createChatManifest(deps: ChatRouteDeps) {
             definition: definition.definition,
             inputs: turnInputs(definition, body.userMessage.content, history),
             history,
-            userId: context.value.payerUserId,
-            senderId: context.value.senderId,
-            sender: context.value.sender,
-            walletId: context.value.walletId,
-            epochNumber: context.value.epochNumber,
+            userId: context.payerUserId,
+            senderId: context.senderId,
+            sender: context.sender,
+            walletId: context.walletId,
+            epochNumber: context.epochNumber,
             userMessage: body.userMessage,
             ...(body.forkId === undefined ? {} : { forkId: body.forkId }),
             regenerate,

@@ -100,7 +100,7 @@ const MODEL: PriceableModel = {
 const FUNDING: FundingSnapshot = {
   spendableNanoUsd: nanoUSD(90_000_000n),
   heldNanoUsd: nanoUSD(10_000_000n),
-  tier: 'paid',
+  payerTier: 'paid',
   payer: 'self',
 };
 

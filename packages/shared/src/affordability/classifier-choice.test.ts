@@ -58,7 +58,7 @@ function admissibleAt(spendable: bigint): OptionSet {
   const funding: FundingSnapshot = {
     spendableNanoUsd: nanoUSD(spendable),
     heldNanoUsd: nanoUSD(0n),
-    tier: 'paid',
+    payerTier: 'paid',
     payer: 'self',
   };
   return getTurnOptions(funding, BASIS, SELECTION, { models: CATALOG, nowMs: NOW_MS }).admissible;
@@ -166,7 +166,7 @@ describe('a pinned turn', () => {
     {
       spendableNanoUsd: nanoUSD(10_000_000_000n),
       heldNanoUsd: nanoUSD(0n),
-      tier: 'paid',
+      payerTier: 'paid',
       payer: 'self',
     },
     BASIS,
@@ -190,7 +190,7 @@ describe('a candidate with no rungs to annotate', () => {
     {
       spendableNanoUsd: nanoUSD(10_000_000_000n),
       heldNanoUsd: nanoUSD(0n),
-      tier: 'paid',
+      payerTier: 'paid',
       payer: 'self',
     },
     BASIS,
@@ -214,7 +214,12 @@ describe('a turn whose funding presents no option on an axis', () => {
   // what a payer cannot afford is the point — and no rung on the axis is
   // available, so there is nothing for the classifier to pick.
   const broke = getTurnOptions(
-    { spendableNanoUsd: nanoUSD(1000n), heldNanoUsd: nanoUSD(0n), tier: 'paid', payer: 'self' },
+    {
+      spendableNanoUsd: nanoUSD(1000n),
+      heldNanoUsd: nanoUSD(0n),
+      payerTier: 'paid',
+      payer: 'self',
+    },
     BASIS,
     SELECTION,
     { models: CATALOG, nowMs: NOW_MS }

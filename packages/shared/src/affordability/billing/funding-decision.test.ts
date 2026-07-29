@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { resolveFunding, type FundingInputs } from './funding-decision.js';
 
-/** A four-cent turn estimate, the amount the group headroom has to cover. */
-const ESTIMATE = 40_000_000n;
+/** A four-cent `minTurnCost`, the amount the group headroom has to cover. */
+const MIN_TURN_COST = 40_000_000n;
 
 /**
  * Base inputs for a solo owner with a positive purchased balance selecting a
@@ -18,7 +18,7 @@ function inputs(overrides: Partial<FundingInputs>): FundingInputs {
     ownerPurchasedBalanceNanoUsd: 0n,
     callerOwnPurchasedBalanceNanoUsd: 1000n,
     isPremiumModel: false,
-    turnEstimateNanoUsd: undefined,
+    minTurnCostNanoUsd: undefined,
     ...overrides,
   };
 }
@@ -194,20 +194,22 @@ describe('resolveFunding', () => {
   });
 });
 
-describe('resolveFunding — priority 1 compares the turn estimate', () => {
-  it('owner-funds when the headroom exactly equals the turn estimate', () => {
-    expect(resolveFunding(groupInputs(ESTIMATE, { turnEstimateNanoUsd: ESTIMATE }))).toEqual({
+describe('resolveFunding — priority 1 compares `minTurnCost`', () => {
+  it('owner-funds when the headroom exactly equals the minimum turn cost', () => {
+    expect(
+      resolveFunding(groupInputs(MIN_TURN_COST, { minTurnCostNanoUsd: MIN_TURN_COST }))
+    ).toEqual({
       payer: 'owner',
       walletKind: 'purchased',
       premiumAllowed: true,
     });
   });
 
-  it('falls through to self funding when the headroom is one nano below the turn estimate', () => {
+  it('falls through to self funding when the headroom is one nano below the minimum turn cost', () => {
     expect(
       resolveFunding(
-        groupInputs(ESTIMATE - 1n, {
-          turnEstimateNanoUsd: ESTIMATE,
+        groupInputs(MIN_TURN_COST - 1n, {
+          minTurnCostNanoUsd: MIN_TURN_COST,
           callerOwnPurchasedBalanceNanoUsd: 7n,
         })
       )
@@ -219,25 +221,27 @@ describe('resolveFunding — priority 1 compares the turn estimate', () => {
     });
   });
 
-  it('refuses a link guest whose headroom is positive but below the turn estimate', () => {
+  it('refuses a link guest whose headroom is positive but below the minimum turn cost', () => {
     expect(
-      resolveFunding(groupInputs(ESTIMATE - 1n, { isGuest: true, turnEstimateNanoUsd: ESTIMATE }))
+      resolveFunding(
+        groupInputs(MIN_TURN_COST - 1n, { isGuest: true, minTurnCostNanoUsd: MIN_TURN_COST })
+      )
     ).toEqual({ payer: 'refuse', refusalCode: 'GROUP_BUDGET_EXHAUSTED' });
   });
 
   it('owner-funds on positive headroom when no turn is priced', () => {
-    // The unpriced query — who WOULD pay — has no estimate clause to apply.
-    expect(resolveFunding(groupInputs(1n, { turnEstimateNanoUsd: undefined }))).toEqual({
+    // The unpriced query — who WOULD pay — has no comparison to apply.
+    expect(resolveFunding(groupInputs(1n, { minTurnCostNanoUsd: undefined }))).toEqual({
       payer: 'owner',
       walletKind: 'purchased',
       premiumAllowed: true,
     });
   });
 
-  it('never owner-funds exhausted headroom, even against a zero turn estimate', () => {
+  it('never owner-funds exhausted headroom, even against a zero minimum', () => {
     expect(
       resolveFunding(
-        groupInputs(0n, { turnEstimateNanoUsd: 0n, callerOwnPurchasedBalanceNanoUsd: 7n })
+        groupInputs(0n, { minTurnCostNanoUsd: 0n, callerOwnPurchasedBalanceNanoUsd: 7n })
       )
     ).toEqual({
       payer: 'self',
@@ -250,7 +254,9 @@ describe('resolveFunding — priority 1 compares the turn estimate', () => {
   it('marks no payer switch on a solo turn', () => {
     // `toStrictEqual` so the key is asserted present and undefined: a consumer
     // reading it sees "no disclosure", not a missing field.
-    expect(resolveFunding(inputs({ isSolo: true, turnEstimateNanoUsd: ESTIMATE }))).toStrictEqual({
+    expect(
+      resolveFunding(inputs({ isSolo: true, minTurnCostNanoUsd: MIN_TURN_COST }))
+    ).toStrictEqual({
       payer: 'self',
       walletKind: 'purchased',
       premiumAllowed: true,

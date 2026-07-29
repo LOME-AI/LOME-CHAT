@@ -1,4 +1,4 @@
-import type { MemberPrivilege } from '@hushbox/shared';
+import type { MemberPrivilege, ResolvedReasoningEffort } from '@hushbox/shared';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { DbWriter } from '../../../lib/idempotency/index.js';
 import type { ResultAsync } from '../../../lib/result/index.js';
@@ -125,6 +125,13 @@ export interface ContentItemRow {
    * completion row exists (user text, media, pre-feature rows).
    */
   readonly reasoningTokens: number | null;
+  /**
+   * The level the generation behind this item reasoned at
+   * (`llm_completions.reasoningEffort`), or null when no completion row
+   * recorded one. Null and `off` are different facts: null is "no reasoning
+   * wire was sent", `off` is "reasoning was resolved to none".
+   */
+  readonly reasoningEffort: ResolvedReasoningEffort | null;
 }
 
 /** A conversation message with its content items — the history read's row. */

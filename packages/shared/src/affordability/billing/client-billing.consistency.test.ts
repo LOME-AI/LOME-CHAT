@@ -6,7 +6,7 @@
  * - If resolveClientBilling() → denied → notifications MUST include a blocking error
  * - If resolveClientBilling() → approved → notifications MUST NOT include afford-blocking errors
  *
- * Parameterized across: tier × balance × isPremium × group/solo × privilege
+ * Parameterized across: tier × balance × isPremium × privilege
  */
 
 import { describe, it, expect } from 'vitest';
@@ -173,111 +173,60 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
     });
   });
 
-  describe('personal: guest tier', () => {
-    it('guest without group budget → denied, has denial notification', () => {
+  describe('link guest: owner-funded', () => {
+    it('guest with no allocation → denied, has denial notification', () => {
       assertConsistency({
         tier: 'guest',
         purchasedBalanceNanoUsd: nano(0),
-        spendableNanoUsd: spendableFor(0),
+        // A guest's served figure is the owner-funded headroom; an unallocated
+        // link serves zero, and zero is what refuses it.
+        spendableNanoUsd: nano(0),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(1),
       });
     });
 
-    it('guest + group budget → approved via owner, no denial notifications', () => {
+    it('guest whose payer covers the turn → approved via owner, no denial notifications', () => {
       assertConsistency({
         tier: 'guest',
         purchasedBalanceNanoUsd: nano(0),
-        spendableNanoUsd: spendableFor(0),
+        spendableNanoUsd: nano(500),
         isPremiumModel: false,
         estimatedMinimumCostNanoUsd: nano(1),
-        group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(5000) },
       });
     });
 
-    it('guest + group budget exhausted → denied, has denial notification', () => {
+    it('guest on a premium model its payer covers → approved, no denial notifications', () => {
       assertConsistency({
         tier: 'guest',
         purchasedBalanceNanoUsd: nano(0),
-        spendableNanoUsd: spendableFor(0),
-        isPremiumModel: false,
+        spendableNanoUsd: nano(500),
+        isPremiumModel: true,
         estimatedMinimumCostNanoUsd: nano(1),
-        group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
       });
     });
 
-    it('guest + delegated budget active + owner pays → approved, no denial notifications', () => {
-      assertConsistency(
-        {
-          tier: 'guest',
-          purchasedBalanceNanoUsd: nano(0),
-          spendableNanoUsd: spendableFor(0),
-          isPremiumModel: false,
-          estimatedMinimumCostNanoUsd: nano(1),
-          group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(5000) },
-        },
-        { hasDelegatedBudget: true }
-      );
-    });
-
-    it('guest + group budget exhausted → denied, with no payer-switch disclosure', () => {
-      assertConsistency(
-        {
-          tier: 'guest',
-          purchasedBalanceNanoUsd: nano(0),
-          spendableNanoUsd: spendableFor(0),
-          isPremiumModel: false,
-          estimatedMinimumCostNanoUsd: nano(1),
-          group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
-        },
-        { hasDelegatedBudget: true }
-      );
-    });
-  });
-
-  describe('group paths', () => {
-    it('group + owner can use model → approved via owner, no denial notifications', () => {
+    it('guest whose allocation is exhausted → denied, has denial notification', () => {
       assertConsistency({
-        tier: 'free',
+        tier: 'guest',
         purchasedBalanceNanoUsd: nano(0),
         spendableNanoUsd: nano(0),
         isPremiumModel: false,
-        estimatedMinimumCostNanoUsd: nano(10),
-        group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(5000) },
+        estimatedMinimumCostNanoUsd: nano(1),
       });
     });
 
-    it('group + owner cannot use premium → falls through to personal, consistency holds', () => {
-      assertConsistency({
-        tier: 'paid',
-        purchasedBalanceNanoUsd: nano(1000),
-        spendableNanoUsd: spendableFor(1000),
-        isPremiumModel: true,
-        estimatedMinimumCostNanoUsd: nano(10),
-        group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(0) },
-      });
-    });
-
-    it('group budget exhausted → falls through to personal, consistency holds', () => {
-      assertConsistency({
-        tier: 'paid',
-        purchasedBalanceNanoUsd: nano(1000),
-        spendableNanoUsd: spendableFor(1000),
-        isPremiumModel: false,
-        estimatedMinimumCostNanoUsd: nano(10),
-        group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
-      });
-    });
-
-    it('group budget exhausted + personal insufficient → denied, has denial notification', () => {
-      assertConsistency({
-        tier: 'paid',
-        purchasedBalanceNanoUsd: nano(0),
-        spendableNanoUsd: spendableFor(0),
-        isPremiumModel: false,
-        estimatedMinimumCostNanoUsd: nano(200),
-        group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
-      });
+    it('guest on a delegated budget the owner pays → approved, no denial notifications', () => {
+      assertConsistency(
+        {
+          tier: 'guest',
+          purchasedBalanceNanoUsd: nano(0),
+          spendableNanoUsd: nano(500),
+          isPremiumModel: false,
+          estimatedMinimumCostNanoUsd: nano(1),
+        },
+        { hasDelegatedBudget: true }
+      );
     });
   });
 
@@ -309,28 +258,29 @@ describe('resolveClientBilling ↔ generateNotifications consistency', () => {
     });
 
     it('delegated budget active + owner pays → approved, no denial notifications', () => {
+      // Owner funding is reachable from this function only for a link guest,
+      // whose payer is structural; a signed-in member's payer is named by the
+      // served snapshot one layer out, never re-decided here.
       assertConsistency(
         {
-          tier: 'free',
+          tier: 'guest',
           purchasedBalanceNanoUsd: nano(0),
-          spendableNanoUsd: spendableFor(0),
+          spendableNanoUsd: nano(500),
           isPremiumModel: false,
           estimatedMinimumCostNanoUsd: nano(10),
-          group: { effectiveRemainingNanoUsd: nano(500), ownerBalanceNanoUsd: nano(5000) },
         },
         { hasDelegatedBudget: true }
       );
     });
 
-    it('delegated budget exhausted + personal insufficient → denied, has notification', () => {
+    it('delegated budget exhausted → denied, has notification', () => {
       assertConsistency(
         {
-          tier: 'free',
+          tier: 'guest',
           purchasedBalanceNanoUsd: nano(0),
-          spendableNanoUsd: spendableFor(0),
+          spendableNanoUsd: nano(0),
           isPremiumModel: false,
           estimatedMinimumCostNanoUsd: nano(10),
-          group: { effectiveRemainingNanoUsd: nano(0), ownerBalanceNanoUsd: nano(5000) },
         },
         { hasDelegatedBudget: true }
       );

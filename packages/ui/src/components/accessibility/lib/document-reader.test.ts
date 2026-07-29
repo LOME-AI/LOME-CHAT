@@ -365,6 +365,72 @@ describe('createDocumentReader — chunking & offsets', () => {
   });
 });
 
+function manyWords(prefix: string, count: number): string {
+  return Array.from({ length: count }, (_, index) => `${prefix}${String(index)}`).join(' ');
+}
+
+/**
+ * 20 words with a comma at word 10: above the halved fast-start threshold (13)
+ * so it splits while the budget lasts, below the full threshold (25) so it
+ * stays whole afterwards. Both halves clear the splitter's minimum piece size.
+ */
+function makeSplittableSentence(prefix: string): string {
+  const left = manyWords(`${prefix}L`, 10);
+  const right = manyWords(`${prefix}R`, 10);
+  return `${left}, ${right}.`;
+}
+
+const FOUR_SPLITTABLE_BLOCKS = ['one', 'two', 'three', 'four']
+  .map((prefix) => `<p>${makeSplittableSentence(prefix)}</p>`)
+  .join('');
+
+describe('createDocumentReader — fast-start splitting', () => {
+  it('spends the fast-start budget across the document, not per block', () => {
+    const fake = makeFakeTts();
+    hoisted.service = fake.service;
+    const container = makeContainer(FOUR_SPLITTABLE_BLOCKS);
+    const reader = createDocumentReader({
+      container,
+      voice: 'af_heart',
+      onChunk: noop,
+      onState: noop,
+      onDownloadProgress: noop,
+    });
+    // The first three sentences of the DOCUMENT split in two; the fourth is
+    // under the full threshold and stays whole. A per-block budget would give
+    // 8 (every block's first sentence splits), no budget at all would give 4.
+    expect(reader.chunkCount).toBe(7);
+  });
+
+  it('keeps the offsets invariant for the pieces of a fast-start split block', async () => {
+    const fake = makeFakeTts();
+    hoisted.service = fake.service;
+    const container = makeContainer(FOUR_SPLITTABLE_BLOCKS);
+    const chunks: { blockEl: HTMLElement; text: string; startOffset: number; endOffset: number }[] =
+      [];
+    const reader = createDocumentReader({
+      container,
+      voice: 'af_heart',
+      onChunk: (e): void => {
+        chunks.push({
+          blockEl: e.blockEl,
+          text: e.text,
+          startOffset: e.startOffset,
+          endOffset: e.endOffset,
+        });
+      },
+      onState: noop,
+      onDownloadProgress: noop,
+    });
+    await reader.start();
+    expect(chunks).toHaveLength(7);
+    for (const chunk of chunks) {
+      const normalized = normalizeForSpeech(chunk.blockEl.textContent);
+      expect(normalized.slice(chunk.startOffset, chunk.endOffset)).toBe(chunk.text);
+    }
+  });
+});
+
 describe('createDocumentReader — playback & state machine', () => {
   it('unlocks audio, loads with the passed voice, and speaks every chunk sequentially', async () => {
     const fake = makeFakeTts();

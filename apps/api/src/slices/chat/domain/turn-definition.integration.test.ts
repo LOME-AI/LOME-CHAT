@@ -184,7 +184,14 @@ async function builtAnswerParams(balanceNanoUsd: bigint): Promise<Record<string,
   const context = await resolveTurnContext(
     { conversations: createConversationsStores, billing: createBillingStores() },
     db,
-    { conversationId, sender: { kind: 'user', userId }, now: new Date() }
+    {
+      conversationId,
+      sender: { kind: 'user', userId },
+      now: new Date(),
+      // A solo turn never reaches the group comparison, so the amount is inert
+      // here; the seam takes it always so no caller can omit it where it counts.
+      minTurnCost: { kind: 'priced', nanoUsd: 1n },
+    }
   );
   const funding = context._unsafeUnwrap().funding;
   // Seed and build under the shared catalog lock: an unlocked insert would

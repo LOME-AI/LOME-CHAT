@@ -113,8 +113,10 @@ const HTML_DOC = documentFixture(
  * values they stand for. This is the shape of the defect the suite exists to
  * catch — a visualiser whose readout stays perfect while every bar computes to
  * zero height — so the proof is the bars' measured geometry, never the readout
- * beside them. Reset restores the unsorted order, which is what makes the
- * second algorithm's click a real re-sort rather than a no-op over sorted data.
+ * beside them. Each algorithm sorts a fresh copy of the pristine values, so the
+ * data never changes; what Reset restores is the *painted* order. That is what
+ * makes the second algorithm's click have to redraw, rather than pass over bars
+ * already left ascending by the first.
  */
 const JS_DOC = documentFixture(
   'js',
@@ -504,7 +506,10 @@ test.describe('Runnable documents', () => {
       const strip = await documentPanel.consoleMetrics();
       // Squashed to a line or two is the failure: the strip must stand several
       // lines tall, and cap by scrolling rather than by growing without end.
-      expect(strip.clientHeight).toBeGreaterThanOrEqual(
+      // Measured on the content box, since padding shows no lines — against the
+      // padded `clientHeight` a strip cut to three visible lines still clears
+      // four lines' worth of pixels and the regression passes unseen.
+      expect(strip.contentHeight).toBeGreaterThanOrEqual(
         strip.lineHeight * MIN_CONSOLE_LINES_VISIBLE
       );
       expect(strip.scrollHeight).toBeGreaterThan(strip.clientHeight);

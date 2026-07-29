@@ -10,7 +10,7 @@ import { affordability, evaluateManifest } from '@hushbox/shared/affordability/e
 
 import { useStability } from '@/providers/stability-provider';
 import { useUserTierInfo } from '@/hooks/billing/use-user-tier-info.js';
-import { useSpendable } from '@/hooks/billing/use-spendable.js';
+import { hasServedFunding, useSpendable } from '@/hooks/billing/use-spendable.js';
 import type { BillableRequest, Manifest } from '@hushbox/shared/affordability/estimate/types';
 
 const DEBOUNCE_MS = 150;
@@ -77,9 +77,10 @@ interface TierFunds {
    */
   tier: UserTier;
   /**
-   * The payer's served spendable (`GET /billing/spendable`) — hold-aware, and
-   * the whole money gate for every authenticated tier: a paid payer's
-   * cushioned wallet spendable, a free payer's day-keyed allowance remaining.
+   * The payer's served spendable — hold-aware, and the whole money gate for
+   * every payer with a funding door: a paid payer's cushioned wallet spendable,
+   * a free payer's day-keyed allowance remaining, a guest's owner-funded group
+   * headroom.
    */
   spendableNanoUsd: bigint;
 }
@@ -87,17 +88,16 @@ interface TierFunds {
 /**
  * The effective balance the affordability solve gates against.
  *
- * Every authenticated tier reads ONE served number, with no branch between
- * paid and free: which wallet funds the turn was decided server-side and is
- * already baked into the figure, so a client branch here could only
- * reintroduce a second funding authority. The branch that remains is the
- * AUTHENTICATION boundary, not a tier boundary — trial and guest are refused
- * by the endpoint's route class by design, so their fixed per-message ceiling
- * is the one arm that stays client-side.
+ * Every payer with a funding door reads ONE served number, with no branch
+ * between paid, free and owner-funded: which wallet funds the turn was decided
+ * server-side and is already baked into the figure, so a client branch here
+ * could only reintroduce a second funding authority. The branch that remains is
+ * the one tier with no door at all — the trial, whose fixed per-message ceiling
+ * is therefore the one arm that stays client-side (BILLING §Affordability 8).
  */
 function effectiveBalanceFor(funds: TierFunds): bigint {
-  if (funds.tier === 'trial' || funds.tier === 'guest') {
-    return getEffectiveBalanceNano(funds.tier, 0n, 0n);
+  if (funds.tier === 'trial') {
+    return getEffectiveBalanceNano('trial', 0n, 0n);
   }
   return funds.spendableNanoUsd;
 }
@@ -196,15 +196,24 @@ export function useBudgetCalculation(
   // tier, exactly what admission gates on (BILLING §Affordability 1). The
   // client never re-derives either figure: not the balance (the cushion is
   // baked in once server-side) and not the payer's tier (the server resolves
-  // who pays from fresh rows). Pending served numbers count as loading so the
-  // composer blocks instead of flashing a spurious denial.
-  const { data: spendableData, isPending: isSpendablePending } = useSpendable(input.conversationId);
-  const isBalanceLoading = input.isAuthenticated && (!isBalanceStable || isSpendablePending);
+  // who pays from fresh rows).
+  const { data: spendableData } = useSpendable(input.conversationId);
+  // A caller that HAS a funding door counts as loading until the snapshot is in
+  // hand — keyed on the ABSENCE of the snapshot, not on the query being
+  // pending, because a FAILED read settles with no data and a pending-only gate
+  // would publish the fallback below as a settled answer. For a link guest that
+  // answer is zero spendable at the SENDER's tier, which is a money verdict the
+  // server never gave. A caller with no door at all (the trial) never resolves
+  // the query, so its permanent absence must not gate it.
+  const isBalanceLoading =
+    hasServedFunding(input.isAuthenticated, input.conversationId ?? null) &&
+    (!isBalanceStable || spendableData === undefined);
 
   const spendableNanoUsd = spendableData ? BigInt(spendableData.spendableNanoUsd) : 0n;
-  // Trial and guest hold no wallet and have no endpoint, so their tier comes
-  // from the client-side arm; every served snapshot names the payer's tier.
-  const payerTier = spendableData?.tier ?? tierInfo.tier;
+  // Only the trial holds no wallet and no funding door, so only it falls back
+  // to the client-side arm; every served snapshot names the PAYER's tier, which
+  // is what sizes an owner-funded turn — a group member's or a guest's alike.
+  const payerTier = spendableData?.payerTier ?? tierInfo.tier;
 
   const computeResult = React.useCallback(
     () =>

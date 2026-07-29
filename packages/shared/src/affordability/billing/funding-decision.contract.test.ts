@@ -12,7 +12,7 @@
  * What this table does NOT pin: that the two sides FEED the core the same inputs.
  * Every row hands the server leg a hand-written {@link FundingInputs} literal, so
  * a row's server inputs are what the chat slice COULD pass, never evidence of
- * what it does pass. The `turn estimate` rows are where that matters — see the
+ * what it does pass. The `minTurnCost` rows are where that matters — see the
  * note above them.
  *
  * Both legs are exercised:
@@ -29,14 +29,14 @@
  */
 import { describe, expect, it } from 'vitest';
 import { resolveFunding, type FundingDecision, type FundingInputs } from './funding-decision.js';
-import { deriveClientFundingInputs, type ClientBillingInput } from './client-billing.js';
+import { deriveClientFundingInputs, type ClientFundingContext } from './client-billing.js';
 
 interface Scenario {
   readonly name: string;
   /** How the server (chat slice) feeds the core: raw nano-USD primitives. */
   readonly inputs: FundingInputs;
   /** How the client feeds the core: served nano-USD primitives through its own shell. */
-  readonly clientInputs: ClientBillingInput;
+  readonly clientInputs: ClientFundingContext;
   readonly expected: FundingDecision;
 }
 
@@ -53,7 +53,7 @@ const MATRIX: readonly Scenario[] = [
       ownerPurchasedBalanceNanoUsd: ONE,
       callerOwnPurchasedBalanceNanoUsd: ONE,
       isPremiumModel: false,
-      turnEstimateNanoUsd: 0n,
+      minTurnCostNanoUsd: 0n,
     },
     clientInputs: {
       tier: 'paid',
@@ -79,7 +79,7 @@ const MATRIX: readonly Scenario[] = [
       ownerPurchasedBalanceNanoUsd: 0n,
       callerOwnPurchasedBalanceNanoUsd: 0n,
       isPremiumModel: false,
-      turnEstimateNanoUsd: 0n,
+      minTurnCostNanoUsd: 0n,
     },
     clientInputs: {
       tier: 'free',
@@ -105,7 +105,7 @@ const MATRIX: readonly Scenario[] = [
       ownerPurchasedBalanceNanoUsd: 0n,
       callerOwnPurchasedBalanceNanoUsd: 0n,
       isPremiumModel: true,
-      turnEstimateNanoUsd: 0n,
+      minTurnCostNanoUsd: 0n,
     },
     clientInputs: {
       tier: 'free',
@@ -126,7 +126,7 @@ const MATRIX: readonly Scenario[] = [
       ownerPurchasedBalanceNanoUsd: ONE,
       callerOwnPurchasedBalanceNanoUsd: 0n,
       isPremiumModel: false,
-      turnEstimateNanoUsd: 0n,
+      minTurnCostNanoUsd: 0n,
     },
     clientInputs: {
       tier: 'free',
@@ -148,7 +148,7 @@ const MATRIX: readonly Scenario[] = [
       ownerPurchasedBalanceNanoUsd: ONE,
       callerOwnPurchasedBalanceNanoUsd: 0n,
       isPremiumModel: true,
-      turnEstimateNanoUsd: 0n,
+      minTurnCostNanoUsd: 0n,
     },
     clientInputs: {
       tier: 'free',
@@ -170,7 +170,7 @@ const MATRIX: readonly Scenario[] = [
       ownerPurchasedBalanceNanoUsd: ONE,
       callerOwnPurchasedBalanceNanoUsd: ONE,
       isPremiumModel: false,
-      turnEstimateNanoUsd: 0n,
+      minTurnCostNanoUsd: 0n,
     },
     clientInputs: {
       tier: 'paid',
@@ -197,7 +197,7 @@ const MATRIX: readonly Scenario[] = [
       ownerPurchasedBalanceNanoUsd: ONE,
       callerOwnPurchasedBalanceNanoUsd: 0n,
       isPremiumModel: false,
-      turnEstimateNanoUsd: 0n,
+      minTurnCostNanoUsd: 0n,
     },
     clientInputs: {
       tier: 'free',
@@ -224,15 +224,16 @@ const MATRIX: readonly Scenario[] = [
       ownerPurchasedBalanceNanoUsd: ONE,
       callerOwnPurchasedBalanceNanoUsd: 0n,
       isPremiumModel: false,
-      turnEstimateNanoUsd: 0n,
+      minTurnCostNanoUsd: 0n,
     },
     clientInputs: {
       tier: 'guest',
       purchasedBalanceNanoUsd: 0n,
-      spendableNanoUsd: 0n,
+      // A guest's served figure IS its headroom — one payer-scoped number, not
+      // a group blob the client composes.
+      spendableNanoUsd: ONE,
       isPremiumModel: false,
       estimatedMinimumCostNanoUsd: 0n,
-      group: { effectiveRemainingNanoUsd: ONE, ownerBalanceNanoUsd: ONE },
     },
     expected: { payer: 'owner', walletKind: 'purchased', premiumAllowed: true },
   },
@@ -246,7 +247,7 @@ const MATRIX: readonly Scenario[] = [
       ownerPurchasedBalanceNanoUsd: ONE,
       callerOwnPurchasedBalanceNanoUsd: 0n,
       isPremiumModel: false,
-      turnEstimateNanoUsd: 0n,
+      minTurnCostNanoUsd: 0n,
     },
     clientInputs: {
       tier: 'guest',
@@ -254,18 +255,16 @@ const MATRIX: readonly Scenario[] = [
       spendableNanoUsd: 0n,
       isPremiumModel: false,
       estimatedMinimumCostNanoUsd: 0n,
-      group: { effectiveRemainingNanoUsd: 0n, ownerBalanceNanoUsd: ONE },
     },
     expected: { payer: 'refuse', refusalCode: 'GROUP_BUDGET_EXHAUSTED' },
   },
-  // The three rows below exercise §Funding Decision Matrix priority 1's estimate
-  // clause as the CLIENT applies it. Their SERVER leg is hypothetical: the send
-  // path freezes the payer before the turn is priced and passes
-  // `turnEstimateNanoUsd: undefined`, so production's `resolvePayerWallet` never
-  // reaches this comparison and still resolves `owner` where these rows resolve
-  // `self`. Passing rows here are not evidence that the server behaves this way.
+  // The three rows below exercise §Funding Decision Matrix priority 1's
+  // comparison. It is the SERVER leg that makes it, against the `minTurnCost`
+  // the send path prices above the payer freeze; no production client caller
+  // supplies a group dimension at all, so the client's own leg resolves the
+  // solo arm and renders the served payer instead.
   {
-    name: 'headroom exactly covering the turn estimate → owner-funded / purchased',
+    name: 'headroom exactly covering the turn minimum → owner-funded / purchased',
     inputs: {
       isSolo: false,
       isGuest: false,
@@ -274,7 +273,7 @@ const MATRIX: readonly Scenario[] = [
       ownerPurchasedBalanceNanoUsd: ONE,
       callerOwnPurchasedBalanceNanoUsd: ONE,
       isPremiumModel: false,
-      turnEstimateNanoUsd: ONE,
+      minTurnCostNanoUsd: ONE,
     },
     clientInputs: {
       tier: 'paid',
@@ -296,7 +295,7 @@ const MATRIX: readonly Scenario[] = [
       ownerPurchasedBalanceNanoUsd: ONE - 1n,
       callerOwnPurchasedBalanceNanoUsd: ONE,
       isPremiumModel: false,
-      turnEstimateNanoUsd: ONE,
+      minTurnCostNanoUsd: ONE,
     },
     clientInputs: {
       tier: 'paid',
@@ -323,15 +322,14 @@ const MATRIX: readonly Scenario[] = [
       ownerPurchasedBalanceNanoUsd: ONE - 1n,
       callerOwnPurchasedBalanceNanoUsd: 0n,
       isPremiumModel: false,
-      turnEstimateNanoUsd: ONE,
+      minTurnCostNanoUsd: ONE,
     },
     clientInputs: {
       tier: 'guest',
       purchasedBalanceNanoUsd: 0n,
-      spendableNanoUsd: 0n,
+      spendableNanoUsd: ONE - 1n,
       isPremiumModel: false,
       estimatedMinimumCostNanoUsd: ONE,
-      group: { effectiveRemainingNanoUsd: ONE - 1n, ownerBalanceNanoUsd: ONE - 1n },
     },
     expected: { payer: 'refuse', refusalCode: 'GROUP_BUDGET_EXHAUSTED' },
   },

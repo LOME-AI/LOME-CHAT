@@ -45,6 +45,11 @@ vi.mock('@/hooks/chat/chat', () => ({
   DECRYPTING_TITLE: 'Decrypting...',
 }));
 
+/** The route params the shell reads non-strictly; set per test. */
+const { routeParams } = vi.hoisted(() => ({
+  routeParams: { current: {} as { id?: string; conversationId?: string } },
+}));
+
 vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => vi.fn(),
   useLocation: () => ({ pathname: '/' }),
@@ -61,7 +66,7 @@ vi.mock('@tanstack/react-router', () => ({
       {children}
     </a>
   ),
-  useParams: () => ({ conversationId: undefined }),
+  useParams: () => routeParams.current,
 }));
 
 vi.mock('@/hooks/billing/use-stable-balance', () => ({
@@ -272,6 +277,42 @@ describe('AppShell', () => {
     );
 
     expect(useModelValidation).toHaveBeenCalled();
+  });
+
+  describe('the funding scope handed to model validation', () => {
+    function renderShell(): void {
+      vi.mocked(useModelValidation).mockClear();
+      render(
+        <AppShell>
+          <div>Content</div>
+        </AppShell>,
+        { wrapper: createWrapper() }
+      );
+    }
+
+    it('is the open conversation on a chat route', () => {
+      routeParams.current = { id: 'conv-7' };
+      renderShell();
+      expect(useModelValidation).toHaveBeenCalledWith('conv-7');
+    });
+
+    it('is the shared conversation on the link-guest share route', () => {
+      routeParams.current = { conversationId: 'conv-shared' };
+      renderShell();
+      expect(useModelValidation).toHaveBeenCalledWith('conv-shared');
+    });
+
+    it('is none for a conversation that does not exist yet', () => {
+      routeParams.current = { id: 'new' };
+      renderShell();
+      expect(useModelValidation).toHaveBeenCalledWith(null);
+    });
+
+    it('is none on a route that names no conversation', () => {
+      routeParams.current = {};
+      renderShell();
+      expect(useModelValidation).toHaveBeenCalledWith(null);
+    });
   });
 
   it('renders a skip-to-content link as the first focusable element', () => {

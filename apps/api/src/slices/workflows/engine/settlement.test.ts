@@ -156,7 +156,7 @@ const FENCE_A: KeyRowFence = { id: 'key-1', executorId: 'exec-A', claims: 1 };
 function chargeContext(overrides: Partial<ChargeContext> = {}): ChargeContext {
   return {
     walletId: 'w1',
-    userId: 'u1',
+    payerUserId: 'u1',
     // Solo turn by default: the payer is also the sender.
     sender: { kind: 'user', userId: 'u1' },
     runId: 'run-1',
@@ -236,11 +236,11 @@ describe('createChargingCommit — the record → charge-input mapping', () => {
     // The usage record chargeWithinTx writes proves the whole mapping is real:
     // the model facts and generation id come verbatim from the record; the
     // charged cost is the record's base (4200n) with the markup applied once;
-    // userId/runId ride the context; contentItemId is the persist stand-in; and
+    // payer and runId ride the context; contentItemId is the persist stand-in; and
     // the idempotency key is derived (runId:key). Nothing is invented.
     expect(captured).toEqual([
       {
-        userId: 'u1',
+        payerUserId: 'u1',
         senderUserId: 'u1',
         runId: 'run-1',
         contentItemId: 'c1',
@@ -277,9 +277,9 @@ describe('createChargingCommit — the record → charge-input mapping', () => {
         })
       )
     );
-    // The payer (context userId) and the sender ride the usage record
+    // The payer and the sender ride the usage record
     // independently — an owner-funded member turn records both.
-    expect(captured.map((input) => input.userId)).toEqual(['u1', 'u1']);
+    expect(captured.map((input) => input.payerUserId)).toEqual(['u1', 'u1']);
     expect(captured.map((input) => input.senderUserId)).toEqual(['member-7', 'member-7']);
     expect(captured[0]).not.toHaveProperty('senderLinkId');
   });

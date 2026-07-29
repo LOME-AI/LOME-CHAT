@@ -20,7 +20,6 @@ import { createFencedSettlementHook, keyRowCompletion } from '../../workflows/in
 import { applyMarkup } from '@hushbox/shared';
 import { createBillingStores, STORAGE_COST_PER_CHARACTER_NANO } from '../../billing/index.js';
 import { claimKeyRow, failKeyRow } from '../../../lib/idempotency/index.js';
-import { okAsync } from '../../../lib/result/index.js';
 import { createChatStores } from '../adapters/stores.js';
 import { CHAT_TURN_ROUTE } from './constants.js';
 import { createChatSettlementCommit } from './settlement.js';
@@ -350,13 +349,13 @@ function commitFor(
       conversationId: fixture.conversationId,
       epochNumber: 1,
       walletId: fixture.walletId,
-      userId: fixture.userId,
+      payerUserId: fixture.userId,
       runId,
       userMessage,
     },
     stores: createChatStores(),
     billingStores: createBillingStores(),
-    ownerFunded: okAsync(false),
+    ownerFunded: false,
     readEpochPublicKey,
     now: () => NOW,
     newId: () => crypto.randomUUID(),

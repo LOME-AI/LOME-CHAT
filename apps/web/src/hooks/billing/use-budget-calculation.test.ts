@@ -20,16 +20,31 @@ import { useSpendable } from '@/hooks/billing/use-spendable';
 import type { UseQueryResult } from '@tanstack/react-query';
 import type { GetSpendableResponse } from '@hushbox/shared';
 
-const { mockUseStability } = vi.hoisted(() => ({
+const { mockUseStability, mockLinkGuestKey } = vi.hoisted(() => ({
   mockUseStability: vi.fn(),
+  mockLinkGuestKey: { current: null as string | null },
 }));
 
 vi.mock('@/hooks/billing/billing', () => ({
   useBalance: vi.fn(),
 }));
 
+// One controllable fact drives both the sender's tier and whether a funding
+// door exists, exactly as production does — a guest credential is the only
+// thing that makes an unauthenticated caller a payer's reader.
+vi.mock('@/lib/link-guest-auth', () => ({
+  getLinkGuestAuth: () => mockLinkGuestKey.current,
+}));
+
 vi.mock('@/hooks/billing/use-spendable', () => ({
   useSpendable: vi.fn(),
+  // The predicate's own behaviour is pinned in `use-spendable.test.ts`; here it
+  // is a double stating whether this caller has a funding door at all. It
+  // mirrors the real rule rather than only its authenticated arm, because a
+  // link guest inside a conversation has a door too and the gate under test is
+  // exactly what a door-holder without a snapshot must do.
+  hasServedFunding: (isAuthenticated: boolean, conversationId: string | null) =>
+    isAuthenticated || (mockLinkGuestKey.current !== null && conversationId !== null),
 }));
 
 vi.mock('@/providers/stability-provider', () => ({
@@ -39,7 +54,7 @@ vi.mock('@/providers/stability-provider', () => ({
 const mockUseBalance = vi.mocked(billingHooks.useBalance);
 const mockUseSpendable = vi.mocked(useSpendable);
 
-/** No served snapshot: the endpoint is disabled for trial/guest, and pending on first render. */
+/** A settled read that produced no snapshot — the trial's permanent state, since it has no funding door to read. */
 function noSpendable(): UseQueryResult<GetSpendableResponse> {
   return { data: undefined, isPending: false } as UseQueryResult<GetSpendableResponse>;
 }
@@ -48,10 +63,10 @@ function noSpendable(): UseQueryResult<GetSpendableResponse> {
 function makeSpendable(
   spendableNanoUsd: string,
   payer: GetSpendableResponse['payer'] = 'self',
-  tier: GetSpendableResponse['tier'] = 'paid'
+  payerTier: GetSpendableResponse['payerTier'] = 'paid'
 ): UseQueryResult<GetSpendableResponse> {
   return {
-    data: { spendableNanoUsd, heldNanoUsd: '0', tier, payer },
+    data: { spendableNanoUsd, heldNanoUsd: '0', payerTier, payer },
     isPending: false,
   } as UseQueryResult<GetSpendableResponse>;
 }
@@ -87,6 +102,7 @@ describe('useBudgetCalculation', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
+    mockLinkGuestKey.current = null;
   });
 
   describe('initial state', () => {
@@ -685,6 +701,34 @@ describe('useBudgetCalculation', () => {
       } as UseQueryResult<GetSpendableResponse>);
 
       const { result } = renderHook(() => useBudgetCalculation(defaultInput));
+
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
+
+      expect(result.current.isBalanceLoading).toBe(true);
+    });
+  });
+
+  describe('a funding read that failed is not a served figure', () => {
+    it('keeps a link guest loading when its funding read settled with no snapshot', () => {
+      // A FAILED read, not a pending one: the query has settled (`isPending`
+      // false) and produced nothing. The guest holds a door, so the trial's
+      // absent-forever case does not apply — there is a payer figure, it just
+      // has not arrived.
+      mockLinkGuestKey.current = 'link-public-key';
+      mockUseSpendable.mockReturnValue({
+        data: undefined,
+        isPending: false,
+      } as UseQueryResult<GetSpendableResponse>);
+
+      const { result } = renderHook(() =>
+        useBudgetCalculation({
+          ...defaultInput,
+          isAuthenticated: false,
+          conversationId: 'conv-1',
+        })
+      );
 
       act(() => {
         vi.advanceTimersByTime(200);

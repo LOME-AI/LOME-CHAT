@@ -1,3 +1,4 @@
+import { nanoUSD, serializeNanoUSD } from '@hushbox/shared';
 import { getUserTier, resolveFunding } from '@hushbox/shared/affordability';
 import { notFoundError, unavailableError } from '../../../lib/errors/index.js';
 import { ResultAsync, errAsync, fromPromise, okAsync } from '../../../lib/result/index.js';
@@ -10,9 +11,12 @@ import {
 } from './budget-resolution.js';
 import { groupEffectiveRemainingNanoUsd } from './group-budget.js';
 import { BILLING_KEYS } from './keys.js';
+import type { GetSpendableResponse } from '@hushbox/shared';
 import type { UserTier } from '@hushbox/shared/affordability';
+import type { Database } from '@hushbox/db';
 import type { DomainError } from '../../../lib/errors/index.js';
 import type { AdmissionDeps, BudgetScope } from './admission.js';
+import type { BillingStores } from '../ports/index.js';
 import type { RedisClient } from './keys.js';
 
 /** One hold hash's active readout: the held sum. */
@@ -148,9 +152,12 @@ export interface ReadFundingSnapshotArgs {
 }
 
 /**
- * The payer's funding snapshot behind `GET /billing/spendable` (BILLING
- * §Data Structures `FundingSnapshot`). Money only — no token quantity, no
- * per-model term — plus the identity of the wallet the figures describe.
+ * The payer's funding snapshot (BILLING §Data Structures `FundingSnapshot`).
+ * Money only — no token quantity, no per-model term — plus the identity of the
+ * wallet the figures describe. Two doors serve it: `GET /billing/spendable` for
+ * a caller who holds a wallet, and the conversations slice's guest read for a
+ * link guest, who holds none. A different route is not a second source; the
+ * figures come from the producers below either way.
  */
 export interface FundingSnapshot {
   /**
@@ -170,9 +177,33 @@ export interface FundingSnapshot {
   readonly spendableNanoUsd: bigint;
   /** What active holds took off the figure, so `spendable + held` is hold-blind. */
   readonly heldNanoUsd: bigint;
-  /** The PAYER's tier — it drives every sizing ratio and the cushion. */
-  readonly tier: UserTier;
+  /**
+   * The PAYER's tier — it drives every sizing ratio and the cushion. Named for
+   * the payer because a link guest's two tiers differ: `guest` answers who is
+   * sending, and this answers what funds the turn, so a composer holding both
+   * cannot cross them by reading the shorter name (BILLING §User Tiers).
+   */
+  readonly payerTier: UserTier;
+  /**
+   * Structural, not funding-derived: a link guest's payer is the conversation's
+   * owner whether or not the owner's funds cover the turn, so zero spendable is
+   * not a third kind of payer and this union stays closed at two.
+   */
   readonly payer: 'self' | 'owner';
+}
+
+/**
+ * The snapshot's wire encoding, typed to the served schema. Both doors call
+ * this: a second hand-rolled encoder would be a copy that must agree to be
+ * correct, and only one of the two would keep pace with a schema change.
+ */
+export function serializeFundingSnapshot(snapshot: FundingSnapshot): GetSpendableResponse {
+  return {
+    spendableNanoUsd: serializeNanoUSD(nanoUSD(snapshot.spendableNanoUsd)),
+    heldNanoUsd: serializeNanoUSD(nanoUSD(snapshot.heldNanoUsd)),
+    payerTier: snapshot.payerTier,
+    payer: snapshot.payer,
+  };
 }
 
 /** What one funding arm resolves: the money pair, unlabelled. */
@@ -311,7 +342,7 @@ function selfSnapshot(self: SelfFunding): FundingSnapshot {
   return {
     spendableNanoUsd: self.spendableNanoUsd,
     heldNanoUsd: self.heldNanoUsd,
-    tier: self.tier,
+    payerTier: self.tier,
     payer: 'self',
   };
 }
@@ -325,8 +356,24 @@ interface GroupFundingReadout {
   readonly conversationHeldNanoUsd: bigint;
 }
 
+/**
+ * What reading a group's funding needs, narrower than {@link AdmissionDeps}:
+ * three durable reads and the scope-hold hashes. Stated separately so the
+ * conversations slice can serve a guest through the same producer with the
+ * budget-surface store subset it already composes, rather than acquiring the
+ * whole billing store to read one snapshot.
+ */
+export interface GroupFundingDeps {
+  readonly redis: RedisClient;
+  readonly db: Database;
+  readonly stores: Pick<
+    BillingStores,
+    'readWallets' | 'readMemberBudget' | 'readConversationSpent'
+  >;
+}
+
 function readGroupFunding(
-  deps: AdmissionDeps,
+  deps: GroupFundingDeps,
   conversation: ConversationFundingFacts,
   now: Date
 ): ResultAsync<GroupFundingReadout, DomainError> {
@@ -383,9 +430,29 @@ function ownerSnapshot(group: GroupFundingReadout): FundingSnapshot {
     heldNanoUsd: holdBlind - holdAware,
     // Owner-funded turns draw a purchased wallet with a positive balance (the
     // headroom min clamps the owner dimension), so the payer is paid-tier.
-    tier: tierForBalance(group.ownerBalanceNanoUsd),
+    payerTier: tierForBalance(group.ownerBalanceNanoUsd),
     payer: 'owner',
   };
+}
+
+/**
+ * The snapshot served to a LINK GUEST, whose payer is structural: a guest holds
+ * no wallet, so the conversation's owner funds the turn whether or not the
+ * owner's funds cover it (BILLING §Group Funding 1, 2). There is no self arm to
+ * fall through to and therefore no who-pays decision to make — which is why
+ * this takes the conversation's facts and no caller identity.
+ *
+ * It is the SAME producer the owner-funded arm of {@link readFundingSnapshot}
+ * uses, over the same rows and the same scope-hold hashes, so the number a
+ * guest is served and the number admission gates its turn on cannot drift. The
+ * caller (the conversations slice) authorizes the guest and resolves the facts;
+ * nothing about the money is recomputed there.
+ */
+export function readGuestFundingSnapshot(
+  deps: GroupFundingDeps,
+  args: { readonly conversation: ConversationFundingFacts; readonly now: Date }
+): ResultAsync<FundingSnapshot, DomainError> {
+  return readGroupFunding(deps, args.conversation, args.now).map((group) => ownerSnapshot(group));
 }
 
 /**
@@ -414,9 +481,9 @@ export function readFundingSnapshot(
         ([selfFunding, group]): FundingSnapshot => {
           const decision = resolveFunding({
             isSolo: false,
-            // A link guest never reaches this endpoint (refused at HTTP for
-            // every route class), so the caller always has a wallet to fall
-            // through to.
+            // This arm resolves a caller who holds a wallet; a link guest is
+            // served by `readGuestFundingSnapshot` instead, so there is always
+            // something to fall through to here.
             isGuest: false,
             memberRemainingNanoUsd: group.memberRemainingNanoUsd,
             conversationRemainingNanoUsd: group.conversationRemainingNanoUsd,
@@ -424,9 +491,12 @@ export function readFundingSnapshot(
             callerOwnPurchasedBalanceNanoUsd: selfFunding.purchasedBalanceNanoUsd,
             isPremiumModel: false,
             // No turn is priced: this endpoint names the payer for a composer
-            // that has no prompt yet. The client applies priority 1's estimate
-            // clause itself, against these numbers, as it types.
-            turnEstimateNanoUsd: undefined,
+            // that has no prompt yet, so priority 1's comparison has nothing to
+            // compare and the answer is who WOULD pay. The send path prices the
+            // turn's minimum and can therefore reach the other verdict — a
+            // member served `owner` here may still be charged personally once a
+            // prompt exists, which is the disclosure gap §Notices 5 covers.
+            minTurnCostNanoUsd: undefined,
           });
           return decision.payer === 'owner' ? ownerSnapshot(group) : selfSnapshot(selfFunding);
         }

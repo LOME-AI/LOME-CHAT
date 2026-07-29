@@ -345,14 +345,27 @@ export function effortDimensionForCandidates(
 export type AutoEffortTurnBuild =
   | { readonly kind: 'built'; readonly definition: WorkflowDefinition }
   /**
-   * Not classifier-eligible: the turn has at most ONE real effort choice
-   * (unknown/non-reasoning model, single-level mandatory ladder, Min-only
-   * model), no pricing basis, or no affordable reasoning level. The regular
-   * single-model path owns the turn — its `auto` resolution is the
-   * deterministic pick or reasoning-free, with no classifier call, charge,
-   * or reserve.
+   * Not classifier-eligible: nothing is left to choose. The turn has at most
+   * ONE real effort choice (unknown/non-reasoning model, single-level mandatory
+   * ladder, Min-only model), no pricing basis, or a fitted cap with room for no
+   * offered level at all. The regular single-model path owns the turn — its
+   * `auto` resolution is the deterministic pick or reasoning-free, with no
+   * classifier call, charge, or reserve.
    */
-  | { readonly kind: 'fallback' };
+  | { readonly kind: 'fallback' }
+  /**
+   * Classifier-eligible, but the payer's funds do not cover even the minimum
+   * classified turn — the answer floor plus the classifier's reserve.
+   *
+   * Separate from `fallback` because the two mean opposite things to a caller.
+   * `fallback` says the effort question is already settled, so an unclassified
+   * turn is the honest answer; this says nothing is settled and the money is
+   * absent. A tier with a balance gate behind the compile can treat it as a
+   * fallback and let that gate speak; a trial send has no gate behind it, so
+   * collapsing the two would silently run the reasoning-free turn §Reasoning
+   * Effort 5 forbids.
+   */
+  | { readonly kind: 'unaffordable' };
 
 /**
  * The pinned-model + auto-effort turn: the user chose the model, so only the
@@ -368,11 +381,20 @@ export type AutoEffortTurnBuild =
  * reused); when the catalog holds no priceable engine the send is REFUSED with the
  * typed classifier code (BILLING §Effort 5) — never a silent static pick, and
  * explicit levels stay usable.
+ *
+ * `hooks` decides the turn's billing policy, and it is a parameter rather than
+ * the paid default because the two policies differ in what the definition may
+ * carry: the paid policy persists, so the definition is storage-stamped and
+ * admission holds the storage settlement will bill; the trial policy persists
+ * nothing, so a stamp would reserve storage no settlement can ever charge
+ * against. {@link withStorageStamp} reads the hooks to decide, so passing them
+ * through is the whole mechanism.
  */
 export function compileAutoEffortTurn(
   catalog: readonly ModelDescriptor[],
   model: string,
-  budget: TurnBudget
+  budget: TurnBudget,
+  hooks: PolicyHooks
 ): Result<AutoEffortTurnBuild, DomainError> {
   const target = catalog.find((descriptor) => descriptor.id === model);
   if (target === undefined) return ok({ kind: 'fallback' });
@@ -408,6 +430,7 @@ export function compileAutoEffortTurn(
     classify: { model: false, effort: true },
     answerCapTokens: room,
     promptInputTokens: promptInputTokensFor(budget),
+    hooks,
     nodes: registries.nodes,
     constraints: registries.constraints,
   });
@@ -415,7 +438,7 @@ export function compileAutoEffortTurn(
      catalog snapshot the compile registries read, so a compile failure means
      the two reads drifted — kept fail-closed rather than assumed impossible */
   if (built.isErr()) return ok({ kind: 'fallback' });
-  const stamped = withStorageStamp(built.value, budget, CHAT_TURN_HOOKS);
+  const stamped = withStorageStamp(built.value, budget, hooks);
   // The physical room is only the upper bound; the ONE canonical admission
   // estimator sizes the cap that the classifier's strongest pick has to fit
   // inside. Its own price includes the classifier reserve, which is why nothing
@@ -426,9 +449,11 @@ export function compileAutoEffortTurn(
     room,
     payerSpendableNanoUsd(budget)
   );
-  if (!fit.withinFunds || !someLevelFits(target, fit.answerTokens)) {
-    return ok({ kind: 'fallback' });
-  }
+  // The two negative outcomes are reported apart, in this order: the money is
+  // checked before the ladder because a cap the funds cannot buy makes every
+  // question about which level fits inside it meaningless.
+  if (!fit.withinFunds) return ok({ kind: 'unaffordable' });
+  if (!someLevelFits(target, fit.answerTokens)) return ok({ kind: 'fallback' });
   return ok({ kind: 'built', definition: fit.definition });
 }
 
@@ -456,16 +481,17 @@ function someLevelFits(target: ModelDescriptor, fittedCapTokens: number): boolea
  * Builds the pinned+auto turn end to end from the request's db — one exposed
  * catalog read feeds the classifier pick, the cap sizing, and the compile
  * registries (compile ⟺ runtime never diverge). `fallback` tells the route
- * to build the regular single-model turn instead; a typed error refuses the
- * send outright (no priceable classifier engine).
+ * to build the regular single-model turn instead; `unaffordable` is the caller's
+ * to answer (a balance-gated tier defers to that gate, a trial send refuses);
+ * a typed error refuses the send outright (no priceable classifier engine).
  */
 export function buildAutoEffortTurnDefinition(
   deps: TrialSmartModelTurnDeps,
   model: string,
-  args: { readonly budget: TurnBudget }
+  args: { readonly budget: TurnBudget; readonly hooks: PolicyHooks }
 ): ResultAsync<AutoEffortTurnBuild, DomainError> {
   return listDescriptors({ db: deps.db, telemetry: deps.telemetry }).andThen((catalog) =>
-    compileAutoEffortTurn(catalog, model, args.budget)
+    compileAutoEffortTurn(catalog, model, args.budget, args.hooks)
   );
 }
 

@@ -12,7 +12,11 @@ vi.mock('@/lib/auth', () => ({
   useSession: vi.fn(),
 }));
 
-vi.mock('@/hooks/billing/use-spendable.js', () => ({
+// `hasServedFunding` stays REAL: it is the shared predicate behind both the
+// query's `enabled` flag and every caller's pending gate, and a mock that
+// re-states it is a second implementation of the rule under test.
+vi.mock('@/hooks/billing/use-spendable.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/billing/use-spendable.js')>()),
   useSpendable: vi.fn(),
 }));
 
@@ -31,6 +35,7 @@ vi.mock('@/stores/model', async (importOriginal) => {
 
 import { useSession } from '@/lib/auth';
 import { useSpendable } from '@/hooks/billing/use-spendable.js';
+import { setLinkGuestAuth, clearLinkGuestAuth } from '@/lib/link-guest-auth.js';
 import { useModels, getAccessibleModelIds } from '@/hooks/models/models.js';
 import type { SelectedModelEntry } from '@/stores/model';
 import type { Model, ChatModality } from '@hushbox/shared';
@@ -39,8 +44,25 @@ const mockedUseSession = vi.mocked(useSession);
 const mockedUseSpendable = vi.mocked(useSpendable);
 
 /** A served funding snapshot at the given payer tier. */
-function servedTier(tier: 'paid' | 'free' | 'trial' | 'guest'): { data: unknown } {
-  return { data: { spendableNanoUsd: '0', heldNanoUsd: '0', tier, payer: 'self' } };
+function servedTier(
+  tier: 'paid' | 'free' | 'trial' | 'guest',
+  payer: 'self' | 'owner' = 'self'
+): { data: unknown } {
+  return { data: { spendableNanoUsd: '0', heldNanoUsd: '0', payerTier: tier, payer } };
+}
+
+/**
+ * Serve `snapshot` to exactly one funding scope and `otherwise` to every other,
+ * so a hook reading the wrong scope reads a different tier and the assertion
+ * moves.
+ */
+function servedByScope(
+  scope: string | null,
+  snapshot: { data: unknown },
+  otherwise: { data: unknown }
+): void {
+  mockedUseSpendable.mockImplementation(((conversationId?: string | null) =>
+    (conversationId ?? null) === scope ? snapshot : otherwise) as unknown as typeof useSpendable);
 }
 const mockedUseModels = vi.mocked(useModels);
 const mockedGetAccessibleModelIds = vi.mocked(getAccessibleModelIds);
@@ -120,6 +142,7 @@ describe('useModelValidation', () => {
   });
 
   afterEach(() => {
+    clearLinkGuestAuth();
     vi.restoreAllMocks();
   });
 
@@ -127,7 +150,7 @@ describe('useModelValidation', () => {
     mockedUseModels.mockReturnValue({ data: undefined } as ReturnType<typeof useModels>);
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     expect(mockSetSelectedModels).not.toHaveBeenCalled();
@@ -144,7 +167,7 @@ describe('useModelValidation', () => {
     stubStore(buildState({ text: [{ id: 'premium-model', name: 'Premium Model' }] }));
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     expect(mockSetSelectedModels).not.toHaveBeenCalled();
@@ -162,7 +185,7 @@ describe('useModelValidation', () => {
     stubStore(buildState({ text: [{ id: 'premium-model', name: 'Premium Model' }] }));
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     expect(mockSetSelectedModels).not.toHaveBeenCalled();
@@ -180,7 +203,7 @@ describe('useModelValidation', () => {
     stubStore(buildState({ text: [{ id: 'basic-model', name: 'Basic Model' }] }));
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     expect(mockSetSelectedModels).not.toHaveBeenCalled();
@@ -198,7 +221,7 @@ describe('useModelValidation', () => {
     stubStore(buildState({ text: [{ id: 'premium-model', name: 'Premium Model' }] }));
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     // The picker renders it greyed with its reason; rewriting the store would
@@ -218,7 +241,7 @@ describe('useModelValidation', () => {
     stubStore(buildState({ text: [{ id: 'premium-model', name: 'Premium Model' }] }));
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     expect(mockSetSelectedModels).not.toHaveBeenCalled();
@@ -254,7 +277,7 @@ describe('useModelValidation', () => {
     });
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     // The fallback exists for a selection the CATALOG dropped, not for one the
@@ -276,7 +299,7 @@ describe('useModelValidation', () => {
     });
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     expect(mockSetSelectedModels).not.toHaveBeenCalled();
@@ -292,7 +315,7 @@ describe('useModelValidation', () => {
     stubStore(buildState({ text: [{ id: 'openai/gpt-4-turbo', name: 'GPT-4 Turbo' }] }));
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     expect(mockSetSelectedModels).toHaveBeenCalledWith('text', [
@@ -312,7 +335,7 @@ describe('useModelValidation', () => {
     stubStore(buildState({ text: [{ id: 'premium-model', name: 'Premium Model' }] }));
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     expect(mockSetSelectedModels).not.toHaveBeenCalled();
@@ -335,7 +358,7 @@ describe('useModelValidation', () => {
     );
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     expect(mockSetSelectedModels).toHaveBeenCalledTimes(1);
@@ -361,7 +384,7 @@ describe('useModelValidation', () => {
     );
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     expect(mockSetSelectedModels).toHaveBeenCalledWith('image', [{ id: 'imagen', name: 'Imagen' }]);
@@ -392,7 +415,7 @@ describe('useModelValidation', () => {
       );
 
       renderHook(() => {
-        useModelValidation();
+        useModelValidation(null);
       });
 
       expect(mockSetActiveModality).toHaveBeenCalledWith('text');
@@ -422,7 +445,7 @@ describe('useModelValidation', () => {
       );
 
       renderHook(() => {
-        useModelValidation();
+        useModelValidation(null);
       });
 
       expect(mockSetActiveModality).not.toHaveBeenCalled();
@@ -453,7 +476,7 @@ describe('useModelValidation', () => {
       );
 
       renderHook(() => {
-        useModelValidation();
+        useModelValidation(null);
       });
 
       expect(mockSetActiveModality).not.toHaveBeenCalled();
@@ -484,10 +507,84 @@ describe('useModelValidation', () => {
       );
 
       renderHook(() => {
-        useModelValidation();
+        useModelValidation(null);
       });
 
       expect(mockSetActiveModality).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the payer, not the sender, decides which fallback is reachable', () => {
+    /** A dropped text selection, so the fallback substitution is what is observed. */
+    function staleTextSelection(strongestId: string): void {
+      mockedUseModels.mockReturnValue({
+        data: { models: testModels, premiumIds: new Set(['premium-model']) },
+      } as ReturnType<typeof useModels>);
+      mockedGetAccessibleModelIds.mockReturnValue({ strongestId, valueId: strongestId });
+      stubStore(buildState({ text: [{ id: 'dropped-from-catalog', name: 'Dropped' }] }));
+    }
+
+    it("substitutes the strongest model an owner-funded member's payer can reach", () => {
+      mockedUseSession.mockReturnValue({
+        data: { user: { id: 'user-123' } },
+        isPending: false,
+      } as ReturnType<typeof useSession>);
+      servedByScope('conv-owner', servedTier('paid', 'owner'), servedTier('free'));
+      staleTextSelection('premium-model');
+
+      renderHook(() => {
+        useModelValidation('conv-owner');
+      });
+
+      expect(mockSetSelectedModels).toHaveBeenCalledWith('text', [
+        { id: 'premium-model', name: 'Premium Model' },
+      ]);
+    });
+
+    it("substitutes the strongest model an owner-funded link guest's payer can reach", () => {
+      setLinkGuestAuth('link-public-key');
+      // The unscoped door is closed to a guest, which is exactly what made the
+      // guest resolve as if the owner had no premium access.
+      servedByScope('conv-shared', servedTier('paid', 'owner'), { data: undefined });
+      staleTextSelection('premium-model');
+
+      renderHook(() => {
+        useModelValidation('conv-shared');
+      });
+
+      expect(mockSetSelectedModels).toHaveBeenCalledWith('text', [
+        { id: 'premium-model', name: 'Premium Model' },
+      ]);
+    });
+
+    it('rewrites nothing for a link guest whose payer snapshot has not arrived', () => {
+      setLinkGuestAuth('link-public-key');
+      servedByScope('conv-shared', { data: undefined }, { data: undefined });
+      staleTextSelection('basic-model');
+
+      renderHook(() => {
+        useModelValidation('conv-shared');
+      });
+
+      expect(mockSetSelectedModels).not.toHaveBeenCalled();
+    });
+
+    it('leaves a solo self-funded caller reading its own unscoped door', () => {
+      mockedUseSession.mockReturnValue({
+        data: { user: { id: 'user-123' } },
+        isPending: false,
+      } as ReturnType<typeof useSession>);
+      servedByScope(null, servedTier('paid'), servedTier('free'));
+      staleTextSelection('premium-model');
+
+      renderHook(() => {
+        useModelValidation(null);
+      });
+
+      expect(mockedUseSpendable).toHaveBeenCalledWith(null);
+      expect(mockSetSelectedModels).toHaveBeenCalledWith('text', [
+        { id: 'premium-model', name: 'Premium Model' },
+      ]);
     });
   });
 });

@@ -18,14 +18,18 @@
 // Like chat-tts-stream.ts, the heavy kokoro-js bundle is only imported once a
 // user has actually opted into chat-aloud.
 
+import { createFastStartSplitter } from '@hushbox/ui/accessibility/lib/fast-start-splitter';
 import { SentenceChunker } from '@hushbox/ui/accessibility/lib/sentence-chunker';
 import { useA11yStore } from '@hushbox/ui/accessibility/store';
+import type { FastStartSplitter } from '@hushbox/ui/accessibility/lib/fast-start-splitter';
 import type { TtsService, TtsVoice } from '@hushbox/ui/accessibility/lib/tts-engine';
 
 const TARGET_SELECTOR = '[data-tts-stream]';
 
 interface TrackedContainer {
   chunker: SentenceChunker;
+  /** Per container: each stream's own opening sentences get the fast start. */
+  splitter: FastStartSplitter;
   lastText: string;
 }
 
@@ -80,7 +84,11 @@ export function installTtsDomObserver(): () => void {
     // defensive no-op that cannot be reached through the observer.
     /* v8 ignore next */
     if (tracked.has(el)) return;
-    tracked.set(el, { chunker: new SentenceChunker(), lastText: el.textContent });
+    tracked.set(el, {
+      chunker: new SentenceChunker(),
+      splitter: createFastStartSplitter(),
+      lastText: el.textContent,
+    });
   }
 
   function processContainer(el: Element): void {
@@ -103,7 +111,9 @@ export function installTtsDomObserver(): () => void {
       // Re-check the gate after the await — user may have toggled mid-stream.
       if (!isStreamEnabled()) return;
       const voice = useA11yStore.getState().ttsVoice;
-      for (const sentence of sentences) speak(tts, sentence, voice);
+      for (const sentence of sentences) {
+        for (const piece of entry.splitter.split(sentence)) speak(tts, piece, voice);
+      }
     })();
   }
 

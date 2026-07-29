@@ -63,11 +63,11 @@ const BASIS: PromptBasis = {
   attachmentBytes: 0,
 };
 
-function fundingOf(spendable: bigint, held = 0n, tier: FundingSnapshot['tier'] = 'paid') {
+function fundingOf(spendable: bigint, held = 0n, payerTier: FundingSnapshot['payerTier'] = 'paid') {
   return {
     spendableNanoUsd: nanoUSD(spendable),
     heldNanoUsd: nanoUSD(held),
-    tier,
+    payerTier,
     payer: 'self',
   } satisfies FundingSnapshot;
 }

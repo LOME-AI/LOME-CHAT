@@ -32,6 +32,7 @@ export type {
 } from './turn-definition.js';
 export {
   buildAutoEffortTurnDefinition,
+  compileAutoEffortTurn,
   buildSmartModelTurn,
   buildSmartModelTurnDefinition,
   buildTrialSmartModelTurnDefinition,
@@ -58,6 +59,7 @@ export {
   listDescriptors,
   mockProviderEnabled,
   parseMockDirectives,
+  pickEffortClassifier,
   trialEligibility,
   trialMessageBillableNanoUsd,
 } from '../../models/index.js';
@@ -86,7 +88,9 @@ export type {
   PayerFunding,
   ResolveTurnContextDeps,
   TurnContext,
+  TurnMinCost,
   TurnSender,
+  UnpricedTurnReason,
 } from './turn-context.js';
 // The public guest-send seam resolves and gates the caller through the
 // conversations barrel (routes may import only this barrel + middleware).

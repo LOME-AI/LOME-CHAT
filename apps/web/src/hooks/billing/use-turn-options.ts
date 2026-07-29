@@ -17,8 +17,7 @@ import {
 } from '@hushbox/shared';
 import { useModelStore } from '@/stores/model';
 import { useModels } from '@/hooks/models/models';
-import { useSpendable } from '@/hooks/billing/use-spendable';
-import { useUserTierInfo } from '@/hooks/billing/use-user-tier-info';
+import { hasServedFunding, useSpendable } from '@/hooks/billing/use-spendable';
 import { useWebSearch } from '@/hooks/chat/use-web-search';
 import { useReasoningEffort } from '@/hooks/chat/use-reasoning-effort';
 
@@ -81,20 +80,22 @@ function priceableFromWire(model: Model): PriceableModel | undefined {
 }
 
 /**
- * The funding figures for a payer with NO endpoint. `GET /billing/spendable` is
- * `enabled: isAuthenticated`, so trial and guest never receive a snapshot —
- * and §Affordability 8 fixes them at a $0.01 effective balance rather than
- * nothing. Handing the producer `0n` here reads as poverty and refuses the
- * whole unauthenticated funnel, while the server admits those turns on quota.
- * The ceiling comes from the shared tier authority so there is exactly one
+ * The funding figures for the one payer with NO funding door: the trial.
+ * §Affordability 8 fixes it at a $0.01 effective balance rather than nothing —
+ * handing the producer `0n` here reads as poverty and refuses the whole
+ * unauthenticated funnel, while the server admits those turns on quota. The
+ * ceiling comes from the shared tier authority so there is exactly one
  * definition of it.
+ *
+ * A link guest is NOT here: it has a door of its own and is owner-funded, so it
+ * reads the payer's served figures like anyone else (BILLING §Funding).
  */
-function noEndpointFunding(tier: UserTier): {
+function trialFunding(): {
   spendableNanoUsd: NanoUSD;
   heldNanoUsd: NanoUSD;
 } {
   return {
-    spendableNanoUsd: nanoUSD(getEffectiveBalanceNano(tier, 0n, 0n)),
+    spendableNanoUsd: nanoUSD(getEffectiveBalanceNano('trial', 0n, 0n)),
     heldNanoUsd: nanoUSD(0n),
   };
 }
@@ -130,6 +131,13 @@ export interface UseTurnOptionsResult {
    */
   readonly heldNanoUsd: bigint;
   /**
+   * The payer's hold-aware spendable, from the same snapshot that produced
+   * `options`. It rides beside the pair because a surface wording a money
+   * refusal needs to know whether the payer has nothing or merely not enough —
+   * two conditions the option sets alone cannot tell apart.
+   */
+  readonly payerSpendableNanoUsd: bigint;
+  /**
    * WHO the served figures describe, straight from the wire. The server applied
    * §Group Funding 2 and named the payer; this is that answer, carried through
    * unchanged so a surface can say which wallet pays without deciding it.
@@ -153,27 +161,31 @@ function answerSourcesOf(
 }
 
 /**
- * The payer's funding snapshot: ONE served number for every authenticated tier,
- * and the fixed client-side ceiling only where no endpoint exists (trial and
- * guest, refused by that route class by design). The served snapshot also names
- * the payer's tier, which is why an owner-funded group turn sizes as the owner's
- * would rather than the sender's.
+ * The payer's funding snapshot: ONE served number for every caller with a
+ * funding door, and the fixed client-side ceiling only for the trial, which has
+ * none. The served snapshot also names the PAYER's tier, which is why an
+ * owner-funded turn — a group member's or a link guest's alike — sizes as the
+ * owner's would rather than the sender's.
+ *
+ * The fallback belongs to the trial alone. A caller that HAS a door is gated
+ * until its snapshot is in hand — still loading and failed alike — so the trial
+ * ceiling never stands in for another payer's figure.
  */
-function fundingSnapshotOf(served: ServedFunding, callerTier: UserTier): FundingSnapshot {
+function fundingSnapshotOf(served: ServedFunding): FundingSnapshot {
   if (served === undefined) {
-    return { ...noEndpointFunding(callerTier), tier: callerTier, payer: 'self' };
+    return { ...trialFunding(), payerTier: 'trial', payer: 'self' };
   }
   return {
     spendableNanoUsd: nanoUSD(BigInt(served.spendableNanoUsd)),
     heldNanoUsd: nanoUSD(BigInt(served.heldNanoUsd)),
-    tier: served.tier,
+    payerTier: served.payerTier,
     payer: served.payer,
   };
 }
 
 /** One served funding read, as the wire carries it. */
 type ServedFunding =
-  | { spendableNanoUsd: string; heldNanoUsd: string; tier: UserTier; payer: 'self' | 'owner' }
+  | { spendableNanoUsd: string; heldNanoUsd: string; payerTier: UserTier; payer: 'self' | 'owner' }
   | undefined;
 
 export function useTurnOptions(input: UseTurnOptionsInput): UseTurnOptionsResult {
@@ -182,32 +194,48 @@ export function useTurnOptions(input: UseTurnOptionsInput): UseTurnOptionsResult
   const { active: webSearch } = useWebSearch();
   const { effective: effort } = useReasoningEffort();
   const { data: modelsData } = useModels();
-  const tierInfo = useUserTierInfo(input.isAuthenticated);
   const conversationId = input.conversationId ?? null;
   // ONE read. The conversation NAMES the payer, and the server has already
   // applied §Group Funding 2 — it returns the winning wallet's figures plus
-  // `payer` and `tier`. Re-resolving that client-side was a second authority
+  // `payer` and `payerTier`. Re-resolving that client-side was a second authority
   // for a decision the wire already carries, and it disagreed with the server
   // inside the settle-then-release window.
-  const { data: served, isPending: isServedPending } = useSpendable(conversationId);
+  const { data: served } = useSpendable(conversationId);
 
-  // Trial and guest are refused by the funding endpoint's route class by
-  // design, so their pending state is never reached and must not gate them.
-  const isFundingPending = input.isAuthenticated && isServedPending;
+  // A caller with no funding door (the trial) never resolves this query, so its
+  // permanent absence must not gate it. A caller that HAS a door is gated until
+  // the snapshot is in hand — on the ABSENCE of the snapshot, not on the query
+  // being pending, because a FAILED read settles with no data and a
+  // pending-only gate would let it fall through to the trial ceiling. That
+  // fallback is the tier conflation the guest's own door exists to remove.
+  const isFundingPending =
+    hasServedFunding(input.isAuthenticated, conversationId) && served === undefined;
   const isPending = isFundingPending || modelsData === undefined;
 
   const catalog = modelsData?.models;
-  const selectedIds = selected.map((entry) => entry.id).join(' ');
+  const selectedIds = selected.map((entry) => entry.id).join('\u0000');
 
   return React.useMemo((): UseTurnOptionsResult => {
     if (isPending || catalog === undefined)
-      return { isPending: true, options: undefined, heldNanoUsd: 0n, payer: 'self' };
+      return {
+        isPending: true,
+        options: undefined,
+        heldNanoUsd: 0n,
+        payerSpendableNanoUsd: 0n,
+        payer: 'self',
+      };
 
     const answerSources = answerSourcesOf(selected);
     if (answerSources === undefined)
-      return { isPending: false, options: undefined, heldNanoUsd: 0n, payer: 'self' };
+      return {
+        isPending: false,
+        options: undefined,
+        heldNanoUsd: 0n,
+        payerSpendableNanoUsd: 0n,
+        payer: 'self',
+      };
 
-    const funding = fundingSnapshotOf(served, tierInfo.tier);
+    const funding = fundingSnapshotOf(served);
 
     const selection: Selection = {
       answerSources,
@@ -224,6 +252,7 @@ export function useTurnOptions(input: UseTurnOptionsInput): UseTurnOptionsResult
     return {
       isPending: false,
       heldNanoUsd: BigInt(funding.heldNanoUsd),
+      payerSpendableNanoUsd: BigInt(funding.spendableNanoUsd),
       payer: funding.payer,
       options: getTurnOptions(funding, input.basis, selection, {
         models,
@@ -233,15 +262,5 @@ export function useTurnOptions(input: UseTurnOptionsInput): UseTurnOptionsResult
     // `selected` is a fresh array identity on every store read, so the memo
     // keys on the joined ids instead — a keystroke must not re-run the
     // producer, and an unchanged selection must not look changed.
-  }, [
-    isPending,
-    catalog,
-    selectedIds,
-    served,
-    tierInfo.tier,
-    activeModality,
-    effort,
-    webSearch,
-    input.basis,
-  ]);
+  }, [isPending, catalog, selectedIds, served, activeModality, effort, webSearch, input.basis]);
 }

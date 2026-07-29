@@ -2150,3 +2150,220 @@ listed, which is exactly the property the fifteen deleted comments lacked.
 **Recorded dependency:** that clause is only meaningful while the app map exists. The concurrent
 crawler-view task was scoped to no-logic-change and keeps it, so the clause holds today. If the
 map is ever removed, the clause goes vacuous and should go with it.
+
+### Z3 — result, and a RULING on the two sites my brief missed
+
+**Both ordered fixes landed and are measured, not asserted.** 276 passed / 0 failed / 0 flaky
+across all six projects (chromium, firefox, webkit, iphone-15, pixel-7, ipad-pro). The earlier
+finding held on the real spec: Firefox and WebKit both intercept the module worker's cross-origin
+request, with no engine-specific handling. The tag's original justification was false.
+
+**Zero external bytes was established three independent ways, with a positive control.** Egress
+from the machine is live (a control fetch pulled 181 KB from the same host), so the null result
+carries information: the route handler never continues the request; the network allowlist would
+have thrown at teardown on any escaped request and did not, on any project; and a `/proc/net`
+sampler — validated against a positive control first — recorded no connection to any of 22
+Hugging Face / Xet addresses, with total interface RX far below a single model download.
+
+**RULING — finish the deduplication.** My brief said the host is hardcoded "twice (around lines
+79 and 142)". Wrong: **there are four sites.** Two more remain at `:98` (a `fetch` inside
+`page.evaluate`) and `:110` (an assertion string). The implementer changed exactly the two I
+named and surfaced the rest rather than silently widening or silently leaving them.
+
+The founder's ruling was "deduplicate, fix". Two of four is not deduplicated — the drift risk is
+identical, just smaller. **Collapse the remaining two.** To be explicit, since my own earlier
+constraint could be read against this: changing where an assertion *sources* its expected value
+is not changing *what* it asserts. Threading the constant through `page.evaluate` requires passing
+it as an argument rather than closing over it — that is a real constraint of the API, not a reason
+to leave the literal.
+
+**Environmental, not ours, worth knowing:** `pnpm e2e:prepare` currently fails on this machine
+because the model-catalog refresh aborts — a model it requires is no longer sellable in the live
+OpenRouter catalog. The declaration is unmodified in git; this is live third-party catalog drift,
+and it will block that command for anyone until the declaration or the catalog changes.
+
+**Tree state:** a concurrent process committed mid-run, sweeping this edit in along with a large
+foreign change set. `git diff HEAD` on the spec file is empty, so what landed is exactly the
+intended edit — but a plain range diff now conflates it with a sibling task's work.
+
+### Z3 FIX CYCLE 1 — result, and a RULING on the prose
+
+**Two catches worth recording, both of which a byte-identity check would have missed.**
+
+1. **The naive substitution would have silently narrowed the assertion.** `TTS_MODEL_HOST` is
+   `https://huggingface.co` — with scheme. The literal at the assertion site was the bare
+   `huggingface.co`. Interpolating the constant directly would have changed which blocked URIs
+   match, weakening the assertion while looking like a clean deduplication. It used
+   `new URL(TTS_MODEL_HOST).host`, recovering the exact former literal, and proved it by
+   execution rather than inspection. Note this is a DIFFERENT subtlety from the trailing-slash
+   risk my brief warned about — my warning was aimed at the route pattern, and the real hazard
+   was at the assertion.
+2. **It identified and closed a vacuous-pass hole its own change could have created.** If the
+   `page.evaluate` argument had failed to thread through, the in-page URL would have become
+   `undefined/probe` — and the test would STILL have passed, because the assertion only checks
+   that no blocked URI names the model host. Byte-identity could not rule that out. So it ran with
+   `--trace on` and read the URL each browser actually requested: `https://huggingface.co/probe`
+   on all six projects. That is the same failure class as the vacuous SSR assertion found earlier
+   in this run, caught pre-emptively by the implementer rather than by an auditor.
+
+276 passed / 0 failed / 0 flaky, matching the previous cycle exactly.
+
+**RULING — leave the prose.** The host literal still appears twice in explanatory comments
+(`:64`, `:94`); zero code occurrences remain anywhere in `e2e/`. My evidence item asked for a grep
+proving it appears nowhere in the file, which is not achievable without rewriting prose — and the
+implementer judged that a net loss rather than doing it silently. **It is right.** A comment naming
+a host cannot cause the drift a hardcoded route pattern can, and rewriting prose for symmetry is
+precisely the impulse that produced fifteen false comments in this run. The deduplication the
+founder ordered is complete: the value now has one source in code.
+
+**Accepted, with the reasoning stated:** the egress re-check used the lighter method (two
+per-project in-run instruments plus a whole-run interface RX bound), not repeating the `/proc/net`
+sampler and positive control. Justified — nothing about routing changed between cycles, and the
+per-project traces settle the "went somewhere else" risk directly rather than by absence.
+
+**Clean:** the teardown's env regeneration was byte-idempotent this cycle (none of the eight files
+it touches show as modified). Trace archives are gitignored.
+
+---
+
+## AMENDMENT — 2026-07-29: W-series (one chunking path + a bound on chat)
+
+Founder rulings: **(1) document-level fast-start** · **(2) include the DOM observer** ·
+**(3) add the bounded window to chat too.**
+
+**Correction to the record, and it changes the severity of item 3.** The analyst asserted chat
+is "bounded incidentally, by the LLM's token arrival rate being slower than synthesis". The
+founder states tokens arrive **faster** than speech inference, and the feeder's OWN comment
+corroborates them: it stops aggressive splitting after three sentences because "downstream
+sentences inference in parallel with playback, so aggressive splitting past this count is wasted
+overhead" — which only holds if synthesis runs AHEAD of playback. So chat's unbounded queue is
+not a latent risk conditional on an unusual reply; it is the normal case in production today.
+Playback is the slowest stage by far, so a long reply is fully synthesized and pre-scheduled
+within tens of seconds while playback is minutes behind, and every completed buffer is retained
+because the engine releases the next item once audio is *scheduled*, not once it has *ended*.
+
+### W1 — One splitting path across all three consumers
+
+- **Objective:** exactly one implementation of the sentence-ordinal → threshold → pieces policy.
+- **Design context:** the only thing whose correctness depends on being identical in two places
+  is that policy — one constant, one counter, six lines. The chunker/flush *composition* around
+  it is NOT a sync contract (the feeder flushes at end-of-stream, the reader at end-of-block;
+  different lifecycles that need not agree), and merging it is actively harmful: one chunker per
+  document would leak `inCodeBlock` across blocks — `flush()` clears the buffer but NOT the fence
+  flag — so a stray ``` in prose would silently swallow the rest of an article. Today each block
+  gets a fresh chunker, which contains that. **Share the policy, not the composition.**
+- **Acceptance criteria:**
+  1. A shared stateful unit — `createFastStartSplitter()` returning `{ split(sentence): string[] }`
+     — owns `FAST_START_SENTENCE_COUNT`, the ordinal counter and the halving, delegating to
+     `splitSentence`. No consumer keeps its own copy of any of those.
+  2. `tts-stream-feeder.ts` loses its constant, counter and threshold arithmetic and constructs
+     one splitter per feeder. **Chat's observable behaviour must be byte-identical** — its
+     existing tests must pass UNCHANGED. That is the acceptance test for "chat did not regress";
+     if a feeder test needs editing, stop and report.
+  3. `document-reader.ts`: `buildChunks` constructs **ONE** splitter for the whole document and
+     threads it into `piecesForBlock`. **Document-level, NOT block-level.** Constructing the
+     splitter inside `piecesForBlock` — next to the per-block chunker, which is the natural
+     accident — halves the threshold for the first three sentences of EVERY paragraph, which for
+     ordinary prose means effectively the whole article.
+  4. `apps/web/src/lib/tts-dom-observer.ts` uses one splitter per tracked container. It begins
+     splitting long sentences where it previously spoke whole ones. Zero live `[data-tts-stream]`
+     containers exist, so the observable blast radius is its own tests.
+  5. One new `packages/ui/package.json` exports entry for the module holding the shared unit.
+  6. **RED first, and this test discriminates all three outcomes:** four blocks of long sentences
+     (each >13 and ≤25 words, with a comma placed so both halves clear the 6-word floor) must
+     yield **7** chunks. Today gives 4 (nothing splits at threshold 25); a block-level
+     implementation gives 8. Watch it fail at 4 before implementing.
+  7. A second test in the same change: for a fast-start-split block, every emitted chunk still
+     satisfies the offsets invariant — the normalized block text sliced by the chunk's offsets
+     equals the chunk text. Shorter pieces raise the false-match risk in the cursor-forward
+     offset search, which has no wrong-match guard.
+  8. The blog reader's bounded-window test must stay green and **must not be relaxed**. It is the
+     tripwire against anyone "finishing the unification" by moving speak-issuing into the shared
+     unit — which would delete the window, since chat has no equivalent.
+  9. `document-reader.ts`'s header comment claims it uses "the same … splitter … Nothing here is
+     forked from those." That is currently inaccurate and becomes accurate with this change.
+     Confirm it lands true; correct it only if it does not.
+- **Files:** `sentence-splitter.ts` (or a new sibling), `tts-stream-feeder.ts`,
+  `document-reader.ts`, `apps/web/src/lib/tts-dom-observer.ts`, `packages/ui/package.json`,
+  plus tests. **Auditors: 1.**
+
+### W2 — Bound outstanding speaks in the chat feeder — DESIGN PENDING
+
+Founder-approved. A real behaviour change to a deployed audio path, so it gets its own task,
+its own failing test and its own audit rather than riding along with W1. Serial after W1 (both
+touch the feeder). Design being established separately; criteria to follow.
+
+### W-SERIES NAMING COLLISION — orchestrator error (2026-07-29)
+
+I reused the label **W1** for a second, unrelated task. The earlier W1 in this run is the
+build-artifact `new.target` guard, whose `task-w1/impl-report-1.md` is committed. The splitter
+unification's report is therefore at **`task-w1-splitter/impl-report-1.md`** — the implementer
+declined to clobber the existing file, which was correct. Auditors: read
+`task-w1-splitter/impl-report-1.md`. Treat "W1" in the 2026-07-29 amendment as the splitter task
+and "W1" in the earlier amendment as the guard task; they share nothing.
+
+### W1 (splitter) — result and items for the audit
+
+Criterion 6's test was watched **RED at 4** and is **green at 7** — the discrimination held, and
+a block-level implementation would have given 8. Chat's 25 feeder tests pass with the test file
+**byte-unchanged**, which was the acceptance test for "chat did not regress". Package gates green
+with coverage above the per-file floor on both `@hushbox/ui` and `apps/web`.
+
+**Behaviour changes shipped, as ruled:** blog articles now split their first three sentences at
+13 words; the DOM observer splits long opening sentences where it previously spoke them whole
+(zero live `[data-tts-stream]` containers exist, so its blast radius is its own tests).
+
+**Raised for the auditor to judge — a composition difference between consumers.** The observer
+splits *after* its post-await store re-check, so a mid-load toggle-off discards sentences without
+spending fast-start budget; the feeder splits first and gates per piece. The implementer's claim
+is "composition, not policy — nothing observable differs". **Verify that claim rather than
+accepting it**: if a toggle-off/on sequence can leave the two consumers at different counter
+positions for the same input, that is a policy difference wearing composition's clothes.
+
+**Minor:** `FAST_START_SENTENCE_COUNT` is exported from the new shared module though the feeder
+kept it private, and it is consumed only by the shared unit's own test. Judge whether an export
+that exists only for a test is warranted here or should be internal.
+
+**Not attributable:** `pnpm lint:unused` fails on two committed, unmodified paths.
+
+### W1 (splitter) — CLEAN, and a real behavioural difference correctly NOT filed as a defect
+
+Audit PASS, zero findings. The document-level counter was proven **empirically**, not read: the
+auditor ran the repo's own chunker + splitter + new shared unit against the four-block fixture in
+a scratch script and got `{preChange: 4, blockLevel: 8, documentLevel: 7}`. Chat's
+non-regression was **byte-verified** — the feeder test file's sha256 matches its committed blob
+exactly, with 25 tests passing against it. The blog reader's window test is additive-only
+(`66 0` numstat, zero deletions), so nothing was relaxed, and no speak-issuing moved into the
+shared unit.
+
+**The "nothing observable differs" claim is FALSE, and the report's own sentence contained the
+counterexample.** The feeder calls `speakSplit()` unconditionally, so the ordinal counter advances
+for every sentence **even while the gate is off**; gating happens per piece afterwards. The
+observer returns before `split()` is ever reached, so a disabled stream spends no budget. Feed
+four sentences with the gate off for the first three:
+
+- feeder → counter is 3, sentence 4 gets the full threshold, spoken whole, no fast start
+- observer → counter is 0, sentence 4 gets the halved threshold and splits
+
+Different counter positions, different audible output, same input.
+
+**The auditor declined to file it, disagreeing with my own stated test, and it is right.** My rule
+was "different counter positions ⇒ policy difference". Its narrower reading: there is exactly one
+constant, one counter implementation, one halving — grep confirms no survivors anywhere — so this
+is not a second copy of the policy. It is a difference in *which sentences each consumer offers
+to* the policy. That is composition. It is also unfixable within W1's criteria, since criterion 2
+required chat byte-identical, so filing it would have sent a fixer to violate that criterion.
+
+**What it actually surfaces, for the W2 decision set:** if the fast-start budget exists to buy
+time-to-first-*audio*, the observer's placement is the correct one and the feeder's is a mild
+**pre-existing** UX defect — a user who enables read-aloud four sentences into a reply gets no
+fast start at all, because the budget was silently spent on sentences nobody heard. The fix is
+one line (gate before splitting), but it is a real behaviour change to a deployed audio path, so
+it belongs with W2, which already owns exactly that.
+
+Two smaller judgements, both accepted: the offsets test does exercise three fast-start-split
+blocks (it asserts the count of 7 first, pinning that splitting happened), though its unique-token
+fixture does not stress the cursor-forward search's unguarded false-match path. And
+`FAST_START_SENTENCE_COUNT`'s export is warranted — the colocated test derives the budget boundary
+from it rather than hardcoding `3`, matching the pattern the neighbouring threshold constant
+already sets, and duplicating the literal is what CODE-RULES bans.

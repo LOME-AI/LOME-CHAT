@@ -1401,11 +1401,15 @@ export function compileMultiModelTurn(
  * COMPILE-THEN-PRICE through the same canonical estimator every other money
  * decision uses, never a second cost formula and never a hardcoded level list.
  * An explicit level that does not fit is refused (`accepted: false` → the trial's
- * over-cap 402); `auto` takes the turn's SOLE real choice when exactly one exists
- * (deterministic — no classifier, no reserve) and otherwise runs reasoning-free
- * (auto is the server's choice — degrading it is honest, unlike downgrading an
- * explicit ask); `none` passes through so the build owns the mandatory-reasoning
+ * over-cap 402); `none` passes through so the build owns the mandatory-reasoning
  * refusal.
+ *
+ * `auto` is deliberately outside this function's domain, and the parameter type
+ * enforces it. An auto trial turn goes to the classifier, exactly as a paid one
+ * does — the trial arm's compiler answers it, and its deterministic
+ * single-choice case is the shared `resolveTurnReasoning` resolution the paid
+ * path already uses. Resolving auto here could only mean choosing a level with
+ * no classifier, which §Reasoning Effort 5 forbids by name.
  */
 export type TrialReasoningDecision =
   | { readonly accepted: true; readonly selection: ReasoningEffortSelection | undefined }
@@ -1452,23 +1456,10 @@ function trialLevelFits(
 export function trialReasoningSelection(
   descriptor: ModelDescriptor,
   budget: TurnBudget,
-  selection: ReasoningEffortSelection
+  selection: Exclude<ReasoningEffortSelection, 'auto'>
 ): Result<TrialReasoningDecision, DomainError> {
   if (selection === 'off') return ok({ accepted: true, selection });
-  const fitsCeiling = (entry: TurnReasoningEntry): boolean =>
-    trialLevelFits(descriptor, budget, entry);
-  if (selection === 'auto') {
-    // Exactly one real choice ⇒ the deterministic pick (BILLING §Effort 5):
-    // no classifier call and no reserve. The only single-choice catalog
-    // shape is Min-only — a model that offers no rung but can disable — so
-    // the pick is always the hard off; a lone rung cannot occur, because a
-    // model that cannot disable either offers nothing or offers ≥ 2 rungs.
-    const options = turnEffortOptions([reasoningPlanModelFrom(descriptor)]);
-    const sole = options.length === 1 ? options[0] : undefined;
-    if (sole?.choice === 'off') return ok({ accepted: true, selection: 'off' });
-    return ok({ accepted: true, selection: undefined });
-  }
   return requiredReasoningEntryFor(descriptor, selection).map((entry) =>
-    fitsCeiling(entry) ? { accepted: true, selection } : { accepted: false }
+    trialLevelFits(descriptor, budget, entry) ? { accepted: true, selection } : { accepted: false }
   );
 }

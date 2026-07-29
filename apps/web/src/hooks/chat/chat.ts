@@ -6,6 +6,7 @@ import {
   type MemberPrivilege,
   type ContentItemResponse,
   type MembershipView,
+  type ResolvedReasoningEffort,
   type GetConversationResponse,
 } from '@hushbox/shared';
 import { useAuthStore, useSession } from '@/lib/auth';
@@ -79,6 +80,8 @@ interface HistoryContentItem {
   isSmartModel: boolean;
   /** Persisted reasoning token count for the item's generation(s), or null. */
   reasoningTokens: number | null;
+  /** The level the item's generation reasoned at, or null when none was recorded. */
+  reasoningEffort: ResolvedReasoningEffort | null;
 }
 
 interface HistoryMessage {
@@ -121,6 +124,9 @@ function toContentItemResponse(item: HistoryContentItem): ContentItemResponse {
     // The wire serves null for "none recorded"; the display contract keeps the
     // field absent instead so zero-reasoning messages render no thinking line.
     ...(item.reasoningTokens == null ? {} : { reasoningTokens: item.reasoningTokens }),
+    // Null means no level was recorded and the field stays absent; `off` is a
+    // recorded level and travels as itself, so the badge can tell them apart.
+    ...(item.reasoningEffort == null ? {} : { reasoningEffort: item.reasoningEffort }),
   };
 }
 

@@ -13,6 +13,14 @@ vi.mock('@/hooks/billing/use-spendable', () => ({
   useSpendable: vi.fn(),
 }));
 
+const { mockLinkGuest } = vi.hoisted(() => ({
+  mockLinkGuest: { current: null as string | null },
+}));
+
+vi.mock('@/lib/link-guest-auth', () => ({
+  getLinkGuestAuth: () => mockLinkGuest.current,
+}));
+
 vi.mock('@/providers/stability-provider', () => ({
   useStability: vi.fn(() => ({
     isAuthStable: true,
@@ -56,6 +64,7 @@ describe('useResolveBilling', () => {
     estimatedMinimumCostNanoUsd: 40_000_000n, // 4¢
     isPremiumModel: false,
     isAuthenticated: true,
+    conversationId: null,
   };
 
   beforeEach(() => {
@@ -65,6 +74,7 @@ describe('useResolveBilling', () => {
     } as UseQueryResult<GetBalanceResponse>);
     // Served spendable: $10 balance + 50¢ baked cushion.
     mockUseSpendable.mockReturnValue(spendable('10500000000'));
+    mockLinkGuest.current = null;
   });
 
   afterEach(() => {
@@ -141,50 +151,32 @@ describe('useResolveBilling', () => {
     }
   });
 
-  it('returns owner_balance when group budget is available', () => {
+  it("returns owner_balance for a link guest whose payer's served figure covers the turn", () => {
+    // Owner funding reaches this hook only through the SERVED figure — there is
+    // no group dimension for a caller to compose one from.
+    mockUseBalance.mockReturnValue({
+      data: balance('0', '0'),
+      isPending: false,
+    } as UseQueryResult<GetBalanceResponse>);
+    mockUseSpendable.mockReturnValue(spendable('5000000000'));
+    mockLinkGuest.current = 'link-public-key';
+
     const { result } = renderHook(() =>
       useResolveBilling({
         ...defaultInput,
-        group: {
-          effectiveRemainingNanoUsd: 5_000_000_000n,
-          ownerBalanceNanoUsd: 50_000_000_000n,
-        },
+        // A link guest holds no session: the app masks it as unauthenticated.
+        isAuthenticated: false,
+        conversationId: 'conversation-1',
       })
     );
 
     expect(result.current.fundingSource).toBe('owner_balance');
   });
 
-  it('falls through to personal when group budget is exhausted', () => {
-    const { result } = renderHook(() =>
-      useResolveBilling({
-        ...defaultInput,
-        group: {
-          effectiveRemainingNanoUsd: 0n,
-          ownerBalanceNanoUsd: 50_000_000_000n,
-        },
-      })
-    );
+  it('reads the funding snapshot scoped to the conversation that names the payer', () => {
+    renderHook(() => useResolveBilling({ ...defaultInput, conversationId: 'conversation-1' }));
 
-    // zero effective remaining → falls through to personal
-    expect(result.current.fundingSource).toBe('personal_balance');
-  });
-
-  it('denies with insufficient_balance when the group owner balance is negative', () => {
-    const { result } = renderHook(() =>
-      useResolveBilling({
-        ...defaultInput,
-        group: {
-          effectiveRemainingNanoUsd: 5_000_000_000n,
-          ownerBalanceNanoUsd: -1_000_000_000n,
-        },
-      })
-    );
-
-    expect(result.current.fundingSource).toBe('denied');
-    if (result.current.fundingSource === 'denied') {
-      expect(result.current.reason).toBe('insufficient_balance');
-    }
+    expect(mockUseSpendable).toHaveBeenCalledWith('conversation-1');
   });
 
   it('denies with insufficient_balance when the caller purchased balance is negative (solo)', () => {

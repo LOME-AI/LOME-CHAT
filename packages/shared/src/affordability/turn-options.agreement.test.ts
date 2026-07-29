@@ -181,7 +181,7 @@ function fundingOf(rng: Rng): FundingSnapshot {
   return {
     spendableNanoUsd: nanoUSD(BigInt(intBetween(rng, 0, 400)) * 1_000_000n),
     heldNanoUsd: nanoUSD(BigInt(intBetween(rng, 0, 200)) * 1_000_000n),
-    tier: pick(rng, TIERS),
+    payerTier: pick(rng, TIERS),
     payer: 'self',
   };
 }

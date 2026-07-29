@@ -87,10 +87,13 @@ describe('spendableFundsNanoUsd', () => {
 });
 
 describe('getEffectiveBalanceNano', () => {
-  it('caps trial and guest at the fixed max message cost', () => {
+  it('caps the trial at the fixed max message cost', () => {
+    // The trial alone: a link guest HAS a funding door and is owner-funded, so
+    // it is excluded from the parameter type and cannot be handed this ceiling
+    // (§Affordability 8). There is no runtime arm left to assert against —
+    // `getEffectiveBalanceNano('guest', …)` is a compile error.
     const trialFixed = BigInt(MAX_TRIAL_MESSAGE_COST_CENTS) * NANO_USD_PER_CENT;
     expect(getEffectiveBalanceNano('trial', 999n, 999n)).toBe(trialFixed);
-    expect(getEffectiveBalanceNano('guest', 999n, 999n)).toBe(trialFixed);
   });
 
   it('uses only the free allowance for free users', () => {

@@ -160,7 +160,7 @@ async function seedTextUsage(args: {
   const inserted = await db
     .insert(usageRecords)
     .values({
-      userId: args.userId,
+      payerUserId: args.userId,
       conversationId: args.conversationId,
       runId: crypto.randomUUID(),
       modelId: args.modelId,
@@ -191,7 +191,7 @@ async function seedImageUsage(args: {
   // No llm_completions row — an image generation is deliberately absent from the
   // token-joined aggregations but present in the per-conversation total.
   await db.insert(usageRecords).values({
-    userId: args.userId,
+    payerUserId: args.userId,
     conversationId: args.conversationId,
     runId: crypto.randomUUID(),
     modelId: MODEL_IMG,
@@ -356,7 +356,7 @@ afterAll(async () => {
     // Both legs of each seeded transaction go in one statement — a partial
     // delete would leave an unbalanced transaction and trip the zero-sum trigger.
     await db.delete(ledgerEntries).where(like(ledgerEntries.idempotencyKey, 'usage-reads-%'));
-    await db.delete(usageRecords).where(inArray(usageRecords.userId, createdUserIds));
+    await db.delete(usageRecords).where(inArray(usageRecords.payerUserId, createdUserIds));
     if (walletIds.length > 0) {
       await db.delete(wallets).where(inArray(wallets.id, walletIds));
     }
@@ -664,7 +664,7 @@ describe('seed sanity', () => {
     const rows = await db
       .select({ conversationId: usageRecords.conversationId })
       .from(usageRecords)
-      .where(and(eq(usageRecords.userId, userId), eq(usageRecords.modelId, MODEL_B)));
+      .where(and(eq(usageRecords.payerUserId, userId), eq(usageRecords.modelId, MODEL_B)));
     expect(rows[0]?.conversationId).toBe(convB);
   });
 });

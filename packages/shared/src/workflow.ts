@@ -221,22 +221,32 @@ export function isTurnClassifierNode(node: Node, nodes: readonly Node[]): boolea
 }
 
 /**
- * Every node id some other node reads — the definition-level half of the
- * consumption walk the interpreter runs over compiled inputs. A node absent
- * from this set is a sink, and only sink outputs are persisted, which is why
- * admission may price a consumed node without any output storage.
+ * Every node id some other node reads. A node absent from this set is a sink,
+ * and only sink outputs are persisted, which is why admission may price a
+ * consumed node without any output storage.
  *
- * Container feeds need no exclusion here: a body reads its container's
- * reserved virtual port, so the id it names is the container's, never a value
- * node's. Every id a value node contributes therefore means its `out` channel
- * is genuinely read.
+ * THE ONE consumed-set derivation. Compile stamps its result onto the artifact
+ * it builds, and every question about what a run persists or reserves storage
+ * for is answered from that stamp or from this function — never from a second
+ * walk that would be free to drift.
+ *
+ * The edges are the whole answer, and an edge is consumption exactly when it
+ * leaves the producer's declared `out` port. A node's embedded refs (`in`,
+ * `ins`, `over`) are NOT the answer: `branch`, `loop` and `subWorkflow` carry no
+ * embedded ref yet compile requires their input port to be fed, so a walk over
+ * refs cannot see what they read. The two other producer ports an edge may name
+ * are the workflow-input pseudo-node (which is no node here, so it has no `out`
+ * to match) and a container's reserved virtual body feed — neither is a read of
+ * a value a run could persist, and neither can collide with a declared `out`,
+ * which compile refuses as a reserved-port shadow.
  */
-export function consumedProducerIds(nodes: readonly Node[]): ReadonlySet<string> {
+export function consumedProducerIds(
+  definition: Pick<WorkflowDefinition, 'nodes' | 'edges'>
+): ReadonlySet<string> {
+  const outPortByNode = new Map(definition.nodes.map((node) => [node.id, node.out] as const));
   const consumed = new Set<string>();
-  for (const node of nodes) {
-    if ('in' in node) consumed.add(node.in.node);
-    if (node.type === 'fanIn') for (const ref of node.ins) consumed.add(ref.node);
-    if (node.type === 'fanOut') consumed.add(node.over.node);
+  for (const edge of definition.edges) {
+    if (edge.from.port === outPortByNode.get(edge.from.node)) consumed.add(edge.from.node);
   }
   return consumed;
 }

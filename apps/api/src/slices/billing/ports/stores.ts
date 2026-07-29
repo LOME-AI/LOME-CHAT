@@ -48,7 +48,8 @@ export interface LedgerLegInput {
 export type BillingModality = Modality;
 
 export interface UsageRecordInput {
-  readonly userId: string;
+  /** The paying account — the owner of the debited wallet, never the sender. */
+  readonly payerUserId: string;
   /** The sender's user id (member turn); mutually exclusive with senderLinkId. */
   readonly senderUserId?: string;
   /** The sender's link id (link-guest turn); mutually exclusive with senderUserId. */
@@ -98,7 +99,8 @@ export interface MediaGenerationInput {
 
 export interface UsageRecordRow {
   readonly id: string;
-  readonly userId: string | null;
+  /** Null once the payer has been hard-deleted (pseudonymized, never dropped). */
+  readonly payerUserId: string | null;
   readonly contentItemId: string | null;
   readonly runId: string;
   readonly modality: BillingModality;
@@ -421,7 +423,8 @@ export interface BillingStores {
   /**
    * Per-model spend aggregation for one user (`SUM(cost)` + counts grouped by
    * `modelId`), ordered by model id for keyset pagination. Session-scoped —
-   * the userId filter is the sole visibility boundary.
+   * the caller filter is the sole visibility boundary, and it matches the
+   * PAYER: this is what the caller spent, not what they sent.
    */
   aggregateUsageByModel(
     db: Database,
@@ -481,7 +484,12 @@ export interface BillingStores {
     db: Database,
     args: UsageDateRangeQuery & { readonly limit: number }
   ): ResultAsync<readonly LedgerHistoryRow[], DomainError>;
-  /** Distinct model ids the caller has any usage under, model-id ascending. */
+  /**
+   * Distinct model ids the caller has any usage under, model-id ascending.
+   * Payer-scoped like every other analytics read: it populates the model filter
+   * for those charts, so a different scope would offer options that select
+   * nothing.
+   */
   distinctUsageModels(db: Database, userId: string): ResultAsync<readonly string[], DomainError>;
   listLedgerTransactions(
     db: Database,

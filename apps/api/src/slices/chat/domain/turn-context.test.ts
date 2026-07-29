@@ -8,7 +8,15 @@ import type { Database } from '@hushbox/db';
 
 const DB = {} as Database;
 const NOW = new Date('2026-07-10T12:00:00Z');
-const ARGS = { conversationId: 'c1', sender: { kind: 'user', userId: 'u1' } as const, now: NOW };
+/** A turn whose minimum the route priced: 1 nano, so any positive headroom covers it. */
+const CHEAP_TURN = { kind: 'priced', nanoUsd: 1n } as const;
+
+const ARGS = {
+  conversationId: 'c1',
+  sender: { kind: 'user', userId: 'u1' } as const,
+  now: NOW,
+  minTurnCost: CHEAP_TURN,
+};
 /** The server-resolved sender fields a user turn (member 'm1', sender 'u1') always yields. */
 const USER_FIELDS = {
   sender: { kind: 'user', userId: 'u1', memberId: 'm1' },
@@ -137,6 +145,7 @@ describe('resolveTurnContext', () => {
         conversationRemainingNanoUsd: 0n,
         ownerPurchasedBalanceNanoUsd: 1_000_000n,
         callerOwnPurchasedBalanceNanoUsd: 1_000_000n,
+        minTurnCostNanoUsd: 1n,
       },
     });
   });
@@ -168,6 +177,7 @@ describe('resolveTurnContext', () => {
         conversationRemainingNanoUsd: 0n,
         ownerPurchasedBalanceNanoUsd: 0n,
         callerOwnPurchasedBalanceNanoUsd: 0n,
+        minTurnCostNanoUsd: 1n,
       },
     });
   });
@@ -201,6 +211,7 @@ describe('resolveTurnContext', () => {
         conversationRemainingNanoUsd: 0n,
         ownerPurchasedBalanceNanoUsd: -100n,
         callerOwnPurchasedBalanceNanoUsd: -100n,
+        minTurnCostNanoUsd: 1n,
       },
     });
   });
@@ -240,6 +251,7 @@ describe('resolveTurnContext', () => {
         conversationRemainingNanoUsd: 1_000_000n,
         ownerPurchasedBalanceNanoUsd: 1_000_000n,
         callerOwnPurchasedBalanceNanoUsd: 0n,
+        minTurnCostNanoUsd: 1n,
       },
     });
   });
@@ -269,6 +281,9 @@ describe('resolveTurnContext', () => {
     );
     expect(result._unsafeUnwrap()).toEqual({
       ...USER_FIELDS,
+      // The payer is the OWNER: the charged wallet is theirs, so the billed
+      // row's payer must name them and not the sending member.
+      payerUserId: 'owner-9',
       epochNumber: 3,
       walletId: 'owner-paid-w',
       funding: { remainingNanoUsd: 1_000_000n, kind: 'purchased' },
@@ -279,6 +294,7 @@ describe('resolveTurnContext', () => {
         conversationRemainingNanoUsd: 1_000_000n,
         ownerPurchasedBalanceNanoUsd: 1_000_000n,
         callerOwnPurchasedBalanceNanoUsd: 0n,
+        minTurnCostNanoUsd: 1n,
       },
     });
     // Only the owner's wallet is read on the owner-funded branch.
@@ -319,6 +335,7 @@ describe('resolveTurnContext', () => {
         conversationRemainingNanoUsd: 1_000_000n,
         ownerPurchasedBalanceNanoUsd: 1_000_000n,
         callerOwnPurchasedBalanceNanoUsd: 1_000_000n,
+        minTurnCostNanoUsd: 1n,
       },
     });
     // The owner is read for the headroom check, then the sender for the payer.
@@ -357,6 +374,7 @@ describe('resolveTurnContext', () => {
         conversationRemainingNanoUsd: 1_000_000n,
         ownerPurchasedBalanceNanoUsd: 0n,
         callerOwnPurchasedBalanceNanoUsd: 1_000_000n,
+        minTurnCostNanoUsd: 1n,
       },
     });
   });
@@ -416,6 +434,7 @@ describe('resolveTurnContext', () => {
         conversationRemainingNanoUsd: 0n,
         ownerPurchasedBalanceNanoUsd: 1_000_000n,
         callerOwnPurchasedBalanceNanoUsd: 1_000_000n,
+        minTurnCostNanoUsd: 1n,
       },
     });
   });
@@ -483,6 +502,7 @@ describe('resolveTurnContext', () => {
     );
     expect(result._unsafeUnwrap()).toEqual({
       ...USER_FIELDS,
+      payerUserId: 'owner-9',
       epochNumber: 3,
       walletId: 'owner-paid-w',
       funding: { remainingNanoUsd: 500n, kind: 'purchased' },
@@ -493,14 +513,93 @@ describe('resolveTurnContext', () => {
         conversationRemainingNanoUsd: 1900n,
         ownerPurchasedBalanceNanoUsd: 5000n,
         callerOwnPurchasedBalanceNanoUsd: 0n,
+        minTurnCostNanoUsd: 1n,
       },
     });
+  });
+
+  it('falls a member through to their OWN wallet when the headroom cannot cover the turn', async () => {
+    // Headroom is positive (900 nano) but below the turn's minimum, so the
+    // owner can never fund this send: freezing them as payer would hand
+    // admission a member scope it must refuse, on this attempt and every retry.
+    const result = await resolveTurnContext(
+      deps({
+        member: { id: 'm1' },
+        conversation: {
+          currentEpoch: 3,
+          ownerUserId: 'owner-9',
+          conversationBudgetNanoUsd: 1_000_000n,
+        },
+        memberBudget: { budgetNanoUsd: 900n, spentNanoUsd: 0n },
+        walletsByUser: {
+          'owner-9': [{ id: 'owner-paid-w', type: 'purchased', balanceNanoUsd: 1_000_000n }],
+          u1: [{ id: 'sender-paid-w', type: 'purchased', balanceNanoUsd: 1_000_000n }],
+        },
+      }),
+      DB,
+      { ...ARGS, minTurnCost: { kind: 'priced', nanoUsd: 901n } as const }
+    );
+    const context = result._unsafeUnwrap();
+    expect(context.payerUserId).toBe('u1');
+    expect(context.walletId).toBe('sender-paid-w');
+    expect(context.fundingDecisionInputs.minTurnCostNanoUsd).toBe(901n);
+  });
+
+  it('funds the OWNER when the headroom exactly covers the minimum', async () => {
+    // The boundary is inclusive: headroom equal to the minimum buys a runnable
+    // ceiling, so the group still pays.
+    const result = await resolveTurnContext(
+      deps({
+        member: { id: 'm1' },
+        conversation: {
+          currentEpoch: 3,
+          ownerUserId: 'owner-9',
+          conversationBudgetNanoUsd: 1_000_000n,
+        },
+        memberBudget: { budgetNanoUsd: 900n, spentNanoUsd: 0n },
+        walletsByUser: {
+          'owner-9': [{ id: 'owner-paid-w', type: 'purchased', balanceNanoUsd: 1_000_000n }],
+          u1: [{ id: 'sender-paid-w', type: 'purchased', balanceNanoUsd: 1_000_000n }],
+        },
+      }),
+      DB,
+      { ...ARGS, minTurnCost: { kind: 'priced', nanoUsd: 900n } as const }
+    );
+    const context = result._unsafeUnwrap();
+    expect(context.payerUserId).toBe('owner-9');
+    expect(context.walletId).toBe('owner-paid-w');
+  });
+
+  it('leaves the comparison inapplicable for a turn shape that carries no minimum', async () => {
+    // A media generation prices per unit, so there is no per-token minimum to
+    // compare; the owner funds any positive headroom, exactly as before.
+    const result = await resolveTurnContext(
+      deps({
+        member: { id: 'm1' },
+        conversation: {
+          currentEpoch: 3,
+          ownerUserId: 'owner-9',
+          conversationBudgetNanoUsd: 1_000_000n,
+        },
+        memberBudget: { budgetNanoUsd: 900n, spentNanoUsd: 0n },
+        walletsByUser: {
+          'owner-9': [{ id: 'owner-paid-w', type: 'purchased', balanceNanoUsd: 1_000_000n }],
+          u1: [{ id: 'sender-paid-w', type: 'purchased', balanceNanoUsd: 1_000_000n }],
+        },
+      }),
+      DB,
+      { ...ARGS, minTurnCost: { kind: 'unpriced', reason: 'media-per-unit' } as const }
+    );
+    const context = result._unsafeUnwrap();
+    expect(context.payerUserId).toBe('owner-9');
+    expect(context.fundingDecisionInputs.minTurnCostNanoUsd).toBeUndefined();
   });
 
   const GUEST_ARGS = {
     conversationId: 'c1',
     sender: { kind: 'linkGuest', linkId: 'l1' } as const,
     now: NOW,
+    minTurnCost: CHEAP_TURN,
   };
 
   it('funds a WRITE link-guest turn from the OWNER wallet and attributes the guest as sender', async () => {
@@ -536,6 +635,7 @@ describe('resolveTurnContext', () => {
         conversationRemainingNanoUsd: 1_000_000n,
         ownerPurchasedBalanceNanoUsd: 1_000_000n,
         callerOwnPurchasedBalanceNanoUsd: 0n,
+        minTurnCostNanoUsd: 1n,
       },
     });
   });
@@ -565,6 +665,31 @@ describe('resolveTurnContext', () => {
     // wireCode (GROUP_BUDGET_EXHAUSTED, matching the shared funding core's
     // refusal code) instead of the generic FORBIDDEN, so the client can show
     // the guest the owner-allocated-budget remedy from the shared copy map.
+    expect(error.wireCode).toBe('GROUP_BUDGET_EXHAUSTED');
+  });
+
+  it('DENIES a link-guest turn whose headroom is positive but below the minimum', async () => {
+    // The guest boundary does not move with the comparison: headroom that
+    // cannot cover the turn refuses the guest exactly as an exhausted one does,
+    // because a guest holds no wallet to fall through to (§Group Funding 2).
+    const result = await resolveTurnContext(
+      deps({
+        linkGuest: { id: 'gm1' },
+        conversation: {
+          currentEpoch: 4,
+          ownerUserId: 'owner-9',
+          conversationBudgetNanoUsd: 1_000_000n,
+        },
+        memberBudget: { budgetNanoUsd: 900n, spentNanoUsd: 0n },
+        walletsByUser: {
+          'owner-9': [{ id: 'owner-paid-w', type: 'purchased', balanceNanoUsd: 1_000_000n }],
+        },
+      }),
+      DB,
+      { ...GUEST_ARGS, minTurnCost: { kind: 'priced', nanoUsd: 901n } as const }
+    );
+    const error = result._unsafeUnwrapErr();
+    expect(error.code).toBe('forbidden');
     expect(error.wireCode).toBe('GROUP_BUDGET_EXHAUSTED');
   });
 

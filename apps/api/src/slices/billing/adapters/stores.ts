@@ -80,12 +80,14 @@ function sumCost(): SQL<bigint> {
 
 /**
  * The caller-scoped usage-record window shared by the analytics aggregations:
- * `userId` (the sole visibility boundary) AND the inclusive `createdAt` range,
- * optionally narrowed to one model id.
+ * the caller as PAYER (the sole visibility boundary) AND the inclusive
+ * `createdAt` range, optionally narrowed to one model id. Payer-scoped is what
+ * makes these figures reconcile with the ledger reads beside them on the same
+ * surface — a spend total and its wallet legs must count the same charges.
  */
 function usageWindow(range: UsageDateRangeQuery, modelId?: string): SQL | undefined {
   const conditions = [
-    eq(usageRecords.userId, range.userId),
+    eq(usageRecords.payerUserId, range.userId),
     gte(usageRecords.createdAt, range.start),
     lte(usageRecords.createdAt, range.end),
   ];
@@ -233,7 +235,7 @@ export function createBillingStores(): BillingStores {
       const inserted = await tx
         .insert(usageRecords)
         .values({
-          userId: input.userId,
+          payerUserId: input.payerUserId,
           ...(input.senderUserId === undefined ? {} : { senderUserId: input.senderUserId }),
           ...(input.senderLinkId === undefined ? {} : { senderLinkId: input.senderLinkId }),
           contentItemId: input.contentItemId,
@@ -583,7 +585,7 @@ export function createBillingStores(): BillingStores {
         db
           .select({
             id: usageRecords.id,
-            userId: usageRecords.userId,
+            payerUserId: usageRecords.payerUserId,
             contentItemId: usageRecords.contentItemId,
             runId: usageRecords.runId,
             modality: usageRecords.modality,
@@ -601,7 +603,7 @@ export function createBillingStores(): BillingStores {
     aggregateUsageByModel(db: Database, query) {
       // userId stays a permanent conjunct — the sole visibility boundary — so
       // the cursor can never widen the scope across users.
-      const conditions = [eq(usageRecords.userId, query.userId)];
+      const conditions = [eq(usageRecords.payerUserId, query.userId)];
       if (query.cursor !== undefined) {
         conditions.push(gt(usageRecords.modelId, query.cursor));
       }
@@ -774,7 +776,7 @@ export function createBillingStores(): BillingStores {
         db
           .selectDistinct({ modelId: usageRecords.modelId })
           .from(usageRecords)
-          .where(eq(usageRecords.userId, userId))
+          .where(eq(usageRecords.payerUserId, userId))
           .orderBy(asc(usageRecords.modelId)),
         storeFailure
       ).map((rows) => rows.map((row) => row.modelId));

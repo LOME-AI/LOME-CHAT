@@ -5,6 +5,7 @@ import { MessageItem } from '@/components/chat/message/message-item';
 import type { MessageGroup } from '@/lib/chat-sender';
 import type { Message } from '@/lib/api';
 import type { MessageAction } from '@/lib/message-actions';
+import type { ResolvedReasoningEffort } from '@hushbox/shared';
 import { useTtsPlaybackStore } from '@hushbox/ui/accessibility/store';
 
 vi.mock('@/lib/chat-tts-stream', () => ({
@@ -1072,6 +1073,52 @@ describe('MessageItem', () => {
       };
       render(<MessageItem message={aiMsg} allowedActions={ALL_AI_ACTIONS} />);
       expect(screen.queryByTestId('smart-model-chip')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('reasoning effort badge', () => {
+    function aiMessageWithLevel(reasoningEffort?: ResolvedReasoningEffort): Message {
+      const knownModel = mockModelsData.data.models[0];
+      if (!knownModel) throw new Error('test fixture must include at least one model');
+      return {
+        id: 'ai-effort',
+        conversationId: 'conv-1',
+        role: 'assistant',
+        content: 'An answer',
+        createdAt: '2024-01-01T00:00:00Z',
+        modelName: knownModel.id,
+        ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+      };
+    }
+
+    it('badges the resolved level beside the model name', () => {
+      render(<MessageItem message={aiMessageWithLevel('high')} allowedActions={ALL_AI_ACTIONS} />);
+      const container = screen.getByTestId('model-nametag-container');
+      expect(within(container).getByTestId('message-effort-chip')).toHaveTextContent('High');
+    });
+
+    it('badges an off level as Min', () => {
+      render(<MessageItem message={aiMessageWithLevel('off')} allowedActions={ALL_AI_ACTIONS} />);
+      expect(screen.getByTestId('message-effort-chip')).toHaveTextContent('Min');
+    });
+
+    it('renders no badge when no level was recorded', () => {
+      render(<MessageItem message={aiMessageWithLevel()} allowedActions={ALL_AI_ACTIONS} />);
+      expect(screen.queryByTestId('message-effort-chip')).not.toBeInTheDocument();
+    });
+
+    it('badges multi-model siblings with their own levels, so a downgraded one says so', () => {
+      render(
+        <>
+          <MessageItem message={aiMessageWithLevel('max')} allowedActions={ALL_AI_ACTIONS} />
+          <MessageItem
+            message={{ ...aiMessageWithLevel('lite'), id: 'ai-effort-sibling' }}
+            allowedActions={ALL_AI_ACTIONS}
+          />
+        </>
+      );
+      const badges = screen.getAllByTestId('message-effort-chip');
+      expect(badges.map((badge) => badge.textContent)).toEqual(['Max', 'Lite']);
     });
   });
 

@@ -43,7 +43,7 @@ export async function seedPublicUsageRecords(
     .insert(usageRecords)
     .values(
       params.records.map((spec) => ({
-        userId: null,
+        payerUserId: null,
         contentItemId: null,
         conversationId: null,
         runId: crypto.randomUUID(),

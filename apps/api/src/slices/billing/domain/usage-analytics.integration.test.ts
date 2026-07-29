@@ -50,7 +50,7 @@ async function seedUsage(
   isEstimated: boolean
 ): Promise<void> {
   await db.insert(usageRecords).values({
-    userId,
+    payerUserId: userId,
     runId: crypto.randomUUID(),
     modelId,
     providerName: PROVIDER,
@@ -75,7 +75,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (createdUserIds.length > 0) {
-    await db.delete(usageRecords).where(inArray(usageRecords.userId, createdUserIds));
+    await db.delete(usageRecords).where(inArray(usageRecords.payerUserId, createdUserIds));
     await db.delete(users).where(inArray(users.id, createdUserIds));
   }
   await db.$client.end();

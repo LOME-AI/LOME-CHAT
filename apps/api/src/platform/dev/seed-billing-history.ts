@@ -214,7 +214,9 @@ async function writeSeedUsageChargeWithinTx(
   const inserted = await tx
     .insert(usageRecords)
     .values({
-      userId: params.userId,
+      // Seeded history is a solo user's own spend: they are the payer, and the
+      // charge legs below debit their wallet.
+      payerUserId: params.userId,
       contentItemId: spec.contentItemId ?? null,
       runId: crypto.randomUUID(),
       conversationId: params.conversationId,

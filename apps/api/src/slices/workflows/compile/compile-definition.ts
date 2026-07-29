@@ -1,5 +1,6 @@
 import { P, match } from 'ts-pattern';
 import {
+  consumedProducerIds,
   END_NODE_ID,
   formatTypeTag,
   isAssignable,
@@ -47,6 +48,14 @@ export interface CompiledDefinition {
   readonly nodes: ReadonlyMap<string, CompiledNode>;
   /** A topological execution order over dataflow and control edges. */
   readonly order: readonly NodeId[];
+  /**
+   * Every node id another node reads. The complement is the run's sinks — the
+   * only values settlement persists — and the same set decides which nodes
+   * admission reserves output storage for. Derived here, where a definition
+   * becomes a compiled form, so the reserve and the persisted set are one value
+   * rather than two answers to the same question.
+   */
+  readonly consumedProducers: ReadonlySet<string>;
 }
 
 /**
@@ -655,6 +664,7 @@ class Compilation {
       workflowInputs: this.context.workflowInputs,
       nodes,
       order,
+      consumedProducers: consumedProducerIds(this.definition),
     };
   }
 

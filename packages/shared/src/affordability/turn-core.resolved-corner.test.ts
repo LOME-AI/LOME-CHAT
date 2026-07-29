@@ -59,7 +59,7 @@ function fundingOf(spendable: bigint): FundingSnapshot {
   return {
     spendableNanoUsd: nanoUSD(spendable),
     heldNanoUsd: nanoUSD(0n),
-    tier: 'paid',
+    payerTier: 'paid',
     payer: 'self',
   };
 }

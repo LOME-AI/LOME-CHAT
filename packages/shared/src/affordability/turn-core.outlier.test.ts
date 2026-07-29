@@ -53,11 +53,14 @@ const DEAREST = modelOf('dearest', 4000n);
 const OUTLIER = modelOf('outlier', 200_000n);
 const CATALOG: readonly PriceableModel[] = [CHEAP, MID, MEDIAN, DEAREST, OUTLIER];
 
-function fundingOf(spendable: bigint, tier: FundingSnapshot['tier'] = 'paid'): FundingSnapshot {
+function fundingOf(
+  spendable: bigint,
+  payerTier: FundingSnapshot['payerTier'] = 'paid'
+): FundingSnapshot {
   return {
     spendableNanoUsd: nanoUSD(spendable),
     heldNanoUsd: nanoUSD(0n),
-    tier,
+    payerTier,
     payer: 'self',
   };
 }

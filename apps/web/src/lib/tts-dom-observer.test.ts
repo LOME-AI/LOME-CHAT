@@ -68,6 +68,21 @@ async function waitForSpeak(predicate: () => void): Promise<void> {
   await vi.waitFor(predicate, { timeout: 5000, interval: 5 });
 }
 
+function manyWords(prefix: string, count: number): string {
+  return Array.from({ length: count }, (_, index) => `${prefix}${String(index)}`).join(' ');
+}
+
+/**
+ * 20 words with a comma at word 10: above the halved fast-start threshold (13)
+ * so it splits while the container's budget lasts, below the full threshold
+ * (25) so it stays whole afterwards.
+ */
+function makeSplittableSentence(prefix: string): string {
+  const left = manyWords(`${prefix}L`, 10);
+  const right = manyWords(`${prefix}R`, 10);
+  return `${left}, ${right}.`;
+}
+
 describe('installTtsDomObserver', () => {
   it('returns a cleanup function', () => {
     const cleanup = installTtsDomObserver();
@@ -357,6 +372,46 @@ describe('installTtsDomObserver', () => {
     await drain();
     // No throw; the observer simply ignores the non-element mutation target.
     expect(true).toBe(true);
+    cleanup();
+  });
+
+  it('splits an opening sentence that is over the fast-start threshold', async () => {
+    enableTts();
+    const cleanup = installTtsDomObserver();
+    const container = document.createElement('div');
+    container.dataset['ttsStream'] = '';
+    document.body.append(container);
+    await drain();
+    container.append(document.createTextNode(`${makeSplittableSentence('one')} `));
+    await waitForSpeak(() => {
+      expect(speakMock).toHaveBeenCalledWith(`${manyWords('oneL', 10)},`, 'af_heart');
+      expect(speakMock).toHaveBeenCalledWith(`${manyWords('oneR', 10)}.`, 'af_heart');
+    });
+    cleanup();
+  });
+
+  it('gives each tracked container its own fast-start budget', async () => {
+    enableTts();
+    const cleanup = installTtsDomObserver();
+    const spent = document.createElement('div');
+    spent.dataset['ttsStream'] = '';
+    const fresh = document.createElement('div');
+    fresh.dataset['ttsStream'] = '';
+    document.body.append(spent, fresh);
+    await drain();
+    for (const prefix of ['a', 'b', 'c']) {
+      spent.append(document.createTextNode(`${makeSplittableSentence(prefix)} `));
+      await drain();
+    }
+    // The 4th sentence of `spent` is past its budget, so it stays whole; the
+    // 1st sentence of `fresh` is within its own budget, so it still splits.
+    spent.append(document.createTextNode(`${makeSplittableSentence('d')} `));
+    fresh.append(document.createTextNode(`${makeSplittableSentence('e')} `));
+    await waitForSpeak(() => {
+      expect(speakMock).toHaveBeenCalledWith(makeSplittableSentence('d'), 'af_heart');
+      expect(speakMock).toHaveBeenCalledWith(`${manyWords('eL', 10)},`, 'af_heart');
+      expect(speakMock).toHaveBeenCalledWith(`${manyWords('eR', 10)}.`, 'af_heart');
+    });
     cleanup();
   });
 });

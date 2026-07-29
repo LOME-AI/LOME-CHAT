@@ -258,7 +258,7 @@ describe('admissible is a subset of affordable', () => {
         {
           spendableNanoUsd: nanoUSD(spendable),
           heldNanoUsd: nanoUSD(held),
-          tier: pick(rng, TIERS),
+          payerTier: pick(rng, TIERS),
           payer: 'self',
         },
         basisOf(rng),
@@ -301,7 +301,7 @@ describe('the basis leg alone is monotone', () => {
         {
           spendableNanoUsd: nanoUSD(balance),
           heldNanoUsd: nanoUSD(0n),
-          tier: pick(rng, TIERS),
+          payerTier: pick(rng, TIERS),
           payer: 'self',
         },
         basisOf(rng),
@@ -339,7 +339,7 @@ describe('a pinned sibling is graded on a monotone arrangement', () => {
       {
         spendableNanoUsd: nanoUSD(spendable),
         heldNanoUsd: nanoUSD(held),
-        tier: 'paid',
+        payerTier: 'paid',
         payer: 'self',
       },
       basis,
@@ -475,7 +475,7 @@ describe('an ordered dimension`s feasible set is a downward-closed prefix', () =
         {
           spendableNanoUsd: nanoUSD(spendable),
           heldNanoUsd: nanoUSD(BigInt(intBetween(rng, 0, 200)) * 1_000_000n),
-          tier: pick(rng, TIERS),
+          payerTier: pick(rng, TIERS),
           payer: 'self',
         },
         basisOf(rng),
@@ -504,7 +504,7 @@ describe('options are marked, never filtered', () => {
         {
           spendableNanoUsd: nanoUSD(spendable),
           heldNanoUsd: nanoUSD(0n),
-          tier: pick(rng, TIERS),
+          payerTier: pick(rng, TIERS),
           payer: 'self',
         },
         basisOf(rng),

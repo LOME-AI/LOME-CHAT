@@ -1110,3 +1110,86 @@ describe('compileDefinition — deterministic errors', () => {
     expect(errors[0]).toMatchObject({ code: 'node_config_unresolved', nodeId: 'bad' });
   });
 });
+
+/**
+ * The consumed set the artifact carries: the value settlement may persist is
+ * whatever no other node reads, and admission reserves output storage for
+ * exactly that. Both questions are answered from this one field, so the reserve
+ * and the persisted set cannot come apart.
+ */
+describe('compileDefinition — the consumed set', () => {
+  it('names a producer whose only consumer is a branch', () => {
+    const definition = definitionWith(
+      [
+        answerNode('answer'),
+        {
+          id: 'route',
+          type: 'branch',
+          version: 1,
+          predicate: 'textDone',
+          cases: { done: 'end' },
+          else: 'end',
+          out: 'out',
+        },
+      ],
+      [edge('input', 'prompt', 'answer', 'in'), edge('answer', 'out', 'route', 'in')]
+    );
+
+    const compiled = compileDefinition(definition, makeContext())._unsafeUnwrap();
+
+    expect([...compiled.consumedProducers]).toEqual(['answer']);
+  });
+
+  it('names neither a workflow input nor a container feeding its own body', () => {
+    const definition = definitionWith(
+      [
+        {
+          id: 'spread',
+          type: 'fanOut',
+          version: 1,
+          over: { node: 'input', port: 'images' },
+          body: 'see',
+          maxWidth: 3,
+          out: 'out',
+        },
+        {
+          id: 'see',
+          type: 'modelCall',
+          version: 1,
+          model: 'vision-model',
+          params: {},
+          in: { node: 'spread', port: 'element' },
+          out: 'out',
+        },
+      ],
+      [edge('input', 'images', 'spread', 'over'), edge('spread', 'element', 'see', 'in')]
+    );
+    const context = makeContext({ workflowInputs: { images: listTag(mediaTag('image', [PNG])) } });
+
+    const compiled = compileDefinition(definition, context)._unsafeUnwrap();
+
+    expect([...compiled.consumedProducers]).toEqual([]);
+  });
+
+  it('names a producer read through an ordinary value edge', () => {
+    const compiled = compileDefinition(
+      definitionWith(
+        [
+          answerNode('answer'),
+          {
+            id: 'echoed',
+            type: 'transform',
+            version: 1,
+            transform: 'echo',
+            in: { node: 'answer', port: 'out' },
+            out: 'out',
+          },
+        ],
+        [edge('input', 'prompt', 'answer', 'in'), edge('answer', 'out', 'echoed', 'in')]
+      ),
+      makeContext()
+    )._unsafeUnwrap();
+
+    expect([...compiled.consumedProducers]).toEqual(['answer']);
+  });
+});

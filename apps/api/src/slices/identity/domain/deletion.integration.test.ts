@@ -190,7 +190,7 @@ async function seedFinancialRows(
   const [usage] = await db
     .insert(usageRecords)
     .values({
-      userId,
+      payerUserId: userId,
       runId: crypto.randomUUID(),
       modelId: 'test/model',
       providerName: 'test',
@@ -277,10 +277,10 @@ describe('executeAccountDeletion', () => {
       .where(eq(payments.id, paymentId));
     expect(paymentRow).toEqual({ userId: null });
     const [usageRow] = await db
-      .select({ userId: usageRecords.userId })
+      .select({ payerUserId: usageRecords.payerUserId })
       .from(usageRecords)
       .where(eq(usageRecords.id, usageId));
-    expect(usageRow).toEqual({ userId: null });
+    expect(usageRow).toEqual({ payerUserId: null });
 
     // The anonymous forensic event exists.
     const events = await db

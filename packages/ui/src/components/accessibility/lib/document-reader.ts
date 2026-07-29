@@ -13,10 +13,11 @@
 // unlockAudio() runs inside the gesture (iOS AudioContext requirement), or be
 // handed the AudioContext the consumer already unlocked inside that gesture.
 
+import { createFastStartSplitter } from './fast-start-splitter';
 import { SentenceChunker } from './sentence-chunker';
-import { splitSentence } from './sentence-splitter';
 import { normalizeForSpeech } from './text-normalizer';
 import { getTtsService, WORKER_POOL_SIZE } from './tts-engine';
+import type { FastStartSplitter } from './fast-start-splitter';
 import type { TtsService, TtsVoice } from './tts-engine';
 
 /** Block elements read aloud, in document order. `pre` (code) is never read. */
@@ -124,15 +125,23 @@ function extractBlocks(container: HTMLElement): HTMLElement[] {
   return blocks;
 }
 
-/** Split a block's raw text into normalized speak-pieces via the shared pipeline. */
-function piecesForBlock(raw: string): string[] {
+/**
+ * Split a block's raw text into normalized speak-pieces via the shared pipeline.
+ *
+ * The chunker is per block (a document-wide one would carry its code-fence flag
+ * from one block into the next), but the splitter is passed in because its
+ * fast-start budget belongs to the whole document: constructing it here would
+ * split the opening sentences of every paragraph, which for ordinary prose is
+ * the whole article.
+ */
+function piecesForBlock(raw: string, splitter: FastStartSplitter): string[] {
   const chunker = new SentenceChunker();
   const sentences = chunker.feed(raw);
   const tail = chunker.flush();
   if (tail !== null) sentences.push(tail);
   const pieces: string[] = [];
   for (const sentence of sentences) {
-    for (const piece of splitSentence(sentence)) pieces.push(piece);
+    for (const piece of splitter.split(sentence)) pieces.push(piece);
   }
   return pieces;
 }
@@ -174,11 +183,14 @@ function offsetsForPieces(normalized: string, pieces: string[]): OffsetSpan[] {
 /** Build the flat, document-order chunk list with per-chunk normalized-text offsets. */
 function buildChunks(container: HTMLElement): DocumentReaderChunk[] {
   const chunks: DocumentReaderChunk[] = [];
+  // One splitter for the whole document: the fast-start budget is spent on the
+  // document's opening sentences, not on each block's.
+  const splitter = createFastStartSplitter();
   for (const blockEl of extractBlocks(container)) {
     const raw = blockEl.textContent;
     const normalized = normalizeForSpeech(raw);
     if (normalized.length === 0) continue;
-    for (const span of offsetsForPieces(normalized, piecesForBlock(raw))) {
+    for (const span of offsetsForPieces(normalized, piecesForBlock(raw, splitter))) {
       chunks.push({ index: chunks.length, blockEl, ...span });
     }
   }

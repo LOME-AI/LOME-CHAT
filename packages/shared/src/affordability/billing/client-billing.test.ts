@@ -178,7 +178,7 @@ describe('resolveClientBilling — self-funding vocabulary', () => {
     ).toEqual<ResolveBillingResult>({ fundingSource: 'denied', reason: 'trial_limit_exceeded' });
   });
 
-  it('guest tier without group budget → guest_budget_exhausted', () => {
+  it('guest whose served payer figure cannot cover the estimate → guest_budget_exhausted', () => {
     expect(
       resolveClientBilling(
         input({
@@ -189,6 +189,53 @@ describe('resolveClientBilling — self-funding vocabulary', () => {
         })
       )
     ).toEqual<ResolveBillingResult>({ fundingSource: 'denied', reason: 'guest_budget_exhausted' });
+  });
+
+  it('guest whose served payer figure covers the estimate → owner_balance, never denied', () => {
+    // The denial must arrive from a funding COMPARISON, never from the tier: a
+    // guest is owner-funded (§Group Funding 1), so a funded one sends.
+    expect(
+      resolveClientBilling(
+        input({
+          tier: 'guest',
+          purchasedBalanceNanoUsd: 0n,
+          spendableNanoUsd: 90n * NANO_PER_CENT,
+          estimatedMinimumCostNanoUsd: 10n * NANO_PER_CENT,
+        })
+      )
+    ).toEqual<ResolveBillingResult>({ fundingSource: 'owner_balance' });
+  });
+
+  it('guest selecting a premium model on a funded link is not tier-locked', () => {
+    // Premium access is the PAYER's (§User Tiers), and the payer's tier is not
+    // the guest's own — a guest holds no wallet to be graded on.
+    expect(
+      resolveClientBilling(
+        input({
+          tier: 'guest',
+          purchasedBalanceNanoUsd: 0n,
+          spendableNanoUsd: 90n * NANO_PER_CENT,
+          estimatedMinimumCostNanoUsd: 10n * NANO_PER_CENT,
+          isPremiumModel: true,
+        })
+      )
+    ).toEqual<ResolveBillingResult>({ fundingSource: 'owner_balance' });
+  });
+
+  it('guest never takes the trial per-message ceiling', () => {
+    // The trial ceiling exists because a trial session has NO funding endpoint
+    // to read. A guest has one, so an estimate above the 1¢ trial cap is judged
+    // against the served payer figure alone.
+    expect(
+      resolveClientBilling(
+        input({
+          tier: 'guest',
+          purchasedBalanceNanoUsd: 0n,
+          spendableNanoUsd: 90n * NANO_PER_CENT,
+          estimatedMinimumCostNanoUsd: 50n * NANO_PER_CENT,
+        })
+      )
+    ).toEqual<ResolveBillingResult>({ fundingSource: 'owner_balance' });
   });
 });
 
@@ -233,143 +280,6 @@ describe('resolveClientBilling — premium gating via the shared core', () => {
   });
 });
 
-describe('resolveClientBilling — group / owner funding', () => {
-  it('group budget available → owner_balance', () => {
-    expect(
-      resolveClientBilling(
-        input({
-          tier: 'free',
-          purchasedBalanceNanoUsd: 0n,
-          spendableNanoUsd: 50n * NANO_PER_CENT,
-          group: {
-            effectiveRemainingNanoUsd: 500n * NANO_PER_CENT,
-            ownerBalanceNanoUsd: 5000n * NANO_PER_CENT,
-          },
-        })
-      )
-    ).toEqual<ResolveBillingResult>({ fundingSource: 'owner_balance' });
-  });
-
-  it('group budget available on a premium model → owner_balance (owner is premium-exempt)', () => {
-    expect(
-      resolveClientBilling(
-        input({
-          tier: 'free',
-          purchasedBalanceNanoUsd: 0n,
-          spendableNanoUsd: 50n * NANO_PER_CENT,
-          isPremiumModel: true,
-          group: {
-            effectiveRemainingNanoUsd: 500n * NANO_PER_CENT,
-            ownerBalanceNanoUsd: 5000n * NANO_PER_CENT,
-          },
-        })
-      )
-    ).toEqual<ResolveBillingResult>({ fundingSource: 'owner_balance' });
-  });
-
-  it('group budget exhausted → falls through to the caller personal balance', () => {
-    expect(
-      resolveClientBilling(
-        input({
-          tier: 'paid',
-          group: {
-            effectiveRemainingNanoUsd: 0n,
-            ownerBalanceNanoUsd: 5000n * NANO_PER_CENT,
-          },
-        })
-      )
-    ).toEqual<ResolveBillingResult>({
-      fundingSource: 'personal_balance',
-      payerSwitch: 'group_headroom_insufficient',
-    });
-  });
-
-  it('group headroom exactly covering the estimate → owner_balance', () => {
-    expect(
-      resolveClientBilling(
-        input({
-          tier: 'paid',
-          estimatedMinimumCostNanoUsd: 40n * NANO_PER_CENT,
-          group: {
-            effectiveRemainingNanoUsd: 40n * NANO_PER_CENT,
-            ownerBalanceNanoUsd: 5000n * NANO_PER_CENT,
-          },
-        })
-      )
-    ).toEqual<ResolveBillingResult>({ fundingSource: 'owner_balance' });
-  });
-
-  it('group headroom one nano below the estimate → personal_balance with the payer switch', () => {
-    expect(
-      resolveClientBilling(
-        input({
-          tier: 'paid',
-          estimatedMinimumCostNanoUsd: 40n * NANO_PER_CENT,
-          group: {
-            effectiveRemainingNanoUsd: 40n * NANO_PER_CENT - 1n,
-            ownerBalanceNanoUsd: 5000n * NANO_PER_CENT,
-          },
-        })
-      )
-    ).toEqual<ResolveBillingResult>({
-      fundingSource: 'personal_balance',
-      payerSwitch: 'group_headroom_insufficient',
-    });
-  });
-
-  it('group headroom below the estimate and no personal funds → insufficient_balance', () => {
-    // A refused send carries its refusal, not a payer-switch disclosure.
-    expect(
-      resolveClientBilling(
-        input({
-          tier: 'paid',
-          purchasedBalanceNanoUsd: 0n,
-          spendableNanoUsd: 1n,
-          estimatedMinimumCostNanoUsd: 40n * NANO_PER_CENT,
-          group: {
-            effectiveRemainingNanoUsd: 40n * NANO_PER_CENT - 1n,
-            ownerBalanceNanoUsd: 5000n * NANO_PER_CENT,
-          },
-        })
-      )
-    ).toEqual<ResolveBillingResult>({ fundingSource: 'denied', reason: 'insufficient_balance' });
-  });
-
-  it('guest whose group headroom is below the estimate → guest_budget_exhausted', () => {
-    expect(
-      resolveClientBilling(
-        input({
-          tier: 'guest',
-          purchasedBalanceNanoUsd: 0n,
-          spendableNanoUsd: 0n,
-          estimatedMinimumCostNanoUsd: 40n * NANO_PER_CENT,
-          group: {
-            effectiveRemainingNanoUsd: 40n * NANO_PER_CENT - 1n,
-            ownerBalanceNanoUsd: 5000n * NANO_PER_CENT,
-          },
-        })
-      )
-    ).toEqual<ResolveBillingResult>({ fundingSource: 'denied', reason: 'guest_budget_exhausted' });
-  });
-
-  it('guest with group budget exhausted → guest_budget_exhausted', () => {
-    expect(
-      resolveClientBilling(
-        input({
-          tier: 'guest',
-          purchasedBalanceNanoUsd: 0n,
-          spendableNanoUsd: 0n,
-          estimatedMinimumCostNanoUsd: 1n * NANO_PER_CENT,
-          group: {
-            effectiveRemainingNanoUsd: 0n,
-            ownerBalanceNanoUsd: 5000n * NANO_PER_CENT,
-          },
-        })
-      )
-    ).toEqual<ResolveBillingResult>({ fundingSource: 'denied', reason: 'guest_budget_exhausted' });
-  });
-});
-
 describe('resolveClientBilling — negative-balance guard', () => {
   it('solo caller with an overdrawn purchased wallet → insufficient_balance', () => {
     // getUserTier maps a negative balance to the free tier; the guard fires first.
@@ -399,22 +309,6 @@ describe('resolveClientBilling — negative-balance guard', () => {
       )
     ).toEqual<ResolveBillingResult>({ fundingSource: 'denied', reason: 'insufficient_balance' });
   });
-
-  it('group owner with an overdrawn wallet → insufficient_balance', () => {
-    expect(
-      resolveClientBilling(
-        input({
-          tier: 'free',
-          purchasedBalanceNanoUsd: 0n,
-          spendableNanoUsd: 50n * NANO_PER_CENT,
-          group: {
-            effectiveRemainingNanoUsd: 500n * NANO_PER_CENT,
-            ownerBalanceNanoUsd: -100n * NANO_PER_CENT,
-          },
-        })
-      )
-    ).toEqual<ResolveBillingResult>({ fundingSource: 'denied', reason: 'insufficient_balance' });
-  });
 });
 
 describe('deriveClientFundingInputs — routes through the shared core', () => {
@@ -429,17 +323,17 @@ describe('deriveClientFundingInputs — routes through the shared core', () => {
   });
 
   it('a non-owner member with headroom resolves to owner funding', () => {
-    const fundingInputs = deriveClientFundingInputs(
-      input({
-        tier: 'free',
-        purchasedBalanceNanoUsd: 0n,
-        spendableNanoUsd: 50n * NANO_PER_CENT,
-        group: {
-          effectiveRemainingNanoUsd: 500n * NANO_PER_CENT,
-          ownerBalanceNanoUsd: 5000n * NANO_PER_CENT,
-        },
-      })
-    );
+    const fundingInputs = deriveClientFundingInputs({
+      tier: 'free',
+      purchasedBalanceNanoUsd: 0n,
+      spendableNanoUsd: 50n * NANO_PER_CENT,
+      isPremiumModel: false,
+      estimatedMinimumCostNanoUsd: 10n * NANO_PER_CENT,
+      group: {
+        effectiveRemainingNanoUsd: 500n * NANO_PER_CENT,
+        ownerBalanceNanoUsd: 5000n * NANO_PER_CENT,
+      },
+    });
     expect(fundingInputs.isSolo).toBe(false);
     expect(resolveFunding(fundingInputs)).toEqual({
       payer: 'owner',
@@ -448,29 +342,38 @@ describe('deriveClientFundingInputs — routes through the shared core', () => {
     });
   });
 
-  it('a link guest carries the isGuest flag into the core', () => {
+  it("carries a link guest's served figure into the core as the group headroom", () => {
+    // No second field composes it: the guest's funding read serves the clamped
+    // owner-funded minimum, so the three group dimensions ARE that number, and
+    // an empty allowance refuses through the core rather than through the tier.
     const fundingInputs = deriveClientFundingInputs(
-      input({
-        tier: 'guest',
-        purchasedBalanceNanoUsd: 0n,
-        spendableNanoUsd: 0n,
-        group: { effectiveRemainingNanoUsd: 0n, ownerBalanceNanoUsd: 1n },
-      })
+      input({ tier: 'guest', purchasedBalanceNanoUsd: 0n, spendableNanoUsd: 0n })
     );
     expect(fundingInputs.isGuest).toBe(true);
+    expect(fundingInputs.isSolo).toBe(false);
+    expect(fundingInputs.callerOwnPurchasedBalanceNanoUsd).toBe(0n);
     expect(resolveFunding(fundingInputs)).toEqual({
       payer: 'refuse',
       refusalCode: 'GROUP_BUDGET_EXHAUSTED',
     });
   });
 
-  it('feeds the served estimate to the core as the turn estimate', () => {
-    // Priority 1's estimate clause is only comparable if the client's shell
-    // hands the amount it already knows to the core.
+  it("maps a funded guest's served figure onto every group dimension", () => {
+    const fundingInputs = deriveClientFundingInputs(
+      input({ tier: 'guest', purchasedBalanceNanoUsd: 0n, spendableNanoUsd: 90n * NANO_PER_CENT })
+    );
+    expect(fundingInputs.memberRemainingNanoUsd).toBe(90n * NANO_PER_CENT);
+    expect(fundingInputs.conversationRemainingNanoUsd).toBe(90n * NANO_PER_CENT);
+    expect(fundingInputs.ownerPurchasedBalanceNanoUsd).toBe(90n * NANO_PER_CENT);
+  });
+
+  it("feeds the surface's minimum cost to the core as the turn's minimum", () => {
+    // Priority 1's comparison is only makeable if the client's shell hands the
+    // amount it already knows to the core.
     const fundingInputs = deriveClientFundingInputs(
       input({ estimatedMinimumCostNanoUsd: 33n * NANO_PER_CENT })
     );
-    expect(fundingInputs.turnEstimateNanoUsd).toBe(33n * NANO_PER_CENT);
+    expect(fundingInputs.minTurnCostNanoUsd).toBe(33n * NANO_PER_CENT);
   });
 
   it('feeds the RAW purchased balance to the core, preserving a negative sign', () => {
@@ -496,6 +399,7 @@ describe('payerSizingTier — owner-funded means owner-priced (BILLING §Group F
       payerSizingTier({
         tier: 'free',
         purchasedBalanceNanoUsd: 0n,
+        spendableNanoUsd: 0n,
         estimatedMinimumCostNanoUsd: undefined,
         group: {
           effectiveRemainingNanoUsd: 100n * NANO_PER_CENT,
@@ -510,11 +414,9 @@ describe('payerSizingTier — owner-funded means owner-priced (BILLING §Group F
       payerSizingTier({
         tier: 'guest',
         purchasedBalanceNanoUsd: 0n,
+        // A guest's served figure is its headroom; no group field composes it.
+        spendableNanoUsd: 1n,
         estimatedMinimumCostNanoUsd: undefined,
-        group: {
-          effectiveRemainingNanoUsd: 1n,
-          ownerBalanceNanoUsd: 50n * NANO_PER_CENT,
-        },
       })
     ).toBe('paid');
   });
@@ -526,6 +428,7 @@ describe('payerSizingTier — owner-funded means owner-priced (BILLING §Group F
       payerSizingTier({
         tier: 'free',
         purchasedBalanceNanoUsd: 0n,
+        spendableNanoUsd: 0n,
         estimatedMinimumCostNanoUsd: undefined,
         group: { effectiveRemainingNanoUsd: 0n, ownerBalanceNanoUsd: 1000n * NANO_PER_CENT },
       })
@@ -537,6 +440,7 @@ describe('payerSizingTier — owner-funded means owner-priced (BILLING §Group F
       payerSizingTier({
         tier: 'free',
         purchasedBalanceNanoUsd: 0n,
+        spendableNanoUsd: 0n,
         estimatedMinimumCostNanoUsd: undefined,
         group: {
           effectiveRemainingNanoUsd: 100n * NANO_PER_CENT,
@@ -551,6 +455,7 @@ describe('payerSizingTier — owner-funded means owner-priced (BILLING §Group F
       payerSizingTier({
         tier: 'paid',
         purchasedBalanceNanoUsd: 5n,
+        spendableNanoUsd: 5n,
         estimatedMinimumCostNanoUsd: undefined,
       })
     ).toBe('paid');
@@ -558,6 +463,7 @@ describe('payerSizingTier — owner-funded means owner-priced (BILLING §Group F
       payerSizingTier({
         tier: 'trial',
         purchasedBalanceNanoUsd: 0n,
+        spendableNanoUsd: 0n,
         estimatedMinimumCostNanoUsd: undefined,
       })
     ).toBe('trial');
@@ -567,12 +473,9 @@ describe('payerSizingTier — owner-funded means owner-priced (BILLING §Group F
     // The sizing tier derives from the SAME shared core resolveClientBilling
     // routes through, so who-pays and how-it-sizes can never drift.
     const base = input({
-      tier: 'free',
+      tier: 'guest',
       purchasedBalanceNanoUsd: 0n,
-      group: {
-        effectiveRemainingNanoUsd: 100n * NANO_PER_CENT,
-        ownerBalanceNanoUsd: 1000n * NANO_PER_CENT,
-      },
+      spendableNanoUsd: 100n * NANO_PER_CENT,
     });
     expect(resolveClientBilling(base)).toEqual({ fundingSource: 'owner_balance' });
     expect(payerSizingTier(base)).toBe('paid');

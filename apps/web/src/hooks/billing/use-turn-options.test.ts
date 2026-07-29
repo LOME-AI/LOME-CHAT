@@ -13,17 +13,25 @@ import type { Model, PromptBasis, UserTier } from '@hushbox/shared';
 
 const mockSpendableCalls: (string | null)[] = [];
 
-const { mockSpendable, mockTierInfo, mockModelsData, mockSelection, mockModality, mockEffort } =
-  vi.hoisted(() => ({
-    mockSpendable: { current: undefined as unknown },
-    mockTierInfo: { current: { tier: 'paid' } as { tier: UserTier } },
-    mockModelsData: { current: undefined as unknown },
-    mockSelection: { current: [] as { id: string; name: string }[] },
-    mockModality: { current: 'text' as string },
-    mockEffort: { current: undefined as string | undefined },
-    mockOwnWallet: { current: undefined as unknown },
-    mockBudgets: { current: { data: undefined, isPending: false } as unknown },
-  }));
+const {
+  mockSpendable,
+  mockTierInfo,
+  mockModelsData,
+  mockSelection,
+  mockModality,
+  mockEffort,
+  mockHasFundingDoor,
+} = vi.hoisted(() => ({
+  mockSpendable: { current: undefined as unknown },
+  mockTierInfo: { current: { tier: 'paid' } as { tier: UserTier } },
+  mockModelsData: { current: undefined as unknown },
+  mockSelection: { current: [] as { id: string; name: string }[] },
+  mockModality: { current: 'text' as string },
+  mockEffort: { current: undefined as string | undefined },
+  mockHasFundingDoor: { current: true },
+  mockOwnWallet: { current: undefined as unknown },
+  mockBudgets: { current: { data: undefined, isPending: false } as unknown },
+}));
 
 // Argument-aware, matching the pattern the prompt-budget suite already uses:
 // `mockOwnWallet` defaults to `undefined`, meaning both arms share one fixture.
@@ -34,6 +42,10 @@ vi.mock('@/hooks/billing/use-spendable', () => ({
     mockSpendableCalls.push(conversationId);
     return mockSpendable.current;
   },
+  // A double, not a second implementation: each test states whether this
+  // caller HAS a funding door. The predicate's own behaviour is pinned where
+  // it lives, in `use-spendable.test.ts`.
+  hasServedFunding: () => mockHasFundingDoor.current,
 }));
 vi.mock('@/hooks/billing/use-user-tier-info', () => ({
   useUserTierInfo: () => mockTierInfo.current,
@@ -85,7 +97,7 @@ function served(
   payer: 'self' | 'owner' = 'self'
 ): unknown {
   return {
-    data: { spendableNanoUsd, heldNanoUsd: '0', tier: 'paid', payer },
+    data: { spendableNanoUsd, heldNanoUsd: '0', payerTier: 'paid', payer },
     isPending,
   };
 }
@@ -98,6 +110,7 @@ beforeEach(() => {
   mockSelection.current = [{ id: 'vendor/a', name: 'vendor/a' }];
   mockModality.current = 'text';
   mockEffort.current = undefined;
+  mockHasFundingDoor.current = true;
 });
 
 describe('useTurnOptions — the produced pair', () => {
@@ -159,7 +172,7 @@ describe('useTurnOptions — premium rows are marked, never removed', () => {
   it('keeps a premium row PRESENT and marked while the composer stays sendable', () => {
     mockTierInfo.current = { tier: 'free' };
     mockSpendable.current = {
-      data: { spendableNanoUsd: '50000000', heldNanoUsd: '0', tier: 'free', payer: 'self' },
+      data: { spendableNanoUsd: '50000000', heldNanoUsd: '0', payerTier: 'free', payer: 'self' },
       isPending: false,
     };
     mockModelsData.current = { models: catalogWithPremiumTail(), premiumIds: new Set() };
@@ -186,7 +199,10 @@ describe('useTurnOptions — premium rows are marked, never removed', () => {
     // add credit. Collapsing them would offer a payment path to someone with
     // no account.
     mockTierInfo.current = { tier: 'trial' };
+    // The trial is the one tier with no funding door, which is why its snapshot
+    // is permanently absent rather than merely unresolved.
     mockSpendable.current = { data: undefined, isPending: false };
+    mockHasFundingDoor.current = false;
     mockModelsData.current = { models: catalogWithPremiumTail(), premiumIds: new Set() };
     mockSelection.current = [{ id: 'vendor/cheap-1000', name: 'cheap' }];
 
@@ -222,10 +238,12 @@ describe('useTurnOptions — the loading window (the F1 defect class)', () => {
     expect(result.current.options).toBeUndefined();
   });
 
-  it('produces a verdict for an unauthenticated payer with no funding endpoint', () => {
-    // Trial and guest are refused by that route class by design, so a pending
-    // funding read must not gate them — their ceiling is client-side.
+  it('produces a verdict for a trial payer, which has no funding door to wait on', () => {
+    // A caller with no door never resolves the read, so a permanently pending
+    // query must not gate it — its ceiling is client-side. A link guest DOES
+    // have a door and IS gated; that half is pinned in the guest describe.
     mockSpendable.current = { data: undefined, isPending: false };
+    mockHasFundingDoor.current = false;
     mockTierInfo.current = { tier: 'trial' };
 
     const { result } = renderHook(() => useTurnOptions({ basis: BASIS, isAuthenticated: false }));
@@ -427,16 +445,17 @@ describe('a smart-slot-only turn with no contributing model', () => {
   });
 });
 
-describe('trial and guest — the tiers with no funding endpoint', () => {
+describe('the trial — the one tier with no funding door', () => {
   /**
-   * §Affordability 8 fixes trial and guest at a $0.01 effective balance. The
-   * endpoint is `enabled: isAuthenticated`, so `served` is permanently
-   * undefined for them — handing the producer `0n` reads as poverty and refuses
-   * the entire unauthenticated funnel, while the server admits those turns on
-   * quota.
+   * §Affordability 8 fixes the TRIAL at a $0.01 effective balance because it
+   * has no funding endpoint to read; `served` is permanently undefined for it,
+   * and handing the producer `0n` instead reads as poverty and refuses the
+   * entire trial funnel while the server admits those turns on quota. A link
+   * guest is not here — it has a door of its own (see the guest describe).
    */
   it('sends on the fixed per-message ceiling rather than refusing as broke', () => {
     mockSpendable.current = { data: undefined, isPending: false };
+    mockHasFundingDoor.current = false;
     mockTierInfo.current = { tier: 'trial' };
     mockModelsData.current = {
       models: [
@@ -454,24 +473,120 @@ describe('trial and guest — the tiers with no funding endpoint', () => {
     expect(result.current.options?.affordable.all[0]?.availability).toEqual({ available: true });
     expect(result.current.options?.admissible.sendable).toBe(true);
   });
+});
 
-  it('applies the same fixed ceiling to a link guest', () => {
-    mockSpendable.current = { data: undefined, isPending: false };
+describe('the link guest — owner-funded, never trial-capped', () => {
+  /**
+   * A guest HAS a funding door: its read serves the payer's snapshot. So every
+   * funding-derived property of its turn is the payer's — the ceiling it sizes
+   * against, the tier that prices it, and the premium access that follows
+   * (BILLING §Group Funding 1, §User Tiers).
+   */
+  function guestOn(models: Model[], selection: string): void {
+    mockHasFundingDoor.current = true;
     mockTierInfo.current = { tier: 'guest' };
-    mockModelsData.current = {
-      models: [
+    mockModelsData.current = { models, premiumIds: new Set(['vendor/premium']) };
+    mockSelection.current = [{ id: selection, name: selection }];
+  }
+
+  it("sizes the guest's turn from the payer's served figure, not the trial ceiling", () => {
+    // $9 served would buy far more than the 1¢ trial ceiling ever could, so a
+    // ceiling this large is only reachable through the served figure.
+    // A wide output cap so MONEY is the binding term rather than capability:
+    // that is what makes the ceiling discriminate between the served figure and
+    // the 1¢ trial ceiling, which buys roughly eight thousand tokens here.
+    guestOn(
+      [
         wireModel({
           id: 'vendor/cheap',
-          pricing: { inputPerToken: '1000', outputPerToken: '2000' },
+          maxOutputTokens: 5_000_000,
+          pricing: { inputPerToken: '1', outputPerToken: '1' },
         }),
       ],
-      premiumIds: new Set(),
+      'vendor/cheap'
+    );
+    mockSpendable.current = {
+      data: {
+        spendableNanoUsd: '9000000000',
+        heldNanoUsd: '0',
+        payerTier: 'paid',
+        payer: 'owner',
+      },
+      isPending: false,
     };
-    mockSelection.current = [{ id: 'vendor/cheap', name: 'cheap' }];
 
-    const { result } = renderHook(() => useTurnOptions({ basis: BASIS, isAuthenticated: false }));
+    const { result } = renderHook(() =>
+      useTurnOptions({ basis: BASIS, isAuthenticated: false, conversationId: 'conv-1' })
+    );
 
-    expect(result.current.options?.admissible.sendable).toBe(true);
+    expect(result.current.payer).toBe('owner');
+    expect(result.current.payerSpendableNanoUsd).toBe(9_000_000_000n);
+    const ceiling = result.current.options?.admissible.all[0]?.ceilingTokens ?? 0;
+    expect(ceiling).toBeGreaterThan(100_000);
+  });
+
+  it("grades premium access on the payer's tier, so an owner-funded guest sees what the owner sees", () => {
+    guestOn(
+      [wireModel({ id: 'vendor/premium', pricing: { inputPerToken: '1', outputPerToken: '1' } })],
+      'vendor/premium'
+    );
+    mockSpendable.current = {
+      data: {
+        spendableNanoUsd: '9000000000',
+        heldNanoUsd: '0',
+        payerTier: 'paid',
+        payer: 'owner',
+      },
+      isPending: false,
+    };
+
+    const { result } = renderHook(() =>
+      useTurnOptions({ basis: BASIS, isAuthenticated: false, conversationId: 'conv-1' })
+    );
+
+    expect(result.current.options?.affordable.all[0]?.availability).toEqual({ available: true });
+  });
+
+  it('withholds the verdict when the guest funding read FAILED, rather than sizing on the trial ceiling', () => {
+    // A failed query is not a pending one: it settles with no data at all. The
+    // discriminating input is exactly that pair — `isPending: false` with
+    // `data: undefined` — which a pending-only gate lets through, handing a
+    // guest the $0.01 trial ceiling its own door exists to keep it off.
+    guestOn(
+      [
+        wireModel({
+          id: 'vendor/cheap',
+          maxOutputTokens: 5_000_000,
+          pricing: { inputPerToken: '1', outputPerToken: '1' },
+        }),
+      ],
+      'vendor/cheap'
+    );
+    mockSpendable.current = { data: undefined, isPending: false };
+
+    const { result } = renderHook(() =>
+      useTurnOptions({ basis: BASIS, isAuthenticated: false, conversationId: 'conv-1' })
+    );
+
+    expect(result.current.isPending).toBe(true);
+    expect(result.current.options).toBeUndefined();
+  });
+
+  it('withholds the verdict while the guest funding read is in flight', () => {
+    // The trial ceiling must never stand in for a figure that is merely still
+    // loading — that fabrication is what refused the guest composer outright.
+    guestOn(
+      [wireModel({ id: 'vendor/cheap', pricing: { inputPerToken: '1', outputPerToken: '1' } })],
+      'vendor/cheap'
+    );
+    mockSpendable.current = { data: undefined, isPending: true };
+
+    const { result } = renderHook(() =>
+      useTurnOptions({ basis: BASIS, isAuthenticated: false, conversationId: 'conv-1' })
+    );
+
+    expect(result.current.isPending).toBe(true);
+    expect(result.current.options).toBeUndefined();
   });
 });
 

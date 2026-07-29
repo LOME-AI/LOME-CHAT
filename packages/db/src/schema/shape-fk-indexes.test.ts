@@ -17,7 +17,7 @@ import * as schema from './index';
 const NOT_NULL_PARTIAL_INDEXES = new Set([
   'ledger_entries_payment_id_idx',
   'ledger_entries_usage_record_id_idx',
-  'usage_records_user_id_idx',
+  'usage_records_payer_user_id_idx',
   'usage_records_content_item_id_idx',
   'usage_records_conversation_id_idx',
   'usage_records_sender_user_id_idx',

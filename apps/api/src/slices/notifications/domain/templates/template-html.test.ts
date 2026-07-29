@@ -7,11 +7,11 @@ import { twoFactorDisabledEmail } from './two-factor-disabled.js';
 import { twoFactorEnabledEmail } from './two-factor-enabled.js';
 import { welcomeEmail } from './welcome.js';
 
-// Characterization snapshots pinning the rendered HTML of every template
-// refactored onto the `heading()`/`paragraph()` builder helpers. The snapshots
-// are captured from the pre-refactor markup, so the refactor is proven
-// byte-identical: any drift in the rendered HTML fails here.
-describe('template html is byte-stable across the builder-helper refactor', () => {
+// Byte-level pins on the rendered HTML of the templates below. Each of them
+// renders through the shared base wrapper, so an edit there reaches every
+// template at once; these snapshots are where that lands instead of in a
+// delivered email. Re-record only against a source change you can point at.
+describe('email template html is byte-stable', () => {
   it('welcome', () => {
     expect(welcomeEmail({ userName: 'Sam' }).html).toMatchSnapshot();
   });

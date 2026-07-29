@@ -35,7 +35,6 @@ import { createTurnCompileRegistries } from './turn-definition.js';
 import { createMediaPersistRun, mediaCallNodes } from './media-persist.js';
 import { createVideoProgressEmitter } from './media-progress.js';
 import { createChatSettlementCommit } from './settlement.js';
-import { isOwnerFundedTurn } from './turn-context.js';
 import { stripReplayHistory } from './history-replay.js';
 import { bindTrialHooks, requireTrialContext } from './trial.js';
 import {
@@ -454,10 +453,9 @@ function requirePaidContext(context: RunContext): PaidRunContext {
  *   - a missing conversation (defensive): the group budget scopes are skipped,
  *     but a free-wallet payer still emits its user-keyed daily-allowance scope
  *     (the free snapshot skips the balance check, so the cap must stay paired).
- * Owner-funding is recovered ONCE per run from the payer wallet the route froze
- * into the run identity (`ownerFunded`, read outside any transaction and threaded
- * to both hooks), so scope emission agrees with the payer and with settlement's
- * accrual by construction. An owner-funded group turn's absent member row reads a
+ * Owner-funding is derived ONCE per run from the run identity's payer and sender
+ * (`ownerFunded`, threaded to both hooks), so scope emission agrees with the payer
+ * and with settlement's accrual by construction. An owner-funded group turn's absent member row reads a
  * zero cap here (deny), but the route only chooses owner-funding when the group
  * headroom is positive, so that combination is not route-reachable. The
  * membership/budget reads fail closed through the hook's error mapping.
@@ -465,17 +463,33 @@ function requirePaidContext(context: RunContext): PaidRunContext {
 /** The per-run scope inputs: the settlement-time clock and the funding decision. */
 interface ScopeContext {
   readonly now: Date;
-  readonly ownerFunded: ResultAsync<boolean, DomainError>;
+  readonly ownerFunded: boolean;
 }
 
 /**
- * The sender's own user id for the solo (sender-is-owner) check — a user
- * sender's userId (the flat fallback keeps the legacy single-principal turn),
- * or `undefined` for a link guest (which holds no account and is never owner).
+ * The sender's own user id — a user sender's userId, or `undefined` for a link
+ * guest (which holds no account, is never the owner, and can never self-fund).
+ * The flat fallback is the self-funded single-principal turn, where the payer
+ * IS the sender. Two decisions key on this rather than on the payer: the solo
+ * (sender-is-owner) check and the owner-funding derivation below.
  */
 function contextSenderUserId(context: PaidRunContext): string | undefined {
   if (context.sender === undefined) return context.userId;
   return context.sender.kind === 'user' ? context.sender.userId : undefined;
+}
+
+/**
+ * Whether the run is OWNER-FUNDED, derived from the two identities the run
+ * already carries rather than recovered from stored state. The route freezes the
+ * paying account onto the run identity, so the turn is owner-funded exactly when
+ * the payer is not the sender: a group turn whose headroom covered the turn
+ * froze the OWNER, while a solo turn and a fallen-through group turn both froze
+ * the sender themselves. A LINK GUEST holds no account, so its sender id is absent and the
+ * comparison is true — the guest's always-owner-funded case falls out of the same
+ * expression instead of needing a branch of its own.
+ */
+function isOwnerFunded(context: PaidRunContext): boolean {
+  return contextSenderUserId(context) !== context.userId;
 }
 
 /** The membership-gate caller for the run's sender (flat fallback keeps the user path). */
@@ -492,12 +506,12 @@ function resolveMemberBudgetScopes(
   scope: ScopeContext
 ): ResultAsync<readonly BudgetScope[], DomainError> {
   const conversationsStores = createConversationsStores(deps.db);
-  // The daily-allowance ceiling, emitted ONLY when the payer is the sender's own
-  // `free` wallet — the route fell through to it because the purchased balance
-  // was ≤ 0 (turn-context). Recovered here from the wallet type, mirroring how
-  // `ownerFunded` recovers the funding decision from the payer wallet: a
-  // self-funded free-tier turn is gated on the daily allowance alone (group
-  // scopes never apply to it — the free wallet is only ever the sender's own).
+  // The daily-allowance ceiling, emitted ONLY when the payer wallet is a `free`
+  // one — the route fell through to it because the purchased balance was ≤ 0
+  // (turn-context). Recovered here from the wallet's type, read off the payer's
+  // own wallets: a free-funded turn is gated on the daily allowance alone, and
+  // the allowance is the payer's, which is who settlement debits it from. Group
+  // funding never lands here — an owner funds from their purchased wallet.
   const freeTierScopes = (): ResultAsync<readonly BudgetScope[], DomainError> =>
     stores.readWallets(deps.db, context.userId).andThen((wallets) => {
       const payerIsFree = wallets.some(
@@ -511,9 +525,10 @@ function resolveMemberBudgetScopes(
         : okAsync<readonly BudgetScope[], DomainError>([]);
     });
   // The SENDER identity the group-scope decision keys on (recovered from
-  // `context.sender`, never from the payer `userId` — which is the OWNER for a
-  // guest turn): a user by userId, a link guest which is NEVER the owner and
-  // never free-tier (the owner always pays).
+  // `context.sender`, never from the payer `userId` — which names the OWNER on
+  // EVERY owner-funded turn, a member's as much as a guest's): a user by userId,
+  // a link guest which is NEVER the owner and never free-tier (the owner always
+  // pays).
   const senderIsGuest = context.sender?.kind === 'linkGuest';
   const senderUserId = contextSenderUserId(context);
   return conversationsStores.conversations.get(context.conversationId).andThen((conversation) => {
@@ -533,32 +548,30 @@ function resolveMemberBudgetScopes(
     if (!senderIsGuest && senderUserId === conversation.ownerUserId) {
       return freeTierScopes();
     }
-    return scope.ownerFunded.andThen((funded) => {
-      // Personal fall-through: a USER sender self-funds on their own wallet — no
-      // group scope applies. Their purchased balance (if positive) is gated by
-      // the wallet itself; a spent-down sender pays the free wallet, capped by
-      // the daily allowance. A guest turn is always owner-funded, so it never
-      // reaches this arm.
-      if (!funded) {
-        return freeTierScopes();
+    // Personal fall-through: a USER sender self-funds on their own wallet — no
+    // group scope applies. Their purchased balance (if positive) is gated by
+    // the wallet itself; a spent-down sender pays the free wallet, capped by
+    // the daily allowance. A guest turn is always owner-funded, so it never
+    // reaches this arm.
+    if (!scope.ownerFunded) {
+      return freeTierScopes();
+    }
+    return resolveCallerMember(
+      conversationsStores,
+      context.conversationId,
+      contextSenderCaller(context)
+    ).andThen((member) => {
+      /* v8 ignore next 3 -- turn-context asserted active membership before the run started; a null here is unreachable */
+      if (member === null) {
+        return okAsync<readonly BudgetScope[], DomainError>([]);
       }
-      return resolveCallerMember(
-        conversationsStores,
-        context.conversationId,
-        contextSenderCaller(context)
-      ).andThen((member) => {
-        /* v8 ignore next 3 -- turn-context asserted active membership before the run started; a null here is unreachable */
-        if (member === null) {
-          return okAsync<readonly BudgetScope[], DomainError>([]);
-        }
-        return resolveBudgetScopes(stores, deps.db, {
-          now: scope.now,
-          memberBudget: { memberId: member.id },
-          conversationBudget: {
-            conversationId: context.conversationId,
-            capNanoUsd: conversation.conversationBudgetNanoUsd,
-          },
-        });
+      return resolveBudgetScopes(stores, deps.db, {
+        now: scope.now,
+        memberBudget: { memberId: member.id },
+        conversationBudget: {
+          conversationId: context.conversationId,
+          capNanoUsd: conversation.conversationBudgetNanoUsd,
+        },
       });
     });
   });
@@ -567,7 +580,7 @@ function resolveMemberBudgetScopes(
 /** The per-run admission inputs bundled to stay under the param cap. */
 interface AdmissionRunContext {
   readonly clock: () => Date;
-  readonly ownerFunded: ResultAsync<boolean, DomainError>;
+  readonly ownerFunded: boolean;
 }
 
 /**
@@ -726,10 +739,10 @@ export function chatSettlementIdentity(
     conversationId: context.conversationId,
     epochNumber: context.epochNumber,
     walletId: context.walletId,
-    userId: context.userId,
+    payerUserId: context.userId,
     // The resolved sender rides settlement so senderId, the member-keyed
     // epoch gate, and per-member spend key on the guest (or member), not
-    // the paying owner. Absent falls back to the user path on `userId`.
+    // the paying owner. Absent falls back to the user path on the payer.
     ...(context.sender === undefined ? {} : { sender: context.sender }),
     runId: context.runId,
     userMessage: context.userMessage,
@@ -773,20 +786,9 @@ function bindChatHooks(
           { conversationId: context.conversationId, epochNumber: context.epochNumber },
           mediaNodes
         );
-  // The single funding decision, recovered ONCE per run and threaded to BOTH
-  // hooks, so scope emission and group-spend attribution can never disagree —
-  // and settlement never opens a second connection mid-transaction. A LINK GUEST
-  // turn is ALWAYS owner-funded (a guest holds no wallet; the route denies it
-  // otherwise), so recovery short-circuits to `true` — the wallet-ownership
-  // trick can't be used because a guest's payer `userId` is the OWNER. A USER
-  // turn recovers owner-funded ⟺ the payer is NOT one of the sender's own
-  // wallets (context.userId is the sender for a user turn). A read failure
-  // propagates through each hook's own error mapping (admission → refused;
-  // settlement → rolled back).
-  const ownerFunded =
-    context.sender?.kind === 'linkGuest'
-      ? okAsync<boolean, DomainError>(true)
-      : isOwnerFundedTurn(binder.billingStores, deps.db, context.userId, context.walletId);
+  // The single funding decision, derived ONCE per run and threaded to BOTH
+  // hooks, so scope emission and group-spend attribution can never disagree.
+  const ownerFunded = isOwnerFunded(context);
   const settlement = withPostCommitSnapshotRefresh(
     createFencedSettlementHook({
       db: deps.db,
@@ -848,10 +850,20 @@ function createClaimRun(deps: ConversationRuntimeDeps): ClaimRun {
   const newId = deps.newId ?? ((): string => crypto.randomUUID());
   return (request) => {
     const executorId = newId();
-    // The key-row scope's `userId` is the paying user for a paid run and the
-    // trial session id for a trial run — both uuids fitting the uuid column.
+    // The key-row scope's `userId` is the SENDER principal for a paid run (a
+    // member's user id, a link guest's link id) and the trial session id for a
+    // trial run — all uuids fitting the uuid column, which carries no FK.
+    //
+    // It is deliberately NOT the payer. The payer is re-resolved from live
+    // funding state on every POST of one client-minted key, so it moves between
+    // attempts: an owner-funded turn resubmitted after the group headroom
+    // crosses to ≤ 0 falls through to the sender's own funds. A payer-scoped row
+    // would then be a DIFFERENT row for the same key — the resubmit re-executes
+    // instead of replaying, and mid-run claims as a fresh executor instead of
+    // attaching. Replay is a stability property, so it keys on the one principal
+    // a retry cannot change.
     const scopeUserId =
-      request.identity.mode === 'paid' ? request.identity.userId : request.identity.sessionId;
+      request.identity.mode === 'paid' ? request.identity.senderId : request.identity.sessionId;
     return claimKeyRow(deps.db, {
       scope: { userId: scopeUserId, route: CHAT_TURN_ROUTE, key: request.runKey },
       kind: 'run',

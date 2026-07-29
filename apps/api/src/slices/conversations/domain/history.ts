@@ -1,5 +1,11 @@
 import { z } from 'zod';
-import { nanoUSD, serializeNanoUSD, toBase64, trimPage } from '@hushbox/shared';
+import {
+  nanoUSD,
+  ResolvedReasoningEffort,
+  serializeNanoUSD,
+  toBase64,
+  trimPage,
+} from '@hushbox/shared';
 import { okAsync } from '../../../lib/result/index.js';
 import { resolveCallerMember } from './caller.js';
 import { contentItemView, contentItemViewSchema } from './content-item-view.js';
@@ -28,6 +34,12 @@ export const historyContentItemViewSchema = contentItemViewSchema.extend({
    * item, or null when none was recorded. Drives the settled thinking label.
    */
   reasoningTokens: z.number().int().nullable(),
+  /**
+   * The level the generation behind this item reasoned at, or null when none
+   * was recorded. Drives the settled effort badge. `off` is a level the badge
+   * shows; null is the absence of one and shows no badge.
+   */
+  reasoningEffort: ResolvedReasoningEffort.nullable(),
 });
 
 export type HistoryContentItemView = z.infer<typeof historyContentItemViewSchema>;
@@ -39,6 +51,7 @@ function historyContentItemView(row: ContentItemRow): HistoryContentItemView {
     cost: row.costNanoUsd === null ? null : serializeNanoUSD(nanoUSD(row.costNanoUsd)),
     isSmartModel: row.isSmartModel,
     reasoningTokens: row.reasoningTokens,
+    reasoningEffort: row.reasoningEffort,
   };
 }
 

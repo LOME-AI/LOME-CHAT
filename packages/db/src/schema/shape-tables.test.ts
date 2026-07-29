@@ -246,8 +246,10 @@ describe('usage_records', () => {
     expect(column(schema.usageRecords, 'generation_id').notNull).toBe(false);
   });
 
-  it('survives user deletion via SET NULL (financial retention)', () => {
-    expect(findForeignKey(schema.usageRecords, ['user_id']).onDelete).toBe('set null');
+  it('survives payer deletion via SET NULL (financial retention)', () => {
+    const c = column(schema.usageRecords, 'payer_user_id');
+    expect(c.notNull).toBe(false);
+    expect(findForeignKey(schema.usageRecords, ['payer_user_id']).onDelete).toBe('set null');
   });
 
   it('records a member sender via a nullable users FK severed on deletion', () => {

@@ -17,7 +17,11 @@ vi.mock('@/lib/auth', () => ({
   useSession: vi.fn(),
 }));
 
-vi.mock('@/hooks/billing/use-spendable.js', () => ({
+// `hasServedFunding` stays REAL: it is the shared predicate behind both the
+// query's `enabled` flag and every caller's pending gate, and a mock that
+// re-states it is a second implementation of the rule under test.
+vi.mock('@/hooks/billing/use-spendable.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/billing/use-spendable.js')>()),
   useSpendable: vi.fn(),
 }));
 
@@ -67,7 +71,7 @@ describe('useModelValidation — infinite update loop guard', () => {
       typeof useSession
     >);
     mockedUseSpendable.mockReturnValue({
-      data: { spendableNanoUsd: '0', heldNanoUsd: '0', tier: 'free', payer: 'self' },
+      data: { spendableNanoUsd: '0', heldNanoUsd: '0', payerTier: 'free', payer: 'self' },
     } as never);
   });
 
@@ -98,7 +102,7 @@ describe('useModelValidation — infinite update loop guard', () => {
     const setterSpy = vi.spyOn(useModelStore.getState(), 'setSelectedModels');
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     // Bounded: at most one set per modality (4 modalities). Loop would exceed
@@ -131,7 +135,7 @@ describe('useModelValidation — infinite update loop guard', () => {
     const setterSpy = vi.spyOn(useModelStore.getState(), 'setSelectedModels');
 
     renderHook(() => {
-      useModelValidation();
+      useModelValidation(null);
     });
 
     expect(setterSpy.mock.calls.length).toBeLessThanOrEqual(4);

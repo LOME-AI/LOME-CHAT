@@ -148,7 +148,7 @@ describe('the fixture is non-degenerate', () => {
       {
         spendableNanoUsd: nanoUSD(200_000_000n),
         heldNanoUsd: nanoUSD(0n),
-        tier: 'paid',
+        payerTier: 'paid',
         payer: 'self',
       },
       BASIS,
@@ -215,7 +215,7 @@ describe('presented is exactly feasible, over the admissible set', () => {
         {
           spendableNanoUsd: nanoUSD(spendable),
           heldNanoUsd: nanoUSD(0n),
-          tier: 'paid',
+          payerTier: 'paid',
           payer: 'self',
         },
         BASIS,
@@ -243,7 +243,7 @@ describe('presented is exactly feasible, over the admissible set', () => {
       {
         spendableNanoUsd: nanoUSD(500_000_000n),
         heldNanoUsd: nanoUSD(0n),
-        tier: 'paid',
+        payerTier: 'paid',
         payer: 'self',
       },
       BASIS,
@@ -254,7 +254,7 @@ describe('presented is exactly feasible, over the admissible set', () => {
       {
         spendableNanoUsd: nanoUSD(6_000_000n),
         heldNanoUsd: nanoUSD(0n),
-        tier: 'paid',
+        payerTier: 'paid',
         payer: 'self',
       },
       BASIS,

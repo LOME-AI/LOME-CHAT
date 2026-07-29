@@ -7417,3 +7417,743 @@ workers-validation 1` — matching its original by-directory measurement **and**
   re-exports the surface, and whether that file carries six names or forty is a **consequence** of the closure.
   **FIRST ACTION ON RESUME, before any file moves: measure the internals-only closure.** Second: the link-guest
   factual check. Nothing started.
+
+<!-- Recovered 2026-07-29 from an untracked repo-root ledger.md; original 2026-07-28 entries, verbatim. -->
+
+- 2026-07-28: **E1 verification A → PASS with one Minor.** One comment fix dispatched; the money lens is still out.
+  **THE ITEM THE FINDING WAS REALLY ABOUT IS CLOSED, and the auditor checked it in BOTH directions** — the new
+  docblock **does not overstate** (it claims only what the composer decides and explicitly disclaims the guard) and
+  **does not understate** (the file it names as covering the rule genuinely does; a reader who follows the pointer
+  finds a pin that reddens). **A docblock that understates makes the next reader distrust a real pin**, which is the
+  failure mode nobody thinks to check.
+  Three of the four assertions can now fail; the tautology is gone. The one that cannot is the Minor: a comment says
+  the composer "drops the text-only search affordance… from `activeModality`", but `showSearch` has **no
+  `activeModality` term** — the button is absent whatever the modality, so **that assertion cannot fail for the reason
+  stated.** The honest framing already exists twelve hundred lines above in the same file.
+  **THE PATTERN IS THE SAME ONE THREE TIMES OVER:** a claim about a mechanism, attached to evidence that does not
+  test that mechanism. First the closure argument, then the composer tests' docblock, now one line inside the
+  replacement. Each smaller than the last, which is what convergence looks like.
+  Gate confirmed independently by the auditor: **exit 0, 396 files / 6,450 tests, zero threshold lines**, with
+  `markdown-renderer.tsx`'s load-dependence reproduced a **fifth** time. `max-params` fixed at the cause, with the
+  migrated call sites **proven by a green typecheck** rather than by inspection — the old positional form would not
+  compile.
+  It spot-checked the addendum and accepted E1's standing concern as **the correct residual to accept rather than
+  fix**: `withServedPayer` trusting the served `payer` is right, because **the alternative is the second authority
+  this lane exists to delete.**
+  Its closing observation on fifteen cycles, recorded because it is the run's own lesson about itself: **the two
+  things E1 kept catching in itself — vacuous assertions and over-correction — are the two hardest to catch from
+  inside.**
+
+- 2026-07-29: **RESUMED after compaction. Plan and ledger reconciled against the tree before anything was
+  considered for dispatch; nothing dispatched.** `HEAD` is now **`a94ca204`** — the founder's **fourth**
+  absorption of this run's work — and it took in the last four files the tree still held (E1's
+  `model-selector-button.tsx`, B9's three `packages/config/arch/` files). The run directory is now tracked.
+  Eight working-tree entries remain and **none is this run's code**.
+  **LEDGER CONTENT WAS RECOVERED FROM A STRAY FILE, and the near-miss is the lesson.** An untracked
+  `ledger.md` at the **repo root** held 23 lines of E1's audit narrative that were **absent from the real
+  ledger** — an accidental relative-path write. It survived only because the founder's commit did not sweep
+  untracked files; the same run has already lost two `research/` documents to exactly that. **A record that
+  lives at a path nobody names is not a record.** The content is folded in verbatim below, ahead of this
+  entry, under its original 2026-07-28 date.
+  **THE LINK-GUEST QUESTION IS ANSWERED — PRE-EXISTING, NOT A CYCLE-14 REGRESSION.** E1's auditor routed one
+  question rather than holding it against E1: does `GET /conversations/:id/budgets` succeed for a link-guest
+  principal? **No — 403, deny-by-construction.** `route-class.ts:76` refuses `link-guest` and
+  `trial-session` on **every** route class before per-class matching runs, dating to `16ad428c`; the
+  `/budgets` route was born at `c9757bd3` with `routeClass('session')` and has not changed. `derivePrincipal`
+  never even mints a link-guest from a cookie — link-guest exists only at the realtime and media seams.
+  **So E1 is exonerated and the product gap is real and unowned:** a write-privileged link guest is
+  authorized to send at the realtime seam, yet no HTTP endpoint will serve it a funding figure, so the client
+  can only say `guest_budget_exhausted` — while §Funding priority 1 says the owner funds that guest when
+  headroom covers. Serving it needs a route-class decision, which is a founder call and a different owner.
+  **READINESS COMPUTED, NOT RECALLED.** Ready: **D2, E3, E4, G2**. Blocked: E2 on D2 · B8b on G2 · G1 on B8b
+  · G3 on D2 and E2 · H1 on D2. **Two collisions inside the ready set** —
+  `schemas/api/conversations.ts` (D2 ∩ E4) and `affordability/**` (E4 ∩ G2) — so the concurrent pair is
+  **D2 + G2**, not all four.
+  **AND THE RELOCATION'S PRECONDITION IS UNOWNED: the 15 walled `apps/web` lines did not close with E1.**
+  Verified by grep: 15 specifier lines in 6 files, five of them E1's own (`use-budget-calculation`,
+  `use-prompt-budget` and their tests, `use-reasoning-effort`). E1 closed clean without them because its
+  criteria were about rendering the produced sets, not about specifiers — **a task can be genuinely clean and
+  still leave a precondition another decision depends on**, which is precisely what the plan's
+  §completeness-contract exists to catch. `apps/api` additionally holds 59 such lines across ~20 files; under
+  the approved split those become legitimate but every one is still a rewrite.
+- 2026-07-29: **FOUNDER RULING — a write-privileged link guest spends the owner's allocated funds.** Ruled
+  directly, in the direction `BILLING.md` §Funding priority 1 already specified, so **the doc was right and
+  the system is wrong** — the same shape as F3 and as the storage-fee seam. The founder also deleted the
+  stray root `ledger.md` after its content was folded in here.
+  **Two analysts dispatched on disjoint mandates rather than one across both**, because the evidence bases
+  differ: authorization and principal plumbing (can a guest principal reach the turn path at all; how
+  revocation and link expiry stay enforced if it can; what the legacy corpus did, since a 2026-07-08 ruling
+  restored "link-guest = legacy participation + revocable") and the money path (which wallet admission holds
+  against, which wallet settlement charges, payer-versus-sender on `usage_records`, what bounds a bearer
+  token holder's spend of someone else's money, and what a guest may be told about the owner's balance
+  without leaking it).
+  **The bearer-credential property was named as binding on every option in both briefs**: a share link can be
+  forwarded, so whatever authorizes the guest authorizes anyone the link reaches, and the spend bound must
+  exist **in code** rather than only in the doc. Both briefs also carry the standing rule that a doc is never
+  weakened to match the code, and both were told E1 is exonerated so neither wastes cycles re-litigating it.
+- 2026-07-29: **LINK-GUEST RESEARCH CLOSED — three agents, and the premise I gave the founder was wrong.**
+  I reported that no HTTP endpoint lets a link guest send. **`POST /chat/guest` has existed since `4932c1cc`
+  (2026-07-11), three days after the 2026-07-08 ruling** — `routeClass('public')`, guest resolved
+  server-side from the link header, read-only and revoked links refused, same paid pipeline. The
+  `route-class.ts:76` refusal I cited is real but is a **belt on an out-of-band principal**: a guest send
+  never presents a principal to the matrix at all. **I built a report on one file's behaviour and called it
+  the system** — the same failure the F3 cushion duplication produced earlier in this run, and the reason
+  both analysts were briefed to grade every claim.
+  **THE SERVER MONEY PATH IS VERIFIED CORRECT AND COMPLETE.** Owner's wallet as payer, owner's tier for
+  pricing, hold on the owner's wallet, the guest's own `member_budgets` row **and** `conversation_spending`
+  both gating and accruing, settlement debiting the owner, `usage_records` carrying `senderLinkId`. **Every
+  gap is client-side or a missing read.** The spend bound exists in code: the member row is created at link
+  **mint** and an absent row means `0n` ⇒ denied, fail-closed. The allowance is **per-link, not per-guest**.
+  **THE REAL FINDING: A SHIPPED, E2E-COVERED FEATURE HAS BEEN BROKEN SINCE `c9757bd3`.** The composer refuses
+  every guest before any request — and `e2e/sharing/link-guest-chat.spec.ts` **drives the real composer**,
+  asserting `toBeEnabled` before clicking, so it fails before any API call. Ten E2E report directories exist
+  and **none names `link-guest`**: the spec is presumed-passing on legacy history. **A green unit suite
+  pinning the guest denial as intended behaviour, sitting on a red integration reality** — the exact
+  inversion the E2E doctrine exists to prevent, and the answer to why nobody noticed.
+  **ATTRIBUTION, VERIFIED TWICE INDEPENDENTLY: not this run's doing.** Every load-bearing line is
+  byte-identical at `ada0341c` and `a94ca204`; the rewrite dropped legacy's
+  `requirePrivilege('read', { allowLinkGuest: true })` on the budgets read when the `conversations` slice was
+  written. **But this run changed what the fix must be:** before E1, restoring that flag alone would have
+  repaired the composer with no client change; after E1 the client no longer accepts a `group` input at all,
+  deliberately — **so the fix must go forward, and the tempting minimal revert is disqualified** because it
+  reintroduces the second who-pays authority F3 removed.
+  **A CAVEAT ON THE CROSS-CHECK, recorded because it would otherwise read stronger than it is:** the third
+  agent cited this plan as corroboration. That is **circular** — I wrote it. Its independent evidence is the
+  commit comparison, which does stand alone; the plan citation adds nothing and I am not counting it.
+  **A LIVE DEFECT FOUND IN PASSING, UNRELATED TO GUESTS:** `/chat/guest` runs no tier gate and accepts a full
+  session, so a signed-in free-tier user can reach premium models through it. Needs its own owner.
+  **E1's auditor was right on both counts** — right to route the question rather than hold it against E1, and
+  right that E1 did not cause it. It was wrong only about where the answer lived: the READ path, not the send
+  path.
+- 2026-07-29: **ALL SEVEN LINK-GUEST DECISIONS RULED; DOCS APPLIED; FOUR TASKS CREATED (F4, F5, F6, G4). The
+  run is 20 of 33 and execution is now SERIAL — one subagent at a time, planned auditor counts unchanged but
+  run in series.** Full text in §Founder decisions 2026-07-29 (link guests).
+  **THE DECISIVE ONE WAS THE FOUNDER'S PUSHBACK ON MY OWN PROPOSAL.** I proposed removing `guest` from the
+  tier union to make the doc precise. The founder kept it — and keeping it produced the sharper statement:
+  **the imprecision was never that `guest` is a tier, it is that one word was doing two jobs.** A **sender
+  tier** answers who is sending; a **payer funding tier** answers what funds this. Trial legitimately sits on
+  both axes; `guest` sits only on the first. `BILLING.md` §Group Funding 1 already carried the rule verbatim
+  — four other sections contradicted it, and they were the ones that moved.
+  **THE SECOND FOUNDER QUESTION KILLED A PROPOSED CHANGE OUTRIGHT.** "Is a guest with no payer possible at
+  all?" — **no.** A guest's payer is structural (the conversation's owner), and only the amount varies, so
+  `{payer:'owner', spendable:0}` is exact and the union stays closed at two. The analyst had reached for a
+  third value by reading "zero funding" as "no payer". **Two of the seven decisions were improved by being
+  challenged rather than accepted, which is the argument for routing them rather than settling them.**
+  **The trial ceiling now carries its REASON, not just its value:** trial has no funding endpoint to read; a
+  guest will have one, so the shared arm dissolves because its premise is false rather than because we
+  deleted it. That is the difference between a correction and a deletion.
+  **ACCEPTED AND RECORDED SO THEY ARE NOT RE-RAISED:** the owner-balance disclosure to link holders (bounded
+  by the cap; zero when no cap is set), the media widening (which decision 1 reveals is not a widening at all
+  — modality follows the payer like every other funding-derived property), and the fork affordance kept for a
+  future UI with only its overstating comment corrected.
+  **THE E2E SPEC WILL NOT BE RUN, and the consequence is stated rather than buried:** the watched-red comes
+  from unit and integration reds, and the one test that would have caught the original regression continues
+  to catch nothing.
+- 2026-07-29: **F5 → implementing.** First dispatch since the 2026-07-28 pause, and the first under serial
+  execution. Brief carries three stop-and-report triggers rather than one: **any moved amount, refusal code
+  or permitted-turn change outside the bypass itself** (a re-expression that moves a number means the paths
+  were never equivalent — the trigger B9 hit and was right to stop on); a payer resolved in more than one
+  place, so "one call site" cannot be reached inside the file list; and any fix that would **refuse** a
+  full-session sender on the guest route, which is the owner opening their own link and is pinned by an
+  existing test. Also carries the re-lint-after-last-edit gate, because reports in this run have repeatedly
+  shipped lint errors from gating before the final change.
+- 2026-07-29: **BOTH ADJACENT DEFECTS RULED AND OWNED — F7 and F8 created. The run is 20 of 35.**
+  **F7 (payer freeze without an estimate) turned out to have a real circularity underneath it, which is why
+  it was never a simple oversight:** payer → tier → ratios → estimate → payer. Ruled fix: **resolve the
+  candidate payer first and re-price only on fall-through** — price at the owner's tier because the owner is
+  the candidate priority 1 is asking about; fits ⇒ owner pays; does not ⇒ the member falls through and the
+  turn is re-priced at the sender's tier. Terminating, two evaluations, no I/O. **Its blast radius is the
+  widest of anything queued: a member with a positive-but-too-small group budget is refused permanently
+  today, however much personal money they hold** — so it is sequenced immediately after F5, whose seam it
+  builds on.
+  **A criterion worth recording because it inverts the obvious one:** F7 must NOT ship a test asserting the
+  client and server agree. They call the same shared function — one implementation — so an agreement test
+  would be exactly the cross-check Global Constraint 5 bans, and would also imply a second implementation
+  exists. The pin is on server behaviour directly.
+  **F8 (`usage_records` payer column) — the founder chose A over the architecturally cleaner B, knowingly.**
+  The payer's wallet is already on the row and a wallet has one owner, so a payer user id **is** a derivable
+  second copy. B (drop it; the payer is the wallet) has zero duplication; A keeps payer-scoped aggregates a
+  single-table scan and keeps payer identity on the row independently of wallet lifetime, which matters
+  because financial rows are retained and pseudonymized rather than deleted.
+  **The defect's real shape, stated for the implementer:** the column means _initiator_, **except** on a
+  guest turn where the initiator has no `users` row and the owner is written instead. **A column whose
+  meaning depends on the sender's session kind cannot be aggregated correctly by anyone.**
+  **The dangerous half of F8 is not the schema, it is the readers.** Flipping the column's meaning changes
+  what existing endpoints return, so the criteria require every consumer enumerated with its intended role
+  stated, activity-consumers repointed to the sender columns, and **anything genuinely ambiguous reported
+  rather than guessed** — otherwise the task ships a user-visible change nobody ruled. The backfill is exact
+  rather than approximate: the payer is derivable from the row's own wallet.
+  **Neither doc changes. `ARCHITECTURE.md` §Data model and `BILLING.md` §Group Funding 3 both already say
+  the row records payer and sender — F8 makes them true**, which is the founder's standing rule applied
+  without needing to be invoked.
+- 2026-07-29: **F5 cycle 1 → DONE_WITH_CONCERNS, and the concern indicted the plan rather than the work.**
+  **My plan said two routes resolve a payer. There are three** — `POST /chat/regenerate` also goes through
+  `resolveTurnContext` and was bypassing **both** model gates. The implementer hit its stop-and-report
+  trigger and flagged instead of reconciling, which is exactly what the trigger existed for: a
+  permitted-turn change outside the named bypass is not an implementer's call.
+  **FOUNDER RULING: a regenerate may use any model it can AFFORD — the premium/tier filter is exempted,
+  every budget filter applies in full.** The doc still holds: §Notices 8 says regenerating reads the same
+  verdict, and it does — **the verdict it reads is the money verdict.** Entitlement is exempted;
+  affordability is not. Legacy's carve-out is upheld on the axis it was actually about.
+  **ORCHESTRATOR CALL on a third category the ruling did not name: the kill switch STAYS on regenerate**,
+  because it is not a permission change at all — a disabled model was **already** refused there and only the
+  refusal code improves, from a generic unknown-model error to `MODEL_DISABLED`. Availability is not
+  entitlement. Recorded as my call, not the founder's.
+  **The amendment's real risk is the half that disappears silently.** Removing a gate is visible; keeping
+  budget enforcement on regenerate is not, so it is pinned explicitly. And the exemption must be **declared
+  through the type at the one seam** rather than implied by which route calls what — it cannot be derived,
+  because it is a product ruling, so a new turn route must be forced to state its choice.
+  **ACCEPTED from cycle 1 without change:** the kill switch moved into the seam alongside the tier gate, on
+  the implementer's reasoning that a tier-only seam would have flipped `/chat`'s gate order and changed the
+  refusal code for a selection carrying both a disabled and a premium model.
+  **G4 WIDENED by the same finding:** F5's seam is route-level, so "one call site" is grep-provable rather
+  than compiler-enforced, and a fourth turn route would repeat the bypass exactly. G4 now enforces two
+  properties — public routes prove authorization, **and turn routes prove they pass through the seam.**
+  **G2 WIDENED to own all 15 walled `apps/web` specifier lines**, not 3. They were the relocation's stated
+  precondition and were left unowned when E1 closed clean without them.
+- 2026-07-29: **CAP LIFTED — three implementers dispatched concurrently: F5 fix, F4, F8.** File ownership is
+  disjoint and each brief names the other two tasks' territory explicitly, because the failure mode of
+  concurrency here is not collision but **misattribution**: a red test in a file you do not own may be a
+  neighbour mid-flight. F8's brief additionally pre-authorises the outcome its sweep will certainly produce —
+  a repo-wide consumer enumeration will reach F4's and F5's files, and it is told to **report and leave**
+  rather than treat that as failure.
+- 2026-07-29: **F5 cycle 2 → auditing (3-lens panel dispatched, all three concurrently).** Both halves of the
+  ruling proven red-first. Two deviations accepted: the gate decision became a **required field of a required
+  options argument** rather than a fifth positional parameter (lint's `max-params` rejected the positional
+  shape; the conventions lens is asked to verify omission is genuinely a compile error rather than merely
+  claimed); and two of five pins were **green when written**, self-reported, with the implementer stating
+  outright that one does not discriminate against this diff. **That self-report is the behaviour this run has
+  been trying to produce for fifteen cycles** — the correctness lens judges each on whether it can redden at
+  all, since a regression pin green on write is legitimate and a pin that can never redden is vacuous whatever
+  it is called.
+  **CONCURRENCY PRODUCED ITS FIRST REAL HAZARD, AND IT WAS INFRASTRUCTURE, NOT COLLISION.** F5 found the local
+  stack **down** — every port refused, suites dying on DB queries — and ran `pnpm ensure-stack`, which started
+  containers and applied migrations mid-flight. **Every gate F4 and F8 ran before that point is void**, and
+  both were told so explicitly rather than left to trust a green obtained against a half-started stack. Both
+  acknowledged and are re-running from scratch. Recorded because the failure mode is invisible: a suite that
+  dies on connection refusal and a suite that passes look nothing alike, but a suite that ran against a
+  partially-migrated database and passed looks exactly like a real green.
+  **File attribution was demanded as FACT rather than inferred from the working tree, and it paid twice.** I
+  could see edits in `runtime.ts`, `turn-context.ts` and the billing stores but could not attribute them
+  between three implementers. F4 and F8 both answered with complete lists: the chat-domain files are F8's
+  consumer sweep (legitimate under its grant), and F4 holds the billing barrels. **One contested pair was
+  assigned before it bit — `billing/index.ts` and `billing/domain/index.ts`** — F4 flagged the risk itself and
+  F8 confirmed it needs neither, because its change renames struct **fields** while every exported type and
+  function name is unchanged, so no barrel line moves.
+- 2026-07-29: **F8 FOUND A MONEY-LOSS DEFECT ITS OWN CHANGE WOULD HAVE CAUSED, AND THE REASON IT WAS INVISIBLE
+  IS THE RUN'S OWN LESSON.** `isOwnerFundedTurn` recovered "owner-funded" by comparing identities — the payer
+  wallet is not one of _this user's_ wallets. Once the payer field means the payer, that is **always false**,
+  so every owner-funded turn would have read as self-funded: **no group scopes emitted, no group spend
+  accrued, and a member with an exhausted budget would have gone on spending the owner's money.** F8 re-keyed
+  it on the sender (which is `undefined` exactly for a link guest, so the guest short-circuit became
+  type-forced rather than a parallel condition) and added a discriminating pin, red before and green after.
+  **Every existing runtime test builds its context with `userId === sender.userId`** — the one shape that
+  cannot tell payer from sender — so the entire suite stayed green straight through the break. That is
+  "existence of a cited artifact is not discrimination by it", found in the wild by the implementer rather
+  than by an auditor.
+  I asked it to sweep for **other consumers that recover a role by comparing identities rather than reading a
+  stated field**, and to report a negative result if that is what it finds — one instance of a class is rarely
+  the only one.
+  **F9 created:** F8 deliberately left the shared wire field `PaidRunIdentity.userId` unrenamed rather than
+  reaching across `packages/shared`, `packages/realtime` and F5's in-flight file mid-cycle. **The scope call
+  is accepted; the residual is not left as a follow-up** — it is the same under-naming trap as `payerTier`,
+  and this run's bar is no follow-ups. Ordered after F5, F7 and F8 are all clean.
+  **F7 coupling recorded:** the defect lived in `resolveTurnContext` itself, so F7 meets that file as F8
+  leaves it. F8 now reads the payer off the wallet the funding decision chose, so payer and debited wallet
+  cannot name different people; if F7 adds a fourth wallet-materialization branch it must set the payer on the
+  wallet it returns.
+- 2026-07-29: **Two more `BILLING.md` corrections applied, both surfaced by F5 and both consequences of the
+  regenerate ruling:** §Funding Decision Matrix was prefaced "when a message is sent" and never said regenerate
+  skips priority 2 — it now states that regenerate runs the same matrix **minus** priority 2, with
+  availability still refused because availability is not entitlement; and §Notices 8's "all read the same
+  verdict" now carries the one ruled exception, on one axis, with the reason the exception cannot widen spend.
+  **E2 widened** to own the client half — F5 reported that the regenerate affordance carries only a message
+  id, so the verdict the button reads is the composer's, and **if the client still applies the premium filter
+  the server exemption is API-only and invisible in the product.** An implementer reporting that its own
+  finished work may be unreachable is worth more than a clean report.
+- 2026-07-29: **F5 PANEL COMPLETE — conventions PASS, security PASS (no findings), correctness FAIL on one
+  Important. Panel rule holds: F5 is not clean.** The Important finding is the run's sharpest so far, and it
+  was found because I refused the security lens's characterisation and sent the question to the correctness
+  lens instead of accepting it.
+  **THE MECHANISM: priority 2 and priority 4's basic-model term are the SAME PREDICATE.** `selfFunding` has
+  exactly one premium branch, and `isPremiumModel: true` is supplied from exactly one place on the entire
+  server — inside the tier gate. **So exempting regenerate from that gate deleted the only place premium-ness
+  is ever determined, and took the free-allowance-is-basic-models-only money rule with it.** No implementer
+  could have delivered the ruling as ruled and kept the other half; they are not two rules in the code.
+  **FOUNDER RULED (a): accept it — a regenerate may bypass premium for a free-tier caller so long as the
+  budget covers it.** `BILLING.md` priority 4 and §Balance Consumption corrected to state it. **This is the
+  ruling changing the design, not a doc softened toward the code** — the distinction the founder drew, applied
+  to their own ruling.
+  **THE ARGUMENT THAT DECIDED IT, and it is worth keeping: the alternative made the exemption an EMPTY SET.**
+  Premium access requires a positive balance, so anyone holding one is already entitled; the only self-funded
+  caller the exemption could ever help is a lapsed payer whose remaining funding is exactly the free
+  allowance — precisely the person a money-side refusal would refuse. An exemption that helps nobody is
+  decoration, and the honest alternative would have been to drop it outright rather than keep it as one.
+  **The bound is recorded rather than assumed:** admission still measures the priced ceiling against one day's
+  remaining allowance, so the reach is premium models cheap enough to fit inside a day — most often models
+  premium by **recency** rather than price.
+  **A SECOND EVIDENCE INVERSION, this one in the implementer's own report.** It nominated the 402 pin as proof
+  the money half binds and disclaimed the smart-model pin as non-discriminating. **It is exactly backwards:**
+  the 402 comes from a test double that _dictates_ the refusal, so no money change can move it, while the
+  disclaimed pin's 402 comes from real route code and flips to 201 when the allowance row is deleted. The
+  implementer applied the vacuity test correctly to one pin and inverted it on the other — which is why the
+  correction is cheap and why it must be stated plainly before F7 and G4 inherit the belief.
+  **MY OWN ERROR, and it shipped into code:** the `forkId` comment I dictated says no client surface exposes
+  forking to a guest. **A write-privileged link guest does get a Fork affordance rendered**, so a guest can
+  press a control whose route is session-classed and will refuse them. I wrote a false durable claim into a
+  source file through a plan decision, which is the same failure the run keeps catching in others.
+- 2026-07-29: **F8 cycle 1 → DONE_WITH_CONCERNS; fix cycle dispatched on two founder rulings, one correcting
+  ME.**
+  **The backfill criterion was MINE and it contradicted Global Constraint 7** ("zero existing users — no
+  data-migration backfill"). The implementer followed the task criterion over the constraint and **disclosed
+  the conflict**, which was right given that I created it. Withdrawn: a rename preserves values, there are no
+  production rows, dev data is reseeded. **A data migration that implies existing data is exactly what the
+  constraint bans.**
+  **RULED IN — the simplification F8 identified and correctly declined to make unilaterally:** with the field
+  finally meaning the payer, owner-funding is derivable as **payer ≠ sender** with no DB read, deleting
+  `isOwnerFundedTurn`'s recovery-by-comparison — **the very defect class F8 found in its own change.** The
+  fixer is told that if any case is not equivalent it must stop and hand back the counterexample rather than
+  force it, because forcing it is the one way to silently reintroduce the money-loss defect just closed.
+  **F8's identity-comparison sweep returned a real negative:** exactly one instance (the one it fixed), one
+  near-instance that was right for the wrong reason and is now direct, and every other identity comparison
+  compares two stated fields to express "solo" rather than to recover a decision. A negative result someone
+  actually looked for.
+  **Flagged to F8's auditors rather than ruled:** the run-key row's scope moved from sender to payer, so
+  owner-funded turns share the owner's idempotency namespace. Uniqueness is unaffected (fresh client-minted
+  uuid per turn), but it is a genuine change of principal on an idempotency boundary.
+- 2026-07-29: **F5 → CLEAN, and the judgement is mine to own because a lens failed.** The panel was conventions
+  PASS, security PASS, correctness **FAIL**. I am closing it anyway on this reasoning: the correctness lens's
+  sole Important finding was **not a defect in the work** — it established that the ruling as given necessarily
+  lifted a money rule, because priority 2 and priority 4's basic-model term are one predicate — and **the
+  founder ruled that behaviour correct and the doc moved to match.** A finding that says "the code and the doc
+  disagree" is legitimately resolved by ruling which one is the design. Its Minor and the two conventions
+  Minors are fixed, and an independent verification auditor confirmed all five closed, each closed _correctly_
+  rather than merely edited, and **no executable line changed**.
+  **The verifier corroborated "one production file, one comment" by two independent routes** — an mtime window
+  against the two impl reports, and a content read of the whole `git diff` — then stated plainly what it could
+  **not** establish: cycle 2 versus cycle 3 cannot be diffed in this tree, so one comment tweak might belong to
+  either. Naming the limit of the evidence is what makes the rest of it usable.
+  **It also corrected the panel itself:** the correctness lens said the describe held twelve tests; it holds
+  eleven. And it checked that **zero test lines were deleted**, so the count was not made to work by dropping
+  something — the check nobody asks for that turns a count into evidence.
+  **F5 delivered:** the tier gate on one payer-resolution seam, the `/chat/guest` premium bypass closed
+  (watched red at 201→403), regenerate exempt from entitlement and fully gated on money, the kill switch
+  unconditional and ahead of the exemption, and the exemption **declared through a required typed field** so a
+  fourth turn route must state its choice rather than inherit one.
+- 2026-07-29: **F4 cycle 1 → DONE_WITH_CONCERNS; 3-lens panel dispatched.** Two deviations go to the auditors
+  rather than being ruled by me, and the first is the one that matters: **to make a guest's denial arrive as
+  `GROUP_BUDGET_EXHAUSTED`, the client routes its SERVED figure into the shared core as group headroom, with
+  the guest's own balance hard-coded `0n`.** That may be correct — one endpoint, one number, the payer still
+  the server's answer — or it may be **the disqualified two-authority design reappearing in a new shape**,
+  since E1 deliberately removed the client's group input and F4's own criteria had it delete the dead `group`
+  parameter as an invitation. I am not ruling it from a report; the panel judges it against the code.
+  Second deviation: two `resolveClientBilling` describes were **deleted** as unconstructable after the field
+  removal, with the claim their semantics stay pinned elsewhere. **"Deleted tests, covered elsewhere" is a
+  claim to verify, not accept** — it is the coverage-by-assertion shape this run has caught before.
+  **G2 gains the residue F4 could not delete:** `payerSizingTier` now has **zero production callers** and
+  `ClientFundingContext.group` survives only to feed it — the identical live invitation F4 was told to remove
+  from `ClientBillingInput`, in a second copy. F4 correctly declined to widen a money-critical change to chase
+  it.
+- 2026-07-29: **F8 cycle 2 → auditing (two independent auditors, deliberately given different angles — write
+  paths versus schema and aggregates).** Both rulings landed: the backfill is gone (drift gate green, manifest
+  byte-identical) and the DB read is deleted in favour of **payer ≠ sender**. **The equivalence got STRONGER
+  evidence than the mechanism it replaced** — the inversion now reddens three tests where cycle 1's reddened
+  one, because the link-guest case is covered _by_ the comparison rather than by a short-circuit around it.
+  **A THIRD SPECIES OF THE VACUITY CLASS, and it is the subtlest yet: fixtures whose INPUTS drifted out of the
+  domain they claim to cover.** Cycle 2 found three pre-F8 fixtures building the payer and sender as one id
+  while naming the **owner's** wallet — a shape F8 has now made unproducible. One failed outright; **two passed
+  while exercising nothing**, still carrying the names of the caps they no longer tested. Not a test that
+  cannot fail, and not an assertion satisfied by deletion — a test whose _setup_ stopped describing a reachable
+  state. Recorded as its own species because the previous two would not have caught it.
+  **RULED on the implementer's raise:** the corrected member-cap test and the cycle-1 pin are now near-identical
+  and it declined to delete either on its own judgment — the right instinct, since dropping a money test to
+  resolve an overlap is precisely the decision to hand back. **Both stay**, with a testable criterion rather
+  than a taste call: each must name what it uniquely pins and each must redden where the other does not; if no
+  such pair of names exists, that is the evidence of redundancy.
+  **Deviation accepted pending audit:** `ownerFunded` narrowed from `ResultAsync<boolean, DomainError>` to
+  `boolean` through a barrel-exported type, the wrapper having existed only to carry the deleted read's
+  failure. Auditors check no consumer relied on that error channel.
+- 2026-07-29: **TWO `apps/api` GATE CONSTRAINTS RECORDED IN §Known Breakage — they bind every remaining task
+  and neither was known before concurrency exposed them.**
+  **Two `pnpm test:api` runs cannot overlap in one worktree** — they share `apps/api/coverage/.tmp` and the
+  second aborts the first. F8 lost two runs to it and identified the competing process. So **only one
+  `apps/api` suite may run at a time across all agents**, which is why every audit brief in this run now
+  forbids the command and asks for isolated file runs.
+  **The standing `template-html` failure blocks the `apps/api` COVERAGE gate outright**, for every task in this
+  run: vitest suppresses the coverage report when any test fails, so a red suite yields no table and the exit
+  code says nothing about coverage. Per-file coverage on `apps/api` must be taken by a scoped run over the
+  owned files, and **an unscoped green claim about coverage is not evidence.** This is the third distinct way
+  coverage has lied in this run — after non-accumulating `--coverage.include` and missing driving suites — and
+  the first that is a standing property of the repo rather than a mistake.
+- 2026-07-29: **F4 security lens → PASS, one Minor, and the Minor is the run's own doctrine turned on the new
+  code.** The guest membership gate calls the store method **directly** instead of the shared
+  `resolveCallerMember` every other guest-reachable read uses. Byte-equivalent today — same store method, same
+  filter — so there is no live hole, but F4's criterion was "**no second resolution path, no second revocation
+  predicate**", and this call site would not inherit a future tightening of the shared helper. That is exactly
+  "One Implementation, Shared": the defect is not a wrong answer, it is a second place that must stay right.
+  **The affirmations matter as much as the verdict, because they establish the accepted disclosure is
+  BOUNDED rather than merely permitted.** Every dimension is clamped non-negative before the `min`, so a
+  negative owner balance serves `0` and never leaks the magnitude of the owner's debt; an absent budget row is
+  `0n`, never unlimited; the owner-balance term stays raw while the member and conversation holds are
+  subtracted, so the earlier privacy ruling — a guest cannot infer the owner's activity **elsewhere** — carries
+  over intact. Revoked, expired, malformed and anonymous all collapse to an identical 401, so there is **no
+  credential-state oracle**; a valid credential aimed at another conversation 404s before any conversation read,
+  so the route cannot probe; and a full session — member, non-member or owner alike — is refused before any
+  lookup, so it leaks no existence either.
+  **Two observations it deliberately declined to file as findings, both now recorded as unowned in the plan
+  rather than lost:** no throttle on invalid-credential floods to the guest send (the 401 path short-circuits
+  the per-`linkId` limiter), and a read-privileged guest being served the snapshot it cannot act on — where
+  refusing naively would leave that guest's composer permanently pending, which is worse than the one bit it
+  learns.
+- 2026-07-29: **F4 conventions lens → FAIL: two Important, four Minor, and the failure is ENTIRELY the
+  falsified-comment class.** The code reads like its siblings and the `payerTier` rename was executed as a
+  naming act rather than a compile act — locals renamed alongside it, test helpers re-doc'd, one test title
+  corrected — but **the removed-mechanism sweep was not done**, and four comments now state something false.
+  **The sharpest one is in the task's own new file and its own tests contradict it:** the authorization
+  docblock claims a revoked link, an expired link and a departed guest are each the same indistinguishable
+  not-found. The tests assert 401 for revoked and expired (they collapse to a null credential at the seam) and
+  404 only for the departed member. The sentence was **copied from a sibling file where it is true** and
+  carried to a place where it is not — a reader would believe revocation is indistinguishable from
+  non-existence and could "fix" a 401 they took for a bug.
+  **The second Important is the run's own sweep rule catching what the sweep missed:** the JSDoc on the client
+  builder still describes the `group` field this task deleted **and** gives the conditional spread as the
+  function's reason for existing. Both sentences describe the removed mechanism. The implementer swept the
+  vocabulary of the _tier_ rename thoroughly — verified independently, zero stale hits — and did not sweep the
+  vocabulary of the **parameter it deleted**. Two removals in one task, one swept, one not.
+  **BOTH LENSES INDEPENDENTLY FOUND THE SAME MINOR**, which is what makes it worth fixing rather than
+  arguing: the guest membership gate calls the store method directly instead of the shared resolver that
+  every sibling guest-reachable read uses, in the one file whose own comment cites that shared gate as its
+  authorization story.
+  **RULED IN — the duplicate wire serialization the conventions lens flagged as an architecture call.** The
+  `FundingSnapshot` → wire mapping now exists twice, and **only one copy is type-pinned to the shared schema**,
+  so a schema change breaks one site and silently passes the other. That is precisely the "two copies that must
+  agree" class, with the asymmetry that makes it worse than usual. Collapse onto one exported serializer in
+  F4's fix cycle.
+  **Pre-existing Global Constraint 8 leaks found and attributed rather than absorbed:** `E1`/`G2`/`E4`/`F1`
+  identifiers in three `apps/web` billing files, all present verbatim at `a94ca204`. Not F4's, and assigned to
+  **G2**, which owns those files next — the run's own rule violated by the run's own earlier tasks.
+- 2026-07-29: **F8's TWO AUDITORS SPLIT, AND THE SPLIT IS THE WHOLE ARGUMENT FOR USING TWO ON MONEY.** B
+  PASSED; A FAILED on three Important. They examined the same area and **chose different invariants** — I had
+  flagged the idempotency-principal move and written "uniqueness is claimed unaffected; judge that
+  deliberately". **B checked uniqueness and cleared it. A checked STABILITY and found a real defect.** A's
+  sentence is the correction: _"uniqueness is the wrong invariant to check; stability is the property replay
+  depends on."_ It corrects the implementer's judgment and my framing in the same stroke — I named the
+  property to examine and named the wrong one, and a second independent auditor is what recovered it.
+  **THE DEFECT: the run key row is now scoped on the PAYER, which is MUTABLE.** The route re-resolves the turn
+  context on every POST, so one client-minted key can resolve to **two different key rows across attempts**: an
+  owner-funded first attempt scoped to the owner, then a resubmit after group headroom crosses to ≤ 0 — very
+  plausibly _because that same turn's settlement consumed it_ — scoped to the member, claiming a **fresh** row.
+  Post-settle the documented reconnect resubmit **re-executes instead of replaying**: real provider spend, then
+  settlement aborts on the duplicate client-supplied message id, leaving an absorbed cost and a spurious
+  "failed" turn. Mid-run the resubmit gets a new-executor claim the one-run-per-conversation block **rejects
+  instead of attaching**.
+  **AND IT GETS WORSE WITH WHAT LANDS NEXT.** F7 makes the member fall-through actually occur, so a payer
+  changing between attempts goes from rare to routine. The fixer is told to fix it for that world, not this
+  one — the two tasks would otherwise have combined into a defect neither introduced alone.
+  **A FOURTH VACUOUS FIXTURE, missed by the sweep that found three.** A group fixture still binds the payer to
+  the sender while naming the owner's wallet — the unproducible shape — and **its doc comment states the old
+  wiring as current fact**, in a money test file, with six tests built on it. The class keeps producing
+  instances because a sweep finds what it greps for, and this one was reachable only by reading a fixture's
+  semantics rather than its vocabulary.
+  **Both auditors independently proved my near-identical-pair ruling unsatisfiable** by diffing the bodies with
+  comments stripped. Re-ruled: differentiate via the assertion the payer-named test actually exists for — the
+  emitted group scopes — rather than deleting or accepting.
+- 2026-07-29: **F8 cycle 4 — the near-identical pair resolved BY MEASUREMENT, not judgement.** Case 1 held: the
+  two bodies were byte-identical apart from the survivor's appended scope-ids assertion, and the deleted test's
+  only assertion appeared verbatim at the same position in the survivor. Deleted, probe-backed in both
+  directions.
+  **AND THE CLASS HAD SPREAD, FOR A REASON WORTH KEEPING: cycle 2's accepted fixture correction CREATED new
+  duplicates.** A third test became byte-identical to the deleted one because correcting the fixtures onto the
+  production shape made previously-distinct tests identical — at HEAD it built the identity one way, and the
+  correction moved it onto the same shape as its neighbour. **Correcting a fixture set can manufacture
+  duplicate tests, and nobody looks for that.** The implementer handed it back rather than deleting a money
+  test the ruling had not named — right call — and it is ruled the same way by the same argument.
+  **CAP BREACH, DISCLOSED RATHER THAN BURIED: F8 is now on its fourth fix cycle, past the three-cycle cap.** I
+  am continuing rather than escalating-and-stopping, and the reason is that the cap's premise does not hold
+  here. The cap exists because repeated cycles usually mean the acceptance criteria are wrong; F8's criteria
+  are sound and every cycle closed real validated findings. **The cascade traces to MY ruling, not to the
+  implementer** — differentiate the pair → the assertion I named requires a hold → the test became an admit →
+  it dominated a neighbour → the fixture correction had already made a third identical. Each step followed from
+  the last and each was individually right. Recorded so the founder can override.
+  **Probe discipline worth noting:** the implementer temporarily mutated production code to prove a probe
+  reddened, reverted it, and **verified the revert by re-reading the file** rather than asserting it.
+- 2026-07-29: **THE MOST IMPORTANT OPERATIONAL FINDING OF THE RUN, and it invalidates a class of evidence: the
+  repo's `grep` is `ugrep`, and a raw NUL byte in a string literal makes it skip a file SILENTLY — no match, no
+  warning, exit 0.** Found by F4's cycle 3, measured rather than inferred: a sweep reported that
+  `apps/web/src/hooks/billing/use-turn-options.ts` does **not** contain `hasServedFunding`; it contains it
+  twice. **That file is the money layer's single `apps/web` adapter hook**, so every mandated vocabulary sweep
+  in this run silently excluded the file most likely to hold what the sweep was looking for.
+  **The rule this produces: a "zero hits" result is not evidence unless the sweep ran with `-a`.** Verified
+  repo-wide that exactly **two** source files are affected. **I re-ran my own load-bearing grep** — the 15
+  walled `apps/web` specifier lines — binary-inclusive: **unchanged at 15.** That is luck, not diligence, and
+  the earlier negative claims in other reports were not re-run; they are **unproven rather than false**. F4's
+  verification auditor is explicitly tasked with re-running the panel's sweeps binary-inclusive.
+  **G12 created to remove the cause** rather than teach everyone a flag — the NUL becomes an escape, and a
+  guard fails if a tracked source file gains a raw one again.
+  **AND THE SUITE-OVERLAP CONSTRAINT IS NOT AN `apps/api` QUIRK.** F4 lost a `pnpm test:web` run to the
+  identical shared-coverage-directory failure, which printed hundreds of passing lines and zero failures while
+  being **void**. Generalised in §Known Breakage: no two suites sharing a coverage directory may run at once,
+  per package, and briefs must serialise the suite they name. **A void run that looks exactly like a pass is
+  the fourth distinct way a gate has lied in this run.**
+- 2026-07-29: **F8 cycle 5 — an incident, self-inflicted, self-found, and repaired: a `replace_all` probe
+  REVERT matched a test the probe never touched** and silently raised its conversation cap. **The test still
+  passed**, because the sender's own wallet covered either value — so no suite, lint or typecheck could have
+  caught it. Found by grepping for residue, repaired by hand against the test's own comment and `git show
+HEAD`, and verified by a diff showing zero fixture lines in any hunk.
+  **The generalizable rule, which is new and worth keeping: a probe's REVERT has a WIDER match set than its
+  APPLY**, because it searches for the post-probe value, which may be the resting value of sites the probe
+  never touched. The guard is asserting equal match counts on apply and revert — the implementer had counted
+  on one probe and not the other, and the uncounted one is the one that broke.
+  It also corrected its own cycle-4 lint set, which had omitted `packages/db` though F8 spans it.
+- 2026-07-29: **FOUNDER APPROVED the trial `auto` design; C5, E6, G11 and G12 written.** The measurement
+  settled it: **classifier + answer is 11.8× under the 1¢ trial ceiling**, the classifier alone is 5.06% of it,
+  and catalog admission's price floor bounds it structurally regardless of catalog drift. **The defect we went
+  looking for was refuted; the opposite one was found** — `auto` is the client's persisted default, offered to
+  every tier, sent by the trial page, and **thrown away server-side into a reasoning-free turn**, which
+  `BILLING.md` §Effort 5 forbids **by name** on a path §Trial Usage names explicitly. Cost of fixing: ~0.05¢
+  absorbed per trial turn and **1–3 models of ~190** dropping below the gate. **The task's first test is the
+  money pin, and it must be red before the classifier is wired** — wiring first would ship the over-spend the
+  investigation was sent to prevent.
+- 2026-07-29: **THROUGHPUT RAISED AT FOUNDER INSTRUCTION — six agents live: F4 and F8 in verification, plus
+  G8, C5, D3 and F10 implementing.** The four were chosen on one criterion: **no two share a file, and all
+  four avoid F4's and F8's grants entirely** while those two verify. F4's and F8's territories are broad, so
+  they are what bounds the batch — not the number of agents.
+  **Every brief carries the full ownership map**, not just its own grant, because with six live the failure
+  mode is not collision but **misattribution**: a red test in a file you do not own is a neighbour mid-flight,
+  and an implementer that "fixes" it corrupts someone else's work.
+  **`pnpm test:api` is granted to G8 ALONE and explicitly denied to the other three**, because two runs share a
+  coverage temp directory and abort each other — and G8 is the one task that must run it, since the gate it
+  measures is the thing it is fixing. Every other brief takes coverage from a scoped run redirected out of the
+  shared directory.
+  **Every brief carries the `ugrep` rule**, so no agent produces a "zero hits" claim that is silently narrower
+  than it reads. F10's brief names the affected file specifically, because it sits adjacent to F10's work.
+  **G8 is first among equals:** while any `apps/api` test fails, vitest suppresses the coverage report
+  entirely, so the run's per-file gate has been unmeasurable throughout and every task has been working from a
+  scoped lower bound. Its brief's real constraint is that it may **not** fix the failure by loosening the
+  assertion, deleting the case, or snapshot-updating past a defect — it must first establish whether the test
+  drifted or the code did.
+  **C5's brief makes the ORDER the instruction:** write the money pin, watch it red, _then_ wire the
+  classifier. Wiring first and testing after would ship an over-spend and then produce a passing test that
+  proves nothing — the precise failure the investigation was commissioned to prevent.
+  **D3's brief forbids the test it would naturally write:** an agreement test between the two walks is the
+  cross-check Global Constraint 5 bans, and writing one would prove two derivations still exist. One
+  derivation, two readers.
+- 2026-07-29: **D3 → NEEDS_CONTEXT, no file edited, and it corrected MY design context rather than building on
+  it. This is the response the status exists for.**
+  **I had the direction of the defect backwards.** I wrote that divergence between the two walks
+  **under-reserves** storage; it **over**-reserves — `branch`, `loop` and `subWorkflow` consume through an
+  **edge only**, so the definition-side walk cannot see them and counts more as consumed. **My stop-trigger
+  told the implementer to halt and report a live under-reservation, and that premise was false**; it correctly
+  declined to stop on it and said why. A brief that asserts the wrong failure direction will send a careful
+  agent looking for something that is not there — and a careless one will find it anyway.
+  **My Files list was wrong and it is what blocked the task.** The single derivation point sits in the
+  compile step, and **no placement inside the engine reaches the chat build path** — I granted the engine only.
+  **A THIRD reader exists** that prices a bare, storage-stamped definition and holds no compiled form; changing
+  the estimator's signature breaks it, and **leaving it on the old shape is worse**, because its contract is to
+  price through the one estimator admission uses. It lives in C5's live territory, so **D3 is now sequenced
+  behind C5** — the concurrency I raised produced its first real ordering constraint, and it was found by an
+  implementer reading call sites rather than by me reading the graph.
+  **RULED: the re-pricing is accepted and is an improvement.** Collapsing moves no amount production can build
+  and lowers over-reserve to exact on unreachable paths. `reserve ⊇ bill` still holds, and an over-reserve is a
+  real cost to a user whose funds are held against work that will not happen. Required with it: a pin that the
+  exact reserve still covers the bill on a branch/loop definition, **constructed in a test though production
+  builds none** — proven rather than assumed.
+  **The fixture rewrite is in scope and named:** every estimator fixture uses empty edges, and C3's storage pin
+  expresses consumption with no edge, so an edge-based derivation flips it. **It must be re-expressed, not
+  deleted** — it is a real C3 property.
+- 2026-07-29: **F8 → CLEAN. Verification PASS, zero findings, after two independent auditors and four fix
+  cycles.** The disclosed probe-revert accident is **fully repaired with zero residue** — the auditor rebuilt
+  the hunk map against `HEAD` independently and found nothing the report had not already named, then swept
+  every F8 file's diff for changed literals and found none. **It checked the class, not just the instance.**
+  Both deletions proven strictly dominated with **no lost pin**: the flat-fallback path is still exercised by
+  three surviving tests. The key row is scoped on a principal minted at route time from the credential,
+  reading no wallet, balance or headroom — **the payer moves with funding, the sender cannot**.
+  **I closed the one item it could not observe.** It could not run the migration-drift gate read-only. I ran
+  the real CI command: **"No schema changes, nothing to migrate"**, no migration written. Closed by
+  observation rather than by inference from a scratch-directory equivalent.
+  **IT ALSO CAUGHT MY OWN STALE PLAN TEXT** — the re-ruling above §F9 still read "both stay" while later
+  briefs authorised two deletions, which a future reader would have taken for an implementer deviation.
+  Corrected, with the original reasoning kept for the next case.
+- 2026-07-29: **F4 → CLEAN.** Verification PASS with one Minor, fixed in a one-word cycle. **That Minor
+  vindicates the `ugrep` finding entirely: the single stale hit in the whole task was inside the one file no
+  earlier sweep could read** — a comment naming `tier` where the served field is `payerTier`, twelve lines
+  above code that reads it correctly.
+  **The auditor's severity reasoning is the durable part:** Minor because **the compiler corrects any reader
+  who acts on it** (`served.tier` does not typecheck) — that is what the rename bought — while the two
+  Importants it raised earlier described behaviour **no gate could correct**. A sharper line between the
+  grades than "how wrong is it".
+  **The fixer verified the NUL survived its own edit at the BYTE layer**, in Node rather than through a
+  rendering tool, because an editor that silently normalised it would have done G12's job invisibly and
+  changed what every future sweep of that file sees. **Confirming a byte you did not intend to change is the
+  only way that class of accident is catchable.**
+- 2026-07-29: **Next wave on the freed grants — F7 and G12**, joining G8, C5 and F10.
+  **F7 carries the widest live blast radius left:** a member with positive-but-too-small group headroom is
+  refused **permanently** today, whatever they personally hold. Its brief inverts two instincts — **no
+  client/server agreement test** (one shared function, so the test would be the banned cross-check and would
+  imply a second implementation exists), and **delete** the comment describing the violation rather than
+  amend it.
+  **G12's brief makes the guard the point, not the two edits** — without it the defect returns silently,
+  which is the whole problem — and warns about the trap that already bit once: an editing tool may normalise
+  the NUL without saying so, so the byte layer must be checked either side of the edit.
+- 2026-07-29: **F7 → NEEDS_CONTEXT, and the blockers indict MY DESIGN, not the task.** The implementer first
+  **confirmed the defect with a watched red** — a member with 1 nano of headroom and ample personal funds
+  frozen to the owner — then created, ran and **deleted** its probe, leaving the tree clean. Only then did it
+  refuse to build.
+  **Four things my candidate-payer-first design did not survive:** the seam carries neither model rates nor
+  prompt size, and its only production caller is out of its bounds, so an optional argument would be a **dead
+  seam**; **Smart Model picks no model at freeze time and derives its candidates from the payer's spendable**
+  — a _second_ circularity my design never touched; **media turns are priced per unit**, so a per-token
+  minimum is meaningless for them; and pricing at the freeze **puts a catalog read on every paid send**,
+  reversing an explicit stated intent that this never touches the paid hot path.
+  **And one question that may shrink the whole problem:** my brief and the plan say "the turn's **estimate**",
+  while `BILLING.md` §Math & Terms defines **`minTurnCost`** and says normatively "never a full estimate". If
+  that is what priority 1 requires, the fix is far smaller than I assumed — and if the two sections disagree,
+  that is a doc defect for the founder.
+  **ROUTED TO AN ANALYST, WHICH IS WHAT I SHOULD HAVE DONE BEFORE PROPOSING.** I designed this one from my own
+  head, brought it to the founder as a recommendation, and they agreed with it — but the run's own record is
+  unambiguous: **the rulings I routed have held; the ones I made directly from an implementer's report have
+  not.** This is the fifth instance. The analyst is asked for the option set I should have asked for, and is
+  told explicitly to say whether the design is salvageable or should be **discarded** — I would rather discard
+  it than bolt it onto three special cases.
+  **A scope gap it found on the way out:** a second file documents the _same_ violation in its own header, so
+  fixing the defect turns that into a wrong comment. Unowned; it goes to whoever lands the fix.
+- 2026-07-29: **G8 → CLEAN. The coverage gate is restored and its restoration is verified from git rather than
+  from the report.** The auditor re-derived the drift direction itself: the founder's commit removed exactly
+  the one `<link>` line and nothing else, and `git merge-base --is-ancestor` proves the snapshot predates the
+  source edit — **the snapshot was the stale side.** It then checked the _substance_ separately: the font is
+  self-hosted, the inline fallback survives, and the only visible effect is a serif wordmark falling back to
+  Georgia. **Had the code been the stale side, this task would have destroyed the only witness to a real
+  regression** — which is exactly why a snapshot fix must never be judged on its green.
+  **"Absorbed nothing else" was re-derived at DOCUMENT granularity, not by line count** — both snapshot
+  revisions parsed into key→body maps, each of the seven surviving documents differing by one identical hunk.
+  And the nine deleted keys were proven **lossless** by hashing every removed body against the retained ones.
+  **ONE REPORT CLAIM CONTRADICTED, and the Minor came from it.** G8 asserted a repo-wide sweep found the
+  Google-Fonts host in exactly one tracked file. Re-run, it also returns `e2e/admin/newsletter.spec.ts` —
+  where a comment states the template "deliberately links" that font and **the test allowlists the host
+  twice.** Pre-existing, falsified by the founder's own commit, outside G8's scope, and **so not counted
+  against the verdict** — but it now reads as a rationale a future reader could act on by re-adding the tag
+  G8 just proved should stay gone. Routed to **G3**, with the allowlist narrowed too: a permission nothing
+  needs is a permission nothing guards.
+  **§Known Breakage refined from the auditor's three runs:** the stale pre-bundle blowup is **not only** a
+  concurrent-edit race — it reproduced with no `packages/**` write in the window, because vite re-optimises
+  mid-run after a cache clear and orphans paths held by in-flight workers. **After clearing the pre-bundle,
+  the next run is the unreliable one; the run after it is clean.**
+- 2026-07-29: **F10 → CLEAN, zero findings.** The auditor verified the claim I most doubted — that the funding
+  read count went **down** — **structurally rather than by counting requests**: the query scope _is_ the cache
+  identity, so before the change a composer mounted two entries (the scoped one plus the unscoped door) and now
+  mounts one. It also applied the One-Implementation test to the new hook properly — _"if these two drift, does
+  something break?"_ — and answered it concretely: the validator drops a selection and the resolver refills it,
+  so two copies grading at different tiers is a **drop/refill disagreement on one screen**. And it confirmed the
+  fourth premium authority really is dead (its output is never destructured, no spread, no pass-through), which
+  is what makes F10's criterion met rather than merely arguable.
+- 2026-07-29: **G12 → CLEAN, zero findings, and its audit is the strongest in the run.** It **mutation-tested
+  the guard** — neutered the rule's visitor and re-linted the same fixture, 1 hit → 0 — so the suite provably
+  pins the failure rather than the pass. It reproduced the `.astro` parser error verbatim, confirmed the rule
+  activates across **all thirteen lint roots**, and caught that the report's grounding measurement could not be
+  checked against `HEAD` (the symbol does not exist there), so it **rebuilt the pre-G12 file byte-for-byte** and
+  ran the comparison under control instead of accepting it.
+  **The trap did not recur:** all five touched files measure zero NUL bytes, including the rule and its test —
+  the two most likely to carry one, since the `Write` tool emitted the byte twice while authoring them. Both
+  correctly construct it via a code-point call, and the rule's message uses a raw string so the documentation of
+  the banned byte does not become the banned byte.
+- 2026-07-29: **G13 → CLEAN, zero findings.** Its auditor re-derived both unreachability proofs independently —
+  from the driver's own declared type and from the capture seam's construction — **before** reading the report,
+  and confirmed the attribution: pre-existing and merely newly visible. **G8 restored the report, not the
+  threshold.** The branch arithmetic closes independently (two `??` operators = 4 branches; 34−4 = 30, 32−2 =
+  30, and 94.11% is exactly 32/34), and the substitute evidence is **stronger than the artefact I waived**,
+  because running the instrumented command _before_ the edits reproduced the gate's exact figure and pinned the
+  scoped run's numerator and denominator to the gate's own.
+  **The task did the harder correct thing:** it proved the branches unreachable and deleted them, rather than
+  writing two tests that fabricate impossible states to buy 0.89 of a percent.
+- 2026-07-29: **C5 → CLEAN after three fix cycles**, and the last one corrected ME.
+  I specified the fixture note should state the calibration **numerically**. The implementer wrote it with no
+  number at all, and the auditor endorsed that against my instruction with the better reason: §Known Breakage
+  bans this shape by name — **"a comment that states what another quantity IS is the mirrored-constant ban in
+  prose form."** My phrasing would have restated two shared constants plus a derivation in a third package.
+  **Dropping the number was the rule, not taste.**
+  **The division of labour it articulated is worth keeping:** the derivation lives in the **run record**, which
+  never decays because it is never cited as current; the **guarantee** lives in the code, where a gate holds
+  it. Putting the derivation in the code yields a third copy with nothing guarding it.
+  **And the bounding argument was tested sentence by sentence, not accepted wholesale** — the calibration claim
+  is gated (the assertion two lines below flips if the bracket stops holding), the "only measurement" claim is
+  *un*gated but decays in the **safe** direction, and the coupling claim is guarded elsewhere by the
+  mirrored-constant rule itself. That is the discriminator applied per clause rather than per comment.
+- 2026-07-29: **D3 → CLEAN** (both auditors PASS, one Minor fixed and confirmed). **D2 → CLEAN** (PASS, zero
+  findings).
+  **D2's auditor chased the one path the collapse could still have taken** — the server emitting `null` rather
+  than omitting the field, where the client's `!== undefined` guard would read it as a value — and proved it
+  unreachable by locating the single null-to-absent chokepoint and confirming no other producer of that
+  response shape exists. It also verified the `null`/`off` distinction **layer by layer with a separate pin at
+  each**, rather than end to end, which is the only way that particular collapse is visible: both render as no
+  badge.
+  **It cleared the `v8 ignore` on evidence, not deference:** SQL `IN` never matches NULL, so no returned row
+  can carry a null anchor — and it checked that **restructuring cannot remove the branch**, because the column
+  is typed nullable and every alternative leaves the same uncovered arm or a worse one. That is the right test
+  for a coverage-ignore: not "is it unreachable" alone, but "is an ignore the best available instrument".
+  **And it disproved the implementer's own stated worry** — the file it feared colliding with was untouched by
+  the other workstream. A disclosed concern that turns out unfounded is still worth disclosing; the auditor
+  resolving it rather than repeating it is what keeps the record accurate.
+  **One pre-existing cross-boundary mirror assigned to G2**, added in D2's established shape rather than
+  introduced by it.
+- 2026-07-29: **F7 → CLEAN. Both auditors PASS; the last in-flight task.** Its second auditor **verified from
+  the arithmetic that `BILLING.md` is wrong**, not the code: the doc's literal per-sibling sum yields
+  27,954,400 and leaves a sibling ineligible, while the shipped widest-corner figure of 54,168,800 is exactly
+  sufficient and **tight at one nano below**. A founder correction is owed.
+  **And it found that F7 narrows the defect without closing it** — the ceiling is solved against the payer's
+  wallet, which carries the paid cushion, so a member can clear the freeze and be refused at admission anyway.
+  **Founder-ruled into F15**, and the ruling improved on mine: the cushion goes **inside** the min on the
+  owner's balance term, not stripped. Mine would have made **the same wallet behave differently depending on
+  who is sending**; the founder's keeps wallet behaviour constant and leaves the cap an independent term the
+  cushion never enters — so the cushion **cannot** lift a member above their allocation, by construction.
+  **The ruling also assigned an item this run found in F3 and never owned:** two implementations of "what can
+  this user spend" that genuinely disagree on the same input, and which **had already corrupted an agent's
+  reasoning** — the source of the wrong free-tier premise I relayed to the founder. One code path now.
+  **The verification pass judged three unrequested changes and found each correct**, including one that fixed
+  a latent incoherence nobody had named: a non-persisting case was riding the paid tier while the producer
+  derives persistence **from** the tier, so the two sides were pricing **different turns** while appearing to
+  compare one. The replacement is tight on all three legs.
+  **One observation routed rather than dropped:** the route supplies the classifier reserve while the core
+  derives its own — one primitive, two call sites, but nothing pins the route's figure ≥ the core's, and if it
+  is ever smaller the refusal band reopens for `auto` alone. Carried as an explicit F14 criterion.
+- 2026-07-29: **Resumed after compaction; readiness RECOMPUTED, not recalled — and the RUN STATE was wrong
+  again.** It claimed 22 ready and listed 26, omitting **E6** (ready: after C5, clean) and **G4** (ready: no
+  deps at all, and the only ready task whose files collide with nothing). The true figure is **28 ready, 7
+  blocked**, derived by reading every non-clean task's own Ordering line against the clean list. That is the
+  **third** count this run stated in prose without computing it — the error class the plan bans in code. The
+  line now carries the derivation and an instruction to recompute rather than amend.
+- 2026-07-29: **Two ordering facts were recorded only in sections that do not own them.** H1 states no
+  dependency but E6's design context says H1's proof needs E6's client change — dispatching H1 first would
+  prove a path the client cannot reach. G10 is unblocked but explicitly last in the run. Both are now in RUN
+  STATE, where a dispatcher reads.
+- 2026-07-29: **The binding constraint on the founder's maximal-concurrency request is NOT the graph.** Two
+  limits recorded in RUN STATE: seven ready tasks each claim `affordability/**` whole while their real edits
+  are mostly disjoint (the glob collides, not the work), and the measured per-package coverage-temp collision
+  caps trustworthy gating near one agent per package. An analyst is investigating whether the gate mutex can
+  be lifted safely; nothing dispatched pending that plus the founder lifting the pause.
+- 2026-07-29: **Ownership grounded by survey, and it overturned the coarse-glob fear.** Eleven contended tasks
+  mapped to the concrete files their objectives force, each proven by a symbol at a line. The globs collide;
+  the work mostly does not — only five real file collisions exist in the 28-task ready set, and every other
+  pair may run concurrently. Recorded in RUN STATE as authoritative over any `**` glob in a task's own Files
+  line, because the Files lines were written before the objectives were grounded.
+- 2026-07-29: **Two tasks are forced into a file their Files line does not name** — B10 into
+  `chat/domain/runtime.ts:604` (where two of three `INSUFFICIENT_ADMISSION` producers collapse, so its
+  one-wording criterion is unmeetable without it) and F14 into `chat/domain/turn-context.ts:110-129` (the typed
+  exemption mechanism it must delete). F14's is a **collision with F15**, and both being "after F7" meant
+  nothing forced it into the open. Ordered F15 → F14. Neither would have surfaced before an agent was
+  mid-edit.
+- 2026-07-29: **`chooseFrom` has zero production callers and C4's Files line claims callers that do not
+  exist.** Grep across `apps/api/src` and `apps/web/src` returns only the shared barrels and its own test. B8
+  built it where no producer existed; nothing wired it. Either C4 is a narrow signature refinement of unwired
+  code or the wiring gap is real and unowned — **escalated to the founder**, and C4 must not be dispatched as
+  though api call sites exist.
+- 2026-07-29: **E2 and E6 cannot run concurrently — grepped, not assumed.** `use-reasoning-effort.ts`'s callers
+  include `prompt-input.tsx:20,695` and `use-authenticated-chat.ts`, both E2's files; `message-item.tsx` is
+  not a caller. Ordered E2 → E6.
+- 2026-07-29: **CORRECTION — the 15 walled `apps/web` lines are NOT unowned.** G2's scope was widened to all
+  fifteen on 2026-07-29 and G2 runs after F4, which is clean. Both the RUN STATE paragraph and my report to the
+  founder called them unowned; both were reading the pre-widening paragraph instead of G2's own section. **The
+  same class of error as the miscounts: a stale summary quoted in preference to the authority beside it.** G2
+  is ready, and it is the run's highest-leverage single dispatch — four blocked tasks sit behind it.
+- 2026-07-29: **Dispatch schedule recorded** — six lanes keyed to package gates, with G4/E3/F11/S1/B10 as a
+  provably file-disjoint first wave across five different gates. Ceiling is ~5 concurrent implementers under
+  the measured per-package mutex, ~10 if it lifts, since files no longer overlap.

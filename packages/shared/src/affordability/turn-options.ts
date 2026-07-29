@@ -91,7 +91,7 @@ export function getTurnOptions(
     basis: EMPTY_PROMPT_BASIS,
     selection,
     catalog: catalog.models,
-    tier: funding.tier,
+    tier: funding.payerTier,
     nowMs: catalog.nowMs,
   });
   const admissible = evaluateTurn({
@@ -99,7 +99,7 @@ export function getTurnOptions(
     basis,
     selection,
     catalog: catalog.models,
-    tier: funding.tier,
+    tier: funding.payerTier,
     nowMs: catalog.nowMs,
   });
 

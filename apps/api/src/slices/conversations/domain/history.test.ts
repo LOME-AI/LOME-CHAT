@@ -20,6 +20,7 @@ function contentItemRow(overrides: Partial<ContentItemRow> = {}): ContentItemRow
     modelId: null,
     isSmartModel: false,
     reasoningTokens: null,
+    reasoningEffort: null,
     ...overrides,
   };
 }

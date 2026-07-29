@@ -62,7 +62,7 @@ describe('seedPublicUsageRecords', () => {
       .where(inArray(usageRecords.idempotencyKey, idempotencyKeys()));
     expect(rows).toHaveLength(2);
     for (const row of rows) {
-      expect(row.userId).toBeNull();
+      expect(row.payerUserId).toBeNull();
       expect(row.conversationId).toBeNull();
       expect(row.contentItemId).toBeNull();
       expect(row.runId).toMatch(/^[0-9a-f-]{36}$/);

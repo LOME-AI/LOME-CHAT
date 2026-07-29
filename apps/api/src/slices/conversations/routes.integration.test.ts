@@ -46,6 +46,7 @@ import type { ConversationsRouteDeps } from './index.js';
 import type { ConversationsStores } from './ports/index.js';
 import type { DomainError } from '../../lib/errors/index.js';
 import type { ResultAsync } from '../../lib/result/index.js';
+import type { ResolvedReasoningEffort } from '@hushbox/shared';
 
 const DATABASE_URL = process.env['DATABASE_URL'];
 const UPSTASH_REDIS_REST_URL = process.env['UPSTASH_REDIS_REST_URL'];
@@ -2852,12 +2853,15 @@ async function seedLlmCompletion(
   contentItemId: string,
   conversationId: string,
   userId: string,
-  reasoningTokens: number
+  // An omitted `effort` leaves the column null — "no reasoning wire was sent" —
+  // which is a different fact from the `off` it can carry explicitly.
+  reasoning: { tokens: number; effort?: ResolvedReasoningEffort }
 ): Promise<void> {
   const rows = await db
     .insert(usageRecords)
     .values({
-      userId,
+      // A self-funded turn's payer is its sender, so one id serves both.
+      payerUserId: userId,
       contentItemId,
       conversationId,
       runId: crypto.randomUUID(),
@@ -2874,7 +2878,8 @@ async function seedLlmCompletion(
     usageRecordId,
     inputTokens: 10,
     outputTokens: 20,
-    reasoningTokens,
+    reasoningTokens: reasoning.tokens,
+    ...(reasoning.effort === undefined ? {} : { reasoningEffort: reasoning.effort }),
   });
 }
 
@@ -3065,6 +3070,7 @@ interface HistoryBody {
       modelName: string | null;
       isSmartModel: boolean;
       reasoningTokens: number | null;
+      reasoningEffort: string | null;
     }[];
   }[];
   nextCursor: string | null;
@@ -3141,7 +3147,7 @@ describe('conversations routes: message history', () => {
       modelId: 'anthropic/claude',
       isSmartModel: false,
     });
-    await seedLlmCompletion(item, id, owner.userId, 1204);
+    await seedLlmCompletion(item, id, owner.userId, { tokens: 1204 });
     const body = await historyBody(id, owner.cookie);
     expect(body.messages[0]?.contentItems[0]?.reasoningTokens).toBe(1204);
   });
@@ -3157,8 +3163,8 @@ describe('conversations routes: message history', () => {
       modelId: 'anthropic/claude',
       isSmartModel: false,
     });
-    await seedLlmCompletion(item, id, owner.userId, 1000);
-    await seedLlmCompletion(item, id, owner.userId, 204);
+    await seedLlmCompletion(item, id, owner.userId, { tokens: 1000 });
+    await seedLlmCompletion(item, id, owner.userId, { tokens: 204 });
     const body = await historyBody(id, owner.cookie);
     expect(body.messages[0]?.contentItems[0]?.reasoningTokens).toBe(1204);
   });
@@ -3172,6 +3178,71 @@ describe('conversations routes: message history', () => {
     expect(body.messages[0]?.contentItems[0]?.reasoningTokens).toBeNull();
   });
 
+  it('carries the persisted reasoning level on a settled AI content item', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const message = await seedMessage(id, 1);
+    const item = await seedAiTextContentItem(message, 0, {
+      costNanoUsd: 1_360_000n,
+      modelId: 'anthropic/claude',
+      isSmartModel: false,
+    });
+    await seedLlmCompletion(item, id, owner.userId, { tokens: 1204, effort: 'high' });
+    const body = await historyBody(id, owner.cookie);
+    expect(body.messages[0]?.contentItems[0]?.reasoningEffort).toBe('high');
+  });
+
+  it('serves a reasoning-off level as `off`, distinct from an unrecorded one', async () => {
+    // The two facts the persisted column keeps apart: `off` means the user
+    // chose no reasoning, null means no reasoning wire was sent at all.
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const message = await seedMessage(id, 1);
+    const settled = { costNanoUsd: 1_360_000n, modelId: 'anthropic/claude', isSmartModel: false };
+    const chosenOff = await seedAiTextContentItem(message, 0, settled);
+    const noReasoning = await seedAiTextContentItem(message, 1, settled);
+    await seedLlmCompletion(chosenOff, id, owner.userId, { tokens: 0, effort: 'off' });
+    await seedLlmCompletion(noReasoning, id, owner.userId, { tokens: 0 });
+    const body = await historyBody(id, owner.cookie);
+    expect(body.messages[0]?.contentItems[0]?.reasoningEffort).toBe('off');
+    expect(body.messages[0]?.contentItems[1]?.reasoningEffort).toBeNull();
+  });
+
+  it('takes the level from the completion row that recorded one', async () => {
+    // A multi-step generation writes one completion row per step and the
+    // classifier's own charge anchors to the same content item with no level,
+    // so the item's level is taken from the row carrying it — never folded.
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const message = await seedMessage(id, 1);
+    const item = await seedAiTextContentItem(message, 0, {
+      costNanoUsd: 1_360_000n,
+      modelId: 'anthropic/claude',
+      isSmartModel: true,
+    });
+    await seedLlmCompletion(item, id, owner.userId, { tokens: 0 });
+    await seedLlmCompletion(item, id, owner.userId, { tokens: 1000, effort: 'max' });
+    await seedLlmCompletion(item, id, owner.userId, { tokens: 204, effort: 'max' });
+    const body = await historyBody(id, owner.cookie);
+    expect(body.messages[0]?.contentItems[0]?.reasoningEffort).toBe('max');
+    expect(body.messages[0]?.contentItems[0]?.reasoningTokens).toBe(1204);
+  });
+
+  it('gives each multi-model sibling its own resolved level', async () => {
+    const owner = await newUser();
+    const id = await createConversation(owner);
+    const settled = { costNanoUsd: 1_360_000n, modelId: 'anthropic/claude', isSmartModel: false };
+    const first = await seedMessage(id, 1);
+    const second = await seedMessage(id, 2);
+    const firstItem = await seedAiTextContentItem(first, 0, settled);
+    const secondItem = await seedAiTextContentItem(second, 0, settled);
+    await seedLlmCompletion(firstItem, id, owner.userId, { tokens: 900, effort: 'max' });
+    await seedLlmCompletion(secondItem, id, owner.userId, { tokens: 10, effort: 'lite' });
+    const body = await historyBody(id, owner.cookie);
+    expect(body.messages[0]?.contentItems[0]?.reasoningEffort).toBe('max');
+    expect(body.messages[1]?.contentItems[0]?.reasoningEffort).toBe('lite');
+  });
+
   it('carries a zero reasoning token count for a completion that spent none', async () => {
     const owner = await newUser();
     const id = await createConversation(owner);
@@ -3181,7 +3252,7 @@ describe('conversations routes: message history', () => {
       modelId: 'anthropic/claude',
       isSmartModel: false,
     });
-    await seedLlmCompletion(item, id, owner.userId, 0);
+    await seedLlmCompletion(item, id, owner.userId, { tokens: 0 });
     const body = await historyBody(id, owner.cookie);
     expect(body.messages[0]?.contentItems[0]?.reasoningTokens).toBe(0);
   });

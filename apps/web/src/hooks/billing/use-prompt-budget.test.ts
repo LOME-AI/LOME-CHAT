@@ -111,13 +111,20 @@ interface PairOptions {
   refusal?: string;
   heldNanoUsd?: bigint;
   payer?: 'self' | 'owner';
+  payerSpendableNanoUsd?: bigint;
 }
 
 function pair(affordable: boolean, admissible: boolean, options: PairOptions = {}): unknown {
-  const { refusal = 'insufficient_funds', heldNanoUsd = 0n, payer = 'self' } = options;
+  const {
+    refusal = 'insufficient_funds',
+    heldNanoUsd = 0n,
+    payer = 'self',
+    payerSpendableNanoUsd = 0n,
+  } = options;
   return {
     isPending: false,
     heldNanoUsd,
+    payerSpendableNanoUsd,
     payer,
     options: {
       affordable: affordable
@@ -323,6 +330,93 @@ describe('usePromptBudget', () => {
       const { result } = renderHook(() => usePromptBudget(defaultInput));
 
       expect(result.current.estimatedInputTokens).toBe(100);
+    });
+  });
+
+  describe('link guest — the composer must not refuse a send the server accepts', () => {
+    /**
+     * A write-privileged link guest composing in the conversation its link
+     * grants, with a funded link: the produced verdict is sendable and the
+     * served payer figure covers the turn.
+     */
+    function guestComposer(): void {
+      mockSession.current = { data: null, isPending: false };
+      mockTierInfo.current = {
+        tier: 'guest',
+        purchasedBalanceNanoUsd: 0n,
+        freeAllowanceNanoUsd: 0n,
+      };
+      mockUseTurnOptions.mockReturnValue(pair(true, true, { payer: 'owner' }));
+      mockUseResolveBilling.mockReturnValue({ fundingSource: 'owner_balance' });
+    }
+
+    it('does not block a funded guest from sending', () => {
+      guestComposer();
+
+      const { result } = renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conversation-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      expect(result.current.hasBlockingError).toBe(false);
+      expect(result.current.sendRefusal).toBeUndefined();
+    });
+
+    it('never fires the session-only budgets read for a guest', () => {
+      guestComposer();
+
+      renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conversation-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      expect(mockUseConversationBudgets).toHaveBeenCalledWith(null);
+    });
+
+    it('refuses an unallocated guest with the ask-the-owner reason, never a payment path', () => {
+      guestComposer();
+      mockUseTurnOptions.mockReturnValue(
+        pair(false, false, { refusal: 'insufficient_funds', payer: 'owner' })
+      );
+
+      const { result } = renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conversation-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      expect(result.current.sendRefusal).toBe('guest_no_group_budget');
+      expect(noticeText('guest_no_group_budget')).not.toContain('Add credit');
+    });
+
+    it("refuses a guest whose payer cannot cover with the owner's-budget reason", () => {
+      guestComposer();
+      mockUseTurnOptions.mockReturnValue(
+        pair(true, false, {
+          refusal: 'insufficient_funds',
+          payer: 'owner',
+          payerSpendableNanoUsd: 1n,
+        })
+      );
+
+      const { result } = renderHook(() =>
+        usePromptBudget({
+          ...defaultInput,
+          conversationId: 'conversation-1',
+          currentUserPrivilege: 'write',
+        })
+      );
+
+      expect(result.current.sendRefusal).toBe('group_owner_funds_unavailable');
+      expect(noticeText('group_owner_funds_unavailable')).not.toContain('Add credit');
     });
   });
 

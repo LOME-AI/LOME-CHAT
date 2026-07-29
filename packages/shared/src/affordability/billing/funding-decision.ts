@@ -9,19 +9,11 @@
  * `resolvePayerWallet` and route tier gate are its imperative shells; a contract
  * test pins the §2.K funding-scenario matrix against it.
  *
- * The RULE is shared; the INPUTS are not, so the two sides do NOT always reach
- * the same verdict today. The send path freezes the payer before the turn is
- * priced (see `turnEstimateNanoUsd` below) and therefore supplies no estimate,
- * which makes priority 1's estimate clause client-only: for a group member whose
- * headroom is positive but below the estimate, the client resolves `self` with a
- * `payerSwitch` while `resolvePayerWallet` resolves `owner`, and admission's
- * per-scope check then refuses the send. That divergence is a spec violation, not
- * a documented stop — §Funding Decision Matrix priority 1 and §Group Funding 6(a)
- * fall a signed-in member through to personal funds, and 6(b)'s hard refusal
- * covers only the race where the client's retry re-resolves, whereas this case
- * re-resolves to the same refusal forever. The contract test cannot catch it: it
- * hands both legs the same inputs by construction, so it pins the shared rule and
- * never the callers' input parity.
+ * Priority 1's comparison is what makes the send path able to run this core at
+ * all: it consumes `minTurnCost` — a BOUND on the turn, priced at the candidate
+ * payer's tier — never a full estimate, whose ceiling is bounded by the payer's
+ * own funding and therefore cannot be known before the payer is. One pass, no
+ * circularity (§Math & Terms).
  *
  * The branching it encodes is exactly what previously lived inline in the chat
  * slice: the clamp-then-min group headroom, purchased-then-free wallet
@@ -52,20 +44,25 @@ export interface FundingInputs {
   /** Whether the selected model is premium-tier. */
   readonly isPremiumModel: boolean;
   /**
-   * The estimated cost the group headroom must cover for the owner to fund the
-   * turn (BILLING §Funding Decision Matrix priority 1): headroom that cannot
-   * cover it is not fundable, so a signed-in sender falls through to personal
-   * funds and a guest is refused.
+   * `minTurnCost` — the least this turn could cost at the CANDIDATE PAYER's
+   * tier, which the group headroom must cover for the owner to fund it (BILLING
+   * §Funding Decision Matrix priority 1). Headroom that cannot cover the
+   * minimum can never cover the turn, so a signed-in sender falls through to
+   * personal funds and a guest is refused.
    *
-   * `undefined` means NO turn is being priced — the caller asks only who WOULD
-   * pay, and priority 1's estimate clause is inapplicable. Three callers ask
-   * that question: the served funding snapshot (which names the payer before a
-   * prompt exists), the premium tier gate, and the send path's payer-wallet
-   * freeze (the payer is chosen before the turn is priced, because the turn's
-   * ceiling is bounded by what the payer can pay). Deliberately not an amount:
-   * an unpriced query cannot be mistaken for a free turn.
+   * `undefined` means the CALLER could not put a minimum on the table — never
+   * that the turn has none. Two ways to reach it, and the second is a rule
+   * rather than a list: the caller is not pricing a turn at all (the served
+   * funding snapshot names the payer before a prompt exists, and the premium
+   * tier gate asks the same question), or the turn's minimum is derived
+   * somewhere this caller does not reach — a per-unit media generation, whose
+   * unit parsing sits downstream; a Smart Model slot, whose threshold ranges
+   * over a candidate pool the caller has not built; a selection nothing prices,
+   * which the turn build refuses on its own. All of them leave priority 1's
+   * comparison inapplicable, and it is deliberately not an amount: an
+   * unreachable minimum must not be mistaken for a zero one.
    */
-  readonly turnEstimateNanoUsd: bigint | undefined;
+  readonly minTurnCostNanoUsd: bigint | undefined;
 }
 
 /**
@@ -128,15 +125,16 @@ function groupHeadroom(
 
 /**
  * Whether the owner funds the turn: headroom remains AND it covers the turn's
- * estimate. Both clauses are load-bearing — exhausted headroom is never
- * fundable whatever the estimate, and headroom that cannot cover this turn is
- * not fundable however positive it is (the failure this comparison exists to
- * catch: a remainder too small to answer with, presented as sendable and then
- * refused at admission). An unpriced query has no estimate clause to apply.
+ * minimum. Both clauses are load-bearing — exhausted headroom is never fundable
+ * whatever the minimum, and headroom that cannot cover this turn is not fundable
+ * however positive it is (the failure this comparison exists to catch: a
+ * remainder too small to answer with, frozen as owner-funded and then refused at
+ * admission, deterministically, for as long as the remainder stands). An
+ * unpriced turn has no comparison to apply.
  */
-function coversTurn(headroom: bigint, turnEstimateNanoUsd: bigint | undefined): boolean {
+function coversTurn(headroom: bigint, minTurnCostNanoUsd: bigint | undefined): boolean {
   if (headroom <= 0n) return false;
-  return turnEstimateNanoUsd === undefined || headroom >= turnEstimateNanoUsd;
+  return minTurnCostNanoUsd === undefined || headroom >= minTurnCostNanoUsd;
 }
 
 /**
@@ -177,7 +175,7 @@ export function resolveFunding(inputs: FundingInputs): FundingDecision {
       inputs.conversationRemainingNanoUsd,
       inputs.ownerPurchasedBalanceNanoUsd
     );
-    if (coversTurn(effective, inputs.turnEstimateNanoUsd)) {
+    if (coversTurn(effective, inputs.minTurnCostNanoUsd)) {
       return { payer: 'owner', walletKind: 'purchased', premiumAllowed: true };
     }
     if (inputs.isGuest) {

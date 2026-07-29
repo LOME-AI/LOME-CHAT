@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MemberPrivilege as memberPrivilegeSchema } from '../../member-privilege.js';
+import { ResolvedReasoningEffort } from '../../affordability/reasoning-effort.js';
 import {
   MAX_SELECTED_MODELS,
   IMAGE_ASPECT_RATIOS,
@@ -243,6 +244,13 @@ export const contentItemResponseSchema = z.object({
    * content, media, and pre-feature rows; drives the settled thinking label.
    */
   reasoningTokens: z.number().int().nonnegative().optional(),
+  /**
+   * The level the generation behind this item reasoned at (from
+   * `llm_completions` via the history read); drives the settled effort badge.
+   * Absent means no level was recorded — a different fact from the `off` this
+   * field carries when reasoning was resolved to none, which the badge shows.
+   */
+  reasoningEffort: ResolvedReasoningEffort.optional(),
 });
 
 export type ContentItemResponse = z.infer<typeof contentItemResponseSchema>;

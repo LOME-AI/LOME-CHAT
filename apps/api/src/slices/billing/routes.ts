@@ -40,6 +40,7 @@ import {
   readUsageSummary,
   recordPaymentWebhookEvidence,
   runMutation,
+  serializeFundingSnapshot,
   usageBreakdownQuerySchema,
 } from './domain/index.js';
 import type { Context, Env } from 'hono';
@@ -242,16 +243,7 @@ export function createBillingManifest(deps: BillingRouteDeps) {
             }
           );
           return result.match(
-            (snapshot) =>
-              c.json(
-                {
-                  spendableNanoUsd: serializeNanoUSD(nanoUSD(snapshot.spendableNanoUsd)),
-                  heldNanoUsd: serializeNanoUSD(nanoUSD(snapshot.heldNanoUsd)),
-                  tier: snapshot.tier,
-                  payer: snapshot.payer,
-                },
-                200
-              ),
+            (snapshot) => c.json(serializeFundingSnapshot(snapshot), 200),
             (error) => respondDomainError(c, error)
           );
         }

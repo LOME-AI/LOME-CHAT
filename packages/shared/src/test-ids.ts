@@ -180,7 +180,9 @@ export const TEST_IDS = {
   expensiveModelWarning: 'expensive-model-warning',
   messageActions: 'message-actions',
   messageCost: 'message-cost',
+  /** The composer control; the settled per-answer badge is `messageEffortChip`. */
   effortChip: 'effort-chip',
+  messageEffortChip: 'message-effort-chip',
   messageIcon: 'message-icon',
   messageItem: 'message-item',
   messageList: 'message-list',

@@ -109,6 +109,8 @@ export * from './affordability/priceable-model.js';
 // package root as well: one surface, two entry points, so a consumer cannot find
 // a producer at one and its absence at the other.
 export { getTurnOptions } from './affordability/turn-options.js';
+export { minTurnCostNanoUsd } from './affordability/min-turn-cost.js';
+export type { MinTurnCostInput } from './affordability/min-turn-cost.js';
 export { chooseFrom, renderOptions, wireFor } from './affordability/classifier-choice.js';
 export type { ChosenOptions } from './affordability/classifier-choice.js';
 export * from './affordability/model-id.js';

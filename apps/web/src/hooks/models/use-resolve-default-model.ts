@@ -1,8 +1,6 @@
 import * as React from 'react';
-import { tierCanAccessPremium } from '@hushbox/shared';
-import { useSession } from '@/lib/auth';
 import { useModelStore } from '@/stores/model';
-import { useSpendable } from '@/hooks/billing/use-spendable.js';
+import { usePayerPremiumAccess } from '@/hooks/models/use-payer-premium-access.js';
 import { useModels } from '@/hooks/models/models.js';
 import type { Model, ChatModality } from '@hushbox/shared';
 import type { SelectedModelEntry } from '@/stores/model';
@@ -54,40 +52,30 @@ function resolveDefault(params: ResolveParams): SelectedModelEntry[] | undefined
  * The default is the highest-ranked eligible model for that modality after
  * premium filtering (catalog popularity, stable model-id tie-break) — never
  * positional, so a catalog reorder cannot change it.
+ *
+ * `conversationId` names the payer whose tier decides that filter. The resolver
+ * runs only while the modality's selection is empty, so a default chosen at the
+ * sender's tier inside an owner-funded conversation is never revisited.
  */
-export function useResolveDefaultModel(modality: ChatModality): void {
-  const { data: session, isPending: isSessionPending } = useSession();
-  const { data: spendableData } = useSpendable(null);
+export function useResolveDefaultModel(
+  modality: ChatModality,
+  conversationId: string | null
+): void {
+  const access = usePayerPremiumAccess(conversationId);
   const { data: modelsData } = useModels();
   const currentSelection = useModelStore((state) => state.selections[modality]);
   const setSelectedModels = useModelStore((state) => state.setSelectedModels);
 
   React.useEffect(() => {
-    if (isSessionPending || !modelsData) return;
-    const isAuthenticated = Boolean(session?.user);
-    if (isAuthenticated && spendableData === undefined) return;
-
-    // The PAYER's served tier decides premium access — never a balance, which
-    // is not an affordability input (BILLING §Affordability 4). Choosing a
-    // default from a second derivation of the same fact is how they drift.
-    const canAccessPremium =
-      spendableData !== undefined && tierCanAccessPremium(spendableData.tier);
+    if (access.isPending || !modelsData) return;
 
     const next = resolveDefault({
       modality,
       currentSelection,
       models: modelsData.models,
       premiumIds: modelsData.premiumIds,
-      canAccessPremium,
+      canAccessPremium: access.canAccessPremium,
     });
     if (next) setSelectedModels(modality, next);
-  }, [
-    modality,
-    session?.user,
-    isSessionPending,
-    spendableData,
-    modelsData,
-    currentSelection,
-    setSelectedModels,
-  ]);
+  }, [modality, access, modelsData, currentSelection, setSelectedModels]);
 }

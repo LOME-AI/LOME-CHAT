@@ -27,6 +27,7 @@ import { useResolveBilling } from '@/hooks/billing/use-resolve-billing';
 import { useModelStore } from '@/stores/model';
 import { useModels } from '@/hooks/models/models';
 import { useSession, useAuthStore } from '@/lib/auth';
+import { useUserTierInfo } from '@/hooks/billing/use-user-tier-info';
 import { useWebSearch } from '@/hooks/chat/use-web-search';
 import { useTurnOptions } from '@/hooks/billing/use-turn-options.js';
 import type { ResolveBillingResult } from '@hushbox/shared';
@@ -118,21 +119,22 @@ function resolveHasDelegatedBudget(
 }
 
 /**
- * Construct the input shape `useResolveBilling` expects, conditionally
- * including the optional `group` field. Hoisted out of the hook so the
- * conditional spread doesn't bump the hook's cyclomatic complexity past
- * the lint threshold.
+ * Project the hook's values onto the input shape `useResolveBilling` expects —
+ * a rename, with no branch in it. What it does NOT pass is the load-bearing
+ * part, and the reason sits at the return below.
  */
 function buildBillingResolverInput(args: {
   estimatedCostNanoUsd: bigint;
   isPremiumModel: boolean;
   isAuthenticated: boolean;
+  conversationId: string | null;
 }): {
   estimatedMinimumCostNanoUsd: bigint;
   isPremiumModel: boolean;
   isAuthenticated: boolean;
+  conversationId: string | null;
 } {
-  const { estimatedCostNanoUsd, isPremiumModel, isAuthenticated } = args;
+  const { estimatedCostNanoUsd, isPremiumModel, isAuthenticated, conversationId } = args;
   // The GROUP dimension is deliberately NOT passed. `GET /billing/spendable`
   // already applied §Group Funding 2 server-side and named the payer; feeding a
   // hold-aware group remaining back into the client's funding decision was the
@@ -140,7 +142,15 @@ function buildBillingResolverInput(args: {
   // settle-then-release window it resolved `self` where the server resolves
   // `owner` — telling a member they would be charged for a turn the owner pays,
   // and refusing a link guest a turn admission would admit.
-  return { estimatedMinimumCostNanoUsd: estimatedCostNanoUsd, isPremiumModel, isAuthenticated };
+  // The conversation rides along because it NAMES the payer: it is what makes
+  // the resolver's funding read the same one every sibling hook already asks
+  // for, rather than a second cache entry for one payer's figure.
+  return {
+    estimatedMinimumCostNanoUsd: estimatedCostNanoUsd,
+    isPremiumModel,
+    isAuthenticated,
+    conversationId,
+  };
 }
 
 /**
@@ -155,11 +165,19 @@ function conversationScope(conversationId: string | null | undefined): string | 
  * A user is a "group member" for billing purposes when they're a non-owner
  * participant in a group conversation. Owners pay from their own balance
  * regardless; only members route through the group budget gate.
+ *
+ * A link guest is deliberately NOT one, even though it holds a non-owner
+ * privilege: the only surface this flag drives is the session-classed budgets
+ * read, which refuses a guest outright, and the payer-switch disclosure, which
+ * describes a fall-through a guest can never take. Counting a guest here fired
+ * a request that 403s and then held the composer in its loading state forever.
  */
 function resolveIsGroupMember(
   conversationId: string | null | undefined,
-  privilege: MemberPrivilege | undefined
+  privilege: MemberPrivilege | undefined,
+  isLinkGuest: boolean
 ): boolean {
+  if (isLinkGuest) return false;
   if (conversationId == null) return false;
   if (privilege == null) return false;
   return privilege !== 'owner';
@@ -210,6 +228,10 @@ interface PromptBudgetDisplayInputs {
   heldNanoUsd: bigint;
   /** Whether this turn is text; the produced verdict governs the text arm only. */
   isTextTurn: boolean;
+  /** Whether the sender is a link guest, which changes refusal WORDING only. */
+  isLinkGuest: boolean;
+  /** The payer's served spendable, off the snapshot that produced the pair. */
+  payerSpendableNanoUsd: bigint;
 }
 
 interface PromptBudgetDisplayResult {
@@ -296,11 +318,30 @@ function readOnlyOverride(
  * written about money-versus-length precedence and does not cover
  * hold-versus-length at all.
  */
-function sendRefusalOf(
-  options: TurnOptions | undefined,
-  heldNanoUsd: bigint,
-  isTextTurn: boolean
-): NoticeReason | undefined {
+interface SendRefusalInputs {
+  readonly options: TurnOptions | undefined;
+  readonly heldNanoUsd: bigint;
+  readonly isTextTurn: boolean;
+  /** Whether the sender is a link guest — it changes the money refusal's WORDING, never the verdict. */
+  readonly isLinkGuest: boolean;
+  /** The payer's served spendable, from the snapshot that produced `options`. */
+  readonly payerSpendableNanoUsd: bigint;
+}
+
+/**
+ * The money refusal a LINK GUEST is shown. A guest holds no wallet, so every
+ * copy offering a payment path is a false path (§Notices 3), and the two
+ * conditions a guest can actually be in are distinguishable from the served
+ * figure alone: nothing was ever allocated to the link (zero), or the owner's
+ * funds cannot cover this turn (positive but short). Both actions point at the
+ * owner, which is the only person who can unblock the send.
+ */
+function guestMoneyRefusal(payerSpendableNanoUsd: bigint): NoticeReason {
+  return payerSpendableNanoUsd > 0n ? 'group_owner_funds_unavailable' : 'guest_no_group_budget';
+}
+
+function sendRefusalOf(inputs: SendRefusalInputs): NoticeReason | undefined {
+  const { options, heldNanoUsd, isTextTurn } = inputs;
   // E1 is the TEXT arm. The producer explicitly declines to price a non-text
   // modality (`modality_not_priceable`), so consuming its verdict there would
   // impose the text arm's gate on an arm that has no verdict yet — and this
@@ -310,7 +351,12 @@ function sendRefusalOf(
   if (options === undefined) return undefined;
   if (options.admissible.sendable) return undefined;
   const refusal = options.admissible.refusal;
-  if (refusal !== 'insufficient_funds' || !options.affordable.sendable) return refusal;
+  if (refusal !== 'insufficient_funds') return refusal;
+  // A guest's money refusal is re-voiced before the hold/length split: both of
+  // that split's outcomes are addressed to a wallet holder, and a guest is not
+  // one. The verdict is unchanged — only who is asked to act.
+  if (inputs.isLinkGuest) return guestMoneyRefusal(inputs.payerSpendableNanoUsd);
+  if (!options.affordable.sendable) return refusal;
   return heldNanoUsd > 0n ? 'funds_held_by_run' : 'prompt_too_long';
 }
 
@@ -319,7 +365,13 @@ function computePromptBudgetDisplay(inputs: PromptBudgetDisplayInputs): PromptBu
   const isDenied = inputs.fundingSource === 'denied';
   const isBillingLoading =
     inputs.isBalanceLoading || (inputs.isGroupMember && inputs.isGroupBudgetPending);
-  const sendRefusal = sendRefusalOf(inputs.turnOptions, inputs.heldNanoUsd, inputs.isTextTurn);
+  const sendRefusal = sendRefusalOf({
+    options: inputs.turnOptions,
+    heldNanoUsd: inputs.heldNanoUsd,
+    isTextTurn: inputs.isTextTurn,
+    isLinkGuest: inputs.isLinkGuest,
+    payerSpendableNanoUsd: inputs.payerSpendableNanoUsd,
+  });
   const hasBlockingError =
     isDenied || isOverCapacity || isBillingLoading || sendRefusal !== undefined;
   const hasContent = inputs.inputValue.trim().length > 0;
@@ -468,7 +520,14 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
   const modelContextLength = Math.min(...modelsPricing.map((m) => m.contextLength));
   const isAuthenticated = !isSessionPending && Boolean(session?.user);
   const customInstructions = useAuthStore((s) => s.customInstructions);
-  const isGroupMember = resolveIsGroupMember(input.conversationId, input.currentUserPrivilege);
+  // The SENDER's tier. It answers who is sending — never what funds the turn,
+  // which the served snapshot's `payerTier` answers (BILLING §User Tiers).
+  const isLinkGuest = useUserTierInfo(isAuthenticated).tier === 'guest';
+  const isGroupMember = resolveIsGroupMember(
+    input.conversationId,
+    input.currentUserPrivilege,
+    isLinkGuest
+  );
 
   const { data: groupBudgetData, isPending: isGroupBudgetPending } = useConversationBudgets(
     resolveGroupBudgetArgument(isGroupMember, input.conversationId)
@@ -544,6 +603,7 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
       estimatedCostNanoUsd,
       isPremiumModel,
       isAuthenticated,
+      conversationId: conversationScope(input.conversationId),
     })
   );
   const billingResult = withServedPayer(selfFundedResult, turnOptions.payer, isGroupMember);
@@ -581,6 +641,8 @@ export function usePromptBudget(input: PromptBudgetInput): PromptBudgetResult {
     turnOptions: turnOptions.options,
     heldNanoUsd: turnOptions.heldNanoUsd,
     isTextTurn: activeModality === 'text',
+    isLinkGuest,
+    payerSpendableNanoUsd: turnOptions.payerSpendableNanoUsd,
   });
 
   const isReadOnly = input.currentUserPrivilege === 'read';

@@ -324,6 +324,35 @@ describe('useConversation', () => {
   });
 });
 
+/** A settled assistant history row whose only variable is the served level. */
+function historyMessageWithLevel(reasoningEffort: string | null): unknown {
+  return {
+    id: 'msg-ai',
+    parentMessageId: null,
+    sequenceNumber: 0,
+    epochNumber: 1,
+    senderType: 'assistant',
+    senderId: null,
+    wrappedContentKey: 'wrap-1',
+    batchId: 'batch-1',
+    contentItems: [
+      {
+        id: 'ci-ai',
+        position: 0,
+        contentType: 'text',
+        mimeType: null,
+        byteLength: 20,
+        encryptedBlob: 'blob-ai',
+        modelName: 'anthropic/claude',
+        cost: '1360000',
+        isSmartModel: false,
+        reasoningTokens: 1204,
+        reasoningEffort,
+      },
+    ],
+  };
+}
+
 describe('useMessages', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -542,6 +571,51 @@ describe('useMessages', () => {
     });
 
     expect(result.current.data?.[0]?.contentItems[0]?.reasoningTokens).toBeUndefined();
+  });
+
+  it('maps the persisted reasoning level from the wire', async () => {
+    mockFetchJson.mockResolvedValueOnce({
+      messages: [historyMessageWithLevel('high')],
+      nextCursor: null,
+    });
+
+    const { result } = renderHook(() => useMessages('conv-1'), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(result.current.data?.[0]?.contentItems[0]?.reasoningEffort).toBe('high');
+  });
+
+  it('keeps an off reasoning level rather than dropping it', async () => {
+    mockFetchJson.mockResolvedValueOnce({
+      messages: [historyMessageWithLevel('off')],
+      nextCursor: null,
+    });
+
+    const { result } = renderHook(() => useMessages('conv-1'), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(result.current.data?.[0]?.contentItems[0]?.reasoningEffort).toBe('off');
+  });
+
+  it('drops a null wire reasoning level (field stays absent)', async () => {
+    mockFetchJson.mockResolvedValueOnce({
+      messages: [historyMessageWithLevel(null)],
+      nextCursor: null,
+    });
+
+    const { result } = renderHook(() => useMessages('conv-1'), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(result.current.data?.[0]?.contentItems[0]?.reasoningEffort).toBeUndefined();
   });
 
   it('maps persisted pixel dimensions and duration for a media content item', async () => {

@@ -57,6 +57,8 @@ export {
   setMemberBudgetBodySchema,
 } from './budgets.js';
 export type { BudgetBilling, ConversationBudgetsView, SetBudgetOutcome } from './budgets.js';
+export { getGuestFunding, guestFundingViewSchema } from './guest-funding.js';
+export type { GuestFundingDeps, GuestFundingView } from './guest-funding.js';
 export { evictPrincipals } from './eviction.js';
 export { broadcastForkCreated, broadcastForkDeleted, broadcastForkRenamed } from './fork-events.js';
 export {

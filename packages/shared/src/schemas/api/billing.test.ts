@@ -262,13 +262,13 @@ describe('getSpendableResponseSchema', () => {
     const parsed = getSpendableResponseSchema.parse({
       spendableNanoUsd: '-100000000',
       heldNanoUsd: '250000000',
-      tier: 'paid',
+      payerTier: 'paid',
       payer: 'self',
     });
     expect(parsed).toEqual({
       spendableNanoUsd: '-100000000',
       heldNanoUsd: '250000000',
-      tier: 'paid',
+      payerTier: 'paid',
       payer: 'self',
     });
   });
@@ -276,14 +276,14 @@ describe('getSpendableResponseSchema', () => {
   it('carries the two money fields plus the payer identity that priced them', () => {
     expect(
       Object.keys(getSpendableResponseSchema.shape).toSorted((a, b) => a.localeCompare(b))
-    ).toEqual(['heldNanoUsd', 'payer', 'spendableNanoUsd', 'tier']);
+    ).toEqual(['heldNanoUsd', 'payer', 'payerTier', 'spendableNanoUsd']);
   });
 
   it('accepts the owner payer an owner-funded group turn serves', () => {
     const parsed = getSpendableResponseSchema.parse({
       spendableNanoUsd: '1000',
       heldNanoUsd: '0',
-      tier: 'paid',
+      payerTier: 'paid',
       payer: 'owner',
     });
     expect(parsed.payer).toBe('owner');
@@ -294,18 +294,18 @@ describe('getSpendableResponseSchema', () => {
       getSpendableResponseSchema.safeParse({
         spendableNanoUsd: '1000',
         heldNanoUsd: '0',
-        tier: 'paid',
+        payerTier: 'paid',
         payer: 'sender',
       }).success
     ).toBe(false);
   });
 
-  it('rejects a tier outside the shared tier vocabulary', () => {
+  it('rejects a payer tier outside the shared tier vocabulary', () => {
     expect(
       getSpendableResponseSchema.safeParse({
         spendableNanoUsd: '1000',
         heldNanoUsd: '0',
-        tier: 'premium',
+        payerTier: 'premium',
         payer: 'self',
       }).success
     ).toBe(false);

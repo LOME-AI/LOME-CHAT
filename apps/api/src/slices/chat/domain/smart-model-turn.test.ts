@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { ERROR_CODES, nanoUSD, PAID_CUSHION_NANO_USD } from '@hushbox/shared';
 import { MINIMUM_OUTPUT_TOKENS } from '@hushbox/shared/affordability/constants';
+import { classifierReserveLineItems } from '@hushbox/shared/affordability/estimate/smart-model-affordability';
 import { REASONING_BUDGET_TOKENS_BY_EFFORT } from '@hushbox/shared/affordability/estimate/reasoning-plan';
+import { reservationCeiling } from '@hushbox/shared/affordability/estimate/reducers';
 import {
   createTurnCompileRegistries,
   promptInputTokensFor,
@@ -23,6 +25,7 @@ import {
   estimateRunCeilingNanoUsd,
   snapshotResolver,
 } from '../../models/index.js';
+import type { AutoEffortTurnBuild } from './smart-model-turn.js';
 import type { TurnBudget } from './turn-definition.js';
 import type { ModelPricingResolver } from '../../models/index.js';
 import type { ModelDescriptor, WorkflowDefinition } from '@hushbox/shared';
@@ -640,7 +643,12 @@ describe('compileAutoEffortTurn (pinned model + auto effort)', () => {
     model: string,
     turnBudget: TurnBudget
   ): WorkflowDefinition {
-    const build = compileAutoEffortTurn(catalog, model, turnBudget)._unsafeUnwrap();
+    const build = compileAutoEffortTurn(
+      catalog,
+      model,
+      turnBudget,
+      CHAT_TURN_HOOKS
+    )._unsafeUnwrap();
     if (build.kind !== 'built') throw new Error(`expected a built turn, got '${build.kind}'`);
     return build.definition;
   }
@@ -698,7 +706,12 @@ describe('compileAutoEffortTurn (pinned model + auto effort)', () => {
   it('falls back when the pinned model has no context length (no pricing basis for the cap)', () => {
     const capless = { ...pinned, id: 'capless-model', limits: {} };
     expect(
-      compileAutoEffortTurn([capless, cheapText], 'capless-model', budget)._unsafeUnwrap()
+      compileAutoEffortTurn(
+        [capless, cheapText],
+        'capless-model',
+        budget,
+        CHAT_TURN_HOOKS
+      )._unsafeUnwrap()
     ).toEqual({ kind: 'fallback' });
   });
 
@@ -712,7 +725,12 @@ describe('compileAutoEffortTurn (pinned model + auto effort)', () => {
       reasoning: { supportedEfforts: ['only'], mandatory: true },
     };
     expect(
-      compileAutoEffortTurn([mandatory, cheapText], 'mandatory-model', budget)._unsafeUnwrap()
+      compileAutoEffortTurn(
+        [mandatory, cheapText],
+        'mandatory-model',
+        budget,
+        CHAT_TURN_HOOKS
+      )._unsafeUnwrap()
     ).toEqual({ kind: 'fallback' });
   });
 
@@ -720,22 +738,34 @@ describe('compileAutoEffortTurn (pinned model + auto effort)', () => {
     // Exactly one option (Min) ⇒ the deterministic pick belongs to the regular
     // path; building a classifier here would charge for a settled question.
     const minOnly = { ...pinned, id: 'min-only', reasoning: { supportedEfforts: ['none'] } };
-    expect(compileAutoEffortTurn([minOnly, cheapText], 'min-only', budget)._unsafeUnwrap()).toEqual(
-      {
-        kind: 'fallback',
-      }
-    );
+    expect(
+      compileAutoEffortTurn(
+        [minOnly, cheapText],
+        'min-only',
+        budget,
+        CHAT_TURN_HOOKS
+      )._unsafeUnwrap()
+    ).toEqual({
+      kind: 'fallback',
+    });
   });
 
   it('falls back for a non-reasoning pinned model (regular path owns it)', () => {
     const plain = { ...descriptorFor('plain-model') };
     expect(
-      compileAutoEffortTurn([plain, cheapText], 'plain-model', budget)._unsafeUnwrap()
+      compileAutoEffortTurn(
+        [plain, cheapText],
+        'plain-model',
+        budget,
+        CHAT_TURN_HOOKS
+      )._unsafeUnwrap()
     ).toEqual({ kind: 'fallback' });
   });
 
   it('falls back for a model unknown to the catalog', () => {
-    expect(compileAutoEffortTurn([cheapText], 'ghost-model', budget)._unsafeUnwrap()).toEqual({
+    expect(
+      compileAutoEffortTurn([cheapText], 'ghost-model', budget, CHAT_TURN_HOOKS)._unsafeUnwrap()
+    ).toEqual({
       kind: 'fallback',
     });
   });
@@ -744,20 +774,179 @@ describe('compileAutoEffortTurn (pinned model + auto effort)', () => {
     // BILLING §Effort 5/8d: no priceable engine ⇒ a typed refusal, never a
     // silent static pick; explicit levels stay usable.
     const rateless = { ...pinned, id: 'rateless-model', pricing: {} };
-    const error = compileAutoEffortTurn([rateless], 'rateless-model', budget)._unsafeUnwrapErr();
+    const error = compileAutoEffortTurn(
+      [rateless],
+      'rateless-model',
+      budget,
+      CHAT_TURN_HOOKS
+    )._unsafeUnwrapErr();
     expect(error.code).toBe('unavailable');
     expect(error.wireCode).toBe(ERROR_CODES.CLASSIFIER_UNAVAILABLE);
   });
 
-  it('falls back when no reasoning level leaves answer headroom under the budget', () => {
-    // Free funding carries no cushion, so a 1-nano budget affords no level.
+  it('reports a budget that cannot fund the minimum classified turn as unaffordable', () => {
+    // Free funding carries no cushion, so a 1-nano budget affords no level. The
+    // outcome is distinct from `fallback`: nothing about the turn is settled, the
+    // money simply is not there — and the trial arm has no balance gate behind it
+    // to catch that, so it must be able to tell the two apart.
     const broke = {
       promptCharacterCount: 40,
       funding: { kind: 'free' as const, remainingNanoUsd: nanoUSD(1n) },
     };
     expect(
-      compileAutoEffortTurn([pinned, cheapText], 'pinned-model', broke)._unsafeUnwrap()
-    ).toEqual({ kind: 'fallback' });
+      compileAutoEffortTurn(
+        [pinned, cheapText],
+        'pinned-model',
+        broke,
+        CHAT_TURN_HOOKS
+      )._unsafeUnwrap()
+    ).toEqual({ kind: 'unaffordable' });
+  });
+});
+
+describe('compileAutoEffortTurn on the trial policy', () => {
+  // A trial turn runs the SAME pinned+auto compiler as a paid one — §Reasoning
+  // Effort 5 forbids a static fallback on any tier — under the no-persist,
+  // no-charge policy and against the fixed per-message ceiling that stands in
+  // for a wallet (§Trial Usage).
+  const TRIAL_CEILING_NANO = 10_000_000n;
+  const budget: TurnBudget = {
+    promptCharacterCount: 40,
+    funding: { kind: 'free', remainingNanoUsd: nanoUSD(TRIAL_CEILING_NANO) },
+  };
+  /** The 1¢ ceiling covers a minimum answer at these rates but not the reserve too. */
+  const dearOutput = reasoningDescriptor('trial/dear-output', 1000n, 3000n, 1_000_000);
+  /** Cheap enough that the classified turn fits, so the priced shape is inspectable. */
+  const cheap = reasoningDescriptor('trial/cheap', 2n, 3n, 1_000_000);
+
+  function compileTrial(catalog: readonly ModelDescriptor[], model: string): AutoEffortTurnBuild {
+    return compileAutoEffortTurn(catalog, model, budget, TRIAL_TURN_HOOKS)._unsafeUnwrap();
+  }
+
+  it('reports a model whose classifier reserve overruns the ceiling as unaffordable', () => {
+    // The model is the only priceable row, so it is also the classifier engine and
+    // the reserve is priced at its own rates. The companion below shows the answer
+    // alone fits the same ceiling, so it is the reserve that decides this.
+    expect(compileTrial([dearOutput], 'trial/dear-output')).toEqual({ kind: 'unaffordable' });
+  });
+
+  it('admits the same rates once the classifier is not bought', () => {
+    // The reserve-free half of the pair: a smartModel slot with no active
+    // dimension prices no reserve, and the minimum answer at those rates is
+    // inside the ceiling — so the refusal above is the reserve, not the answer.
+    const registries = createTurnCompileRegistries(snapshotResolver([dearOutput]));
+    const reserveFree = buildSmartModelTurn({
+      classifierModelId: dearOutput.id,
+      candidates: [{ id: dearOutput.id }],
+      classify: { model: false, effort: false },
+      answerCapTokens: MINIMUM_OUTPUT_TOKENS,
+      promptInputTokens: promptInputTokensFor(budget),
+      hooks: TRIAL_TURN_HOOKS,
+      nodes: registries.nodes,
+      constraints: registries.constraints,
+    })._unsafeUnwrap();
+    const priced = createEstimateRun(snapshotResolver([dearOutput]))(reserveFree)._unsafeUnwrap();
+    expect(priced).toBeLessThanOrEqual(TRIAL_CEILING_NANO);
+  });
+
+  it('carries the trial policy hooks onto the classified definition', () => {
+    const build = compileTrial([cheap], 'trial/cheap');
+    if (build.kind !== 'built') throw new Error(`expected a built turn, got '${build.kind}'`);
+    expect(build.definition.hooks).toEqual(TRIAL_TURN_HOOKS);
+  });
+
+  it('leaves the classified trial definition unstamped, so no storage is held', () => {
+    // A trial turn persists nothing, so stamping it would reserve storage that
+    // settlement can never bill — the whole reason the hooks are a parameter
+    // rather than the paid policy this compiler used to hardcode.
+    const build = compileTrial([cheap], 'trial/cheap');
+    if (build.kind !== 'built') throw new Error(`expected a built turn, got '${build.kind}'`);
+    expect(build.definition.storage).toBeUndefined();
+  });
+
+  it('opens the effort dimension on the single-candidate slot', () => {
+    const build = compileTrial([cheap], 'trial/cheap');
+    if (build.kind !== 'built') throw new Error(`expected a built turn, got '${build.kind}'`);
+    expect(build.definition.nodes[0]).toMatchObject({
+      type: 'smartModel',
+      candidates: [{ id: 'trial/cheap' }],
+      classify: { model: false, effort: true },
+    });
+  });
+
+  it('prices the classifier reserve into the admission estimate', () => {
+    // Deactivating the one declared dimension is the only difference between the
+    // two prices, so the delta IS the reserve — measured against the shared
+    // reserve line items rather than against a number copied out of the estimator.
+    const build = compileTrial([cheap], 'trial/cheap');
+    if (build.kind !== 'built') throw new Error(`expected a built turn, got '${build.kind}'`);
+    const estimate = createEstimateRun(snapshotResolver([cheap]));
+    const withoutClassifier = {
+      ...build.definition,
+      nodes: build.definition.nodes.map((node) =>
+        node.type === 'smartModel' ? { ...node, classify: { model: false, effort: false } } : node
+      ),
+    };
+    const items = classifierReserveLineItems(cheap, []);
+    if (items === undefined) throw new Error('expected priceable classifier line items');
+    const reserve = reservationCeiling(
+      { items: items.filter((item) => item.kind === 'provider') },
+      { outputTokenCeiling: 0n, fanOutWidth: 1, maxSteps: 1, maxIterations: 1 }
+    );
+    expect(reserve).toBeGreaterThan(0n);
+    expect(
+      estimate(build.definition)._unsafeUnwrap() - estimate(withoutClassifier)._unsafeUnwrap()
+    ).toBe(reserve);
+  });
+
+  // The compiler's three outcomes, ordered along ONE axis: the ceiling, the
+  // prompt, the ladder and the classifier engine are held fixed and only the
+  // answer model's output rate moves. That brackets the ladder outcome — a
+  // fitted cap that clears the minimum answer but buys no offered rung — between
+  // its two neighbours, so the outcome cannot be attributed to any of the
+  // compiler's earlier exits (they are rate-independent, and the built neighbour
+  // shows none of them fires on this fixture).
+  describe('the fitted cap measured against the model’s own rung ladder', () => {
+    /** The cheapest priceable row, so the classifier engine is the same one in all three. */
+    const engine = reasoningDescriptor('trial/engine', 1n, 1n, 1_000_000);
+    /** One answer model priced three ways; every other input is held fixed. */
+    const answerAt = (outputPerToken: bigint): ModelDescriptor =>
+      reasoningDescriptor('trial/answer', 2n, outputPerToken, 1_000_000);
+
+    it('falls back when the fitted cap buys no offered rung', () => {
+      // At this rate the 1¢ ceiling fits an answer cap that is past the
+      // minimum-answer floor but short of the cheapest rung's budget plus that
+      // same floor, so every rung the classifier could pick is out of reach.
+      // Whether abandoning the classifier here is a banned static fallback or a
+      // permitted single-choice pick is being ruled on elsewhere; this pins the
+      // outcome so it cannot change unobserved while that is decided.
+      //
+      // This rate is chosen so the fitted cap lands inside that bracket. If the
+      // ladder is retuned, re-place the rate to restore the bracket rather than
+      // delete the case: this is the only measurement of that arm, so dropping
+      // it un-pins the arm silently. Only this case is calibrated to the ladder
+      // — the built neighbour below asserts against the shared budget
+      // constants, so it follows a retune on its own. Lower a rung and the pair
+      // reddens on one side only, and it is this one: this side is the fixture,
+      // that side is the contract.
+      expect(compileTrial([answerAt(4000n), engine], 'trial/answer')).toEqual({ kind: 'fallback' });
+    });
+
+    it('builds the classified turn once the fitted cap covers the cheapest rung', () => {
+      const build = compileTrial([answerAt(3000n), engine], 'trial/answer');
+      if (build.kind !== 'built') throw new Error(`expected a built turn, got '${build.kind}'`);
+      const node = build.definition.nodes[0];
+      const cap = node?.type === 'smartModel' ? node.params['maxOutputTokens'] : undefined;
+      expect(cap as number).toBeGreaterThanOrEqual(
+        REASONING_BUDGET_TOKENS_BY_EFFORT.lite + MINIMUM_OUTPUT_TOKENS
+      );
+    });
+
+    it('reports unaffordable when the cap cannot reach the minimum answer', () => {
+      expect(compileTrial([answerAt(10_000n), engine], 'trial/answer')).toEqual({
+        kind: 'unaffordable',
+      });
+    });
   });
 });
 

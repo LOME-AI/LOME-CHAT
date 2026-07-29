@@ -51,6 +51,7 @@ import {
   forkParameterSchema,
   getConversation,
   getConversationBudgets,
+  getGuestFunding,
   getKeyChain,
   getKeyChainBatch,
   getMemberKeys,
@@ -981,6 +982,34 @@ export function createConversationsManifest(deps: ConversationsRouteDeps) {
               callerUserId: callerUserId(c.var.principal),
               now: new Date(),
             }
+          );
+          return respond200(c, result);
+        }
+      )
+      // The link guest's funding door. `/billing/spendable` is
+      // billing-token-classed and a guest presents no session, so the PAYER's
+      // snapshot — the conversation owner's, by §Group Funding 1 — is served
+      // here instead, from the same producer and in the same shape. `public` by
+      // necessity plus the in-handler credential gate every guest-reachable read
+      // uses; a full session is refused, because a caller with a wallet has its
+      // own door and one handler serving both principals is how a gate ends up
+      // written for only one of them.
+      .get(
+        '/:conversationId/funding',
+        routeClass('public'),
+        zValidator('param', conversationIdParameterSchema, rejectInvalid),
+        async (c) => {
+          const { conversationId } = c.req.valid('param');
+          const caller = await authorizeCaller(deps, c, conversationId);
+          if (caller instanceof Response) return caller;
+          const result = await getGuestFunding(
+            {
+              stores: deps.stores(c.var.db),
+              billing: deps.billing,
+              db: c.var.db,
+              redis: c.var.redis,
+            },
+            { conversationId, caller, now: new Date() }
           );
           return respond200(c, result);
         }

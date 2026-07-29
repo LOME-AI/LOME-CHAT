@@ -291,50 +291,114 @@ describe('isTurnClassifierNode', () => {
 });
 
 describe('consumedProducerIds', () => {
+  function edge(fromNode: string, fromPort: string, toNode: string, toPort: string): unknown {
+    return { from: { node: fromNode, port: fromPort }, to: { node: toNode, port: toPort } };
+  }
+
+  function definitionWith(
+    nodes: readonly unknown[],
+    edges: readonly unknown[]
+  ): WorkflowDefinition {
+    return WorkflowDefinition.parse({
+      version: 1,
+      deadlineClass: 'text',
+      hooks: { admission: 'chat', settlement: 'chat' },
+      nodes,
+      edges,
+    });
+  }
+
+  const classify = {
+    ...base,
+    id: 'classify',
+    type: 'modelCall',
+    model: 'cheap/model',
+    params: {},
+    in: { node: 'input', port: 'prompt' },
+  };
+
+  const decide = {
+    ...base,
+    id: 'decide',
+    type: 'fanIn',
+    reducer: 'decideTurn',
+    ins: [
+      { node: 'input', port: 'prompt' },
+      { node: 'classify', port: 'out' },
+    ],
+  };
+
+  const answer = {
+    ...base,
+    id: 'answer0',
+    type: 'modelCall',
+    model: 'big/model',
+    params: {},
+    in: { node: 'decide', port: 'out' },
+  };
+
   it('collects every node another node reads, and nothing else', () => {
-    const classify = Node.parse({
-      ...base,
-      id: 'classify',
-      type: 'modelCall',
-      model: 'cheap/model',
-      params: {},
-      in: { node: 'input', port: 'prompt' },
-    });
-    const answer = Node.parse({
-      ...base,
-      id: 'answer0',
-      type: 'modelCall',
-      model: 'big/model',
-      params: {},
-      in: { node: 'decide', port: 'out' },
-    });
-    const decide = Node.parse({
-      ...base,
-      id: 'decide',
-      type: 'fanIn',
-      reducer: 'decideTurn',
-      ins: [
-        { node: 'input', port: 'prompt' },
-        { node: 'classify', port: 'out' },
-      ],
-    });
+    const definition = definitionWith(
+      [classify, answer, decide],
+      [
+        edge('input', 'prompt', 'classify', 'in'),
+        edge('input', 'prompt', 'decide', 'in0'),
+        edge('classify', 'out', 'decide', 'in1'),
+        edge('decide', 'out', 'answer0', 'in'),
+      ]
+    );
+
     expect(
-      [...consumedProducerIds([classify, answer, decide])].toSorted((left, right) =>
-        left.localeCompare(right)
-      )
-    ).toEqual(['classify', 'decide', 'input']);
+      [...consumedProducerIds(definition)].toSorted((left, right) => left.localeCompare(right))
+    ).toEqual(['classify', 'decide']);
   });
 
-  it('collects a fanOut collection port', () => {
-    const spread = Node.parse({
+  it('collects a producer read through an edge its consumer declares no ref for', () => {
+    // A `branch` carries no embedded input ref, so the edge is the only record
+    // that it reads `classify` at all.
+    const route = { ...base, id: 'route', type: 'branch', predicate: 'p', cases: {}, else: 'end' };
+    const definition = definitionWith(
+      [classify, route],
+      [edge('input', 'prompt', 'classify', 'in'), edge('classify', 'out', 'route', 'in')]
+    );
+
+    expect([...consumedProducerIds(definition)]).toEqual(['classify']);
+  });
+
+  it('collects a fanOut collection port but not the body feed it reserves', () => {
+    const source = {
+      ...base,
+      id: 'source',
+      type: 'transform',
+      transform: 'split',
+      in: { node: 'input', port: 'prompt' },
+    };
+    const spread = {
       ...base,
       id: 'spread',
       type: 'fanOut',
       over: { node: 'source', port: 'out' },
       body: 'body',
       maxWidth: 3,
-    });
-    expect([...consumedProducerIds([spread])]).toEqual(['source']);
+    };
+    const body = {
+      ...base,
+      id: 'body',
+      type: 'modelCall',
+      model: 'cheap/model',
+      params: {},
+      in: { node: 'spread', port: 'element' },
+    };
+    const definition = definitionWith(
+      [source, spread, body],
+      [
+        edge('input', 'prompt', 'source', 'in'),
+        edge('source', 'out', 'spread', 'over'),
+        edge('spread', 'element', 'body', 'in'),
+      ]
+    );
+
+    expect([...consumedProducerIds(definition)]).toEqual(['source']);
   });
 });
 

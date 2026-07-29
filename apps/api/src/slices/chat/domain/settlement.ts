@@ -41,7 +41,6 @@ import type {
 import type { WrappedSecret } from '@hushbox/crypto';
 import type { DbWriter, SettlementTx } from '../../../lib/idempotency/index.js';
 import type { DomainError } from '../../../lib/errors/index.js';
-import type { ResultAsync } from '../../../lib/result/index.js';
 import type { ChatStores } from '../ports/stores.js';
 import type { PersistItem, PersistMediaItem, PersistMessageParams } from './message-write.js';
 
@@ -119,13 +118,10 @@ export interface ChatSettlementIdentity {
   readonly epochNumber: number;
   readonly walletId: string;
   /**
-   * The user account the run's usage is attributed to: the initiator for a user
-   * turn, the OWNER for a guest turn (a guest has no account). NEVER the guest's
-   * identity — that rides `sender`. Not necessarily the charged wallet's owner:
-   * an owner-funded member turn debits `walletId` (the owner's wallet) while
-   * this stays the member.
+   * The paying account — the owner of `walletId`, on every turn shape alike.
+   * Who SENT rides `sender`; the two diverge on any owner-funded turn.
    */
-  readonly userId: string;
+  readonly payerUserId: string;
   /**
    * The resolved SENDER principal (a member or a link guest, each carrying the
    * `conversation_members.id`). Present when the run-start body supplied it;
@@ -172,15 +168,13 @@ export interface ChatSettlementDeps {
   readonly stores: ChatStores;
   readonly billingStores: BillingStores;
   /**
-   * The run's funding decision, recovered ONCE per run OUTSIDE this settlement
-   * transaction (the caller reads wallet ownership before entering the fence)
-   * and threaded in as an already-in-flight `ResultAsync`. `true` ⟺ owner-funded
-   * (the owner's wallet paid; group spend accrues); `false` ⟺ solo or a personal
-   * fall-through (no group spend). Consumed here without opening a second
-   * connection mid-transaction; a read failure propagates and rolls the
-   * settlement back.
+   * The run's funding decision, derived ONCE per run by the caller from the run
+   * identity's payer and sender. `true` ⟺ owner-funded (the owner's wallet paid;
+   * group spend accrues); `false` ⟺ solo or a personal fall-through (no group
+   * spend). It reads nothing, so settlement consumes it without opening a second
+   * connection mid-transaction.
    */
-  readonly ownerFunded: ResultAsync<boolean, DomainError>;
+  readonly ownerFunded: boolean;
   readonly readEpochPublicKey: EpochPublicKeyReader;
   readonly now: () => Date;
   readonly newId: () => string;
@@ -300,38 +294,38 @@ async function persistTurnContent(
 /**
  * The membership-gate caller for the settlement's SENDER — a member by `userId`
  * or a link guest by `linkId` (carrying the conversation it acts in). A run-start
- * body that predates the discriminated `sender` falls back to the user path keyed
- * on the payer `userId` (byte-identical to the legacy single-principal turn).
+ * body that predates the discriminated `sender` is a self-funded single-principal
+ * turn, where the payer IS the sender, so the fallback keys on the payer.
  */
 function settlementCaller(identity: ChatSettlementIdentity): ConversationCaller {
   return identity.sender === undefined
-    ? { kind: 'user', userId: identity.userId }
+    ? { kind: 'user', userId: identity.payerUserId }
     : senderCaller(identity.sender, identity.conversationId);
 }
 
 /** The sender's principal id persisted as `messages.senderId` (linkId for a guest). */
 function settlementSenderId(identity: ChatSettlementIdentity): string {
-  return identity.sender === undefined ? identity.userId : senderPrincipalId(identity.sender);
+  return identity.sender === undefined ? identity.payerUserId : senderPrincipalId(identity.sender);
 }
 
 /**
  * The sender's own user id for the solo (sender-is-owner) check — a user sender's
- * userId (the flat fallback keeps the legacy single-principal turn), or
+ * userId (the flat fallback is the self-funded single-principal turn), or
  * `undefined` for a link guest (which holds no account and is never the owner).
  */
 function settlementSenderUserId(identity: ChatSettlementIdentity): string | undefined {
-  if (identity.sender === undefined) return identity.userId;
+  if (identity.sender === undefined) return identity.payerUserId;
   return identity.sender.kind === 'user' ? identity.sender.userId : undefined;
 }
 
 /**
  * The sender recorded on every billed row (`ChargeSender`), independent of the
  * payer: a member sender by userId, a link guest by linkId. The flat fallback
- * (no discriminated `sender`) is a solo turn — sender and payer are the same
- * user, so both columns attribute to `identity.userId`.
+ * (no discriminated `sender`) is a self-funded turn — sender and payer are the
+ * same user, so both columns name the payer.
  */
 function settlementChargeSender(identity: ChatSettlementIdentity): ChargeSender {
-  if (identity.sender === undefined) return { kind: 'user', userId: identity.userId };
+  if (identity.sender === undefined) return { kind: 'user', userId: identity.payerUserId };
   return identity.sender.kind === 'user'
     ? { kind: 'user', userId: identity.sender.userId }
     : { kind: 'linkGuest', linkId: identity.sender.linkId };
@@ -1048,11 +1042,10 @@ interface MemberBudgetAttribution {
  *   - a SOLO turn (sender is the owner — the owner funds and is not member-capped);
  *   - a PERSONAL fall-through group turn (the sender self-funded on their own
  *     wallet because the group headroom was ≤ 0 — no group spend is written).
- * Owner-funding is recovered ONCE per run from the payer wallet the route froze
- * (`deps.ownerFunded`, read outside this transaction and threaded in), so
- * attribution agrees with the payer and with the admission scopes by
- * construction — and no second connection opens mid-settlement. Two cases
- * attribute nothing:
+ * Owner-funding is derived ONCE per run from the run identity's payer and sender
+ * (`deps.ownerFunded`, threaded in), so attribution agrees with the payer and
+ * with the admission scopes by construction — and no second connection opens
+ * mid-settlement. Two cases attribute nothing:
  *   - a SOLO turn (a USER sender who owns the conversation — the owner funds and
  *     is not member-capped; a link guest is never the owner);
  *   - a PERSONAL fall-through group turn (`ownerFunded` false — the sender
@@ -1089,21 +1082,19 @@ function resolveMemberBudgetAttribution(
       if (senderUserId !== undefined && conversation.ownerUserId === senderUserId) {
         return okAsync<MemberBudgetAttribution | null, DomainError>(null);
       }
-      return deps.ownerFunded.andThen((ownerFunded) => {
-        // Personal fall-through: the sender self-funded on their own wallet, so
-        // no group spend is written.
-        if (!ownerFunded) {
-          return okAsync<MemberBudgetAttribution | null, DomainError>(null);
-        }
-        return resolveCallerMember(
-          conversationsStores,
-          conversationId,
-          settlementCaller(identity)
-        ).map((member) => {
-          /* v8 ignore next -- the epoch gate asserted active membership; a null member here is unreachable */
-          if (member === null) return null;
-          return { memberId: member.id, conversationId };
-        });
+      // Personal fall-through: the sender self-funded on their own wallet, so
+      // no group spend is written.
+      if (!deps.ownerFunded) {
+        return okAsync<MemberBudgetAttribution | null, DomainError>(null);
+      }
+      return resolveCallerMember(
+        conversationsStores,
+        conversationId,
+        settlementCaller(identity)
+      ).map((member) => {
+        /* v8 ignore next -- the epoch gate asserted active membership; a null member here is unreachable */
+        if (member === null) return null;
+        return { memberId: member.id, conversationId };
       });
     })
     .match(
@@ -1166,7 +1157,7 @@ export function createChatSettlementCommit(deps: ChatSettlementDeps): Settlement
       stores: deps.billingStores,
       context: {
         walletId: deps.identity.walletId,
-        userId: deps.identity.userId,
+        payerUserId: deps.identity.payerUserId,
         sender: settlementChargeSender(deps.identity),
         runId: deps.identity.runId,
         now: deps.now(),

@@ -23,6 +23,7 @@ const {
 // Keep the real router (createFileRoute must run for the route file); override only useNavigate.
 vi.mock('@/hooks/billing/use-spendable', () => ({
   useSpendable: () => ({ data: undefined, isPending: false }),
+  hasServedFunding: (isAuthenticated: boolean) => isAuthenticated,
 }));
 vi.mock('@/hooks/billing/use-turn-options', () => ({
   useTurnOptions: () => ({ isPending: false, options: { affordable: { all: [] } } }),

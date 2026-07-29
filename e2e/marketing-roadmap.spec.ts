@@ -93,10 +93,12 @@ test.describe('TTS model-download CSP', () => {
     // `blocked.invalid` is not in `connect-src`: the browser blocks the fetch at
     // CSP (before any network request) and raises a violation. `huggingface.co`
     // is in `connect-src`: it is permitted, so it raises no violation.
-    await page.evaluate(async () => {
+    // The browser context cannot close over a Node-side binding, so the host
+    // crosses into the page as an argument.
+    await page.evaluate(async (modelHost) => {
       await fetch('https://blocked.invalid/probe', { mode: 'no-cors' }).catch(() => null);
-      await fetch('https://huggingface.co/probe', { mode: 'no-cors' }).catch(() => null);
-    });
+      await fetch(`${modelHost}/probe`, { mode: 'no-cors' }).catch(() => null);
+    }, TTS_MODEL_HOST);
 
     await expect
       .poll(() =>
@@ -107,7 +109,7 @@ test.describe('TTS model-download CSP', () => {
     const blocked = await page.evaluate(
       () => (globalThis as unknown as { __cspBlocked: string[] }).__cspBlocked
     );
-    expect(blocked.some((uri) => uri.includes('huggingface.co'))).toBe(false);
+    expect(blocked.some((uri) => uri.includes(new URL(TTS_MODEL_HOST).host))).toBe(false);
   });
 });
 

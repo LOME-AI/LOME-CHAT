@@ -18,10 +18,12 @@ import type {
 
 /**
  * The billing usage-analytics read layer: a session-scoped, keyset-paginated
- * per-model spend breakdown over `usage_records`. The aggregation groups the
- * caller's rows by `modelId` (`SUM(cost)` + record/estimated counts). Money
- * stays nano-USD bigint here; the route serializes it as a NanoUSD string at
- * the JSON boundary.
+ * per-model spend breakdown over `usage_records`. The aggregation groups by
+ * `modelId` (`SUM(cost)` + record/estimated counts) the rows the caller PAID
+ * for — a turn someone else funded is that funder's spend, not the sender's,
+ * which is what keeps these totals reconcilable with the ledger history served
+ * beside them. Money stays nano-USD bigint here; the route serializes it as a
+ * NanoUSD string at the JSON boundary.
  */
 
 export const DEFAULT_USAGE_PAGE_LIMIT = 50;

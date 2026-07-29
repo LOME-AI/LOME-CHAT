@@ -51,7 +51,7 @@ afterAll(async () => {
     }
   }
   if (createdUserIds.length > 0) {
-    await db.delete(usageRecords).where(inArray(usageRecords.userId, createdUserIds));
+    await db.delete(usageRecords).where(inArray(usageRecords.payerUserId, createdUserIds));
     await db.delete(payments).where(inArray(payments.userId, createdUserIds));
     await db.delete(wallets).where(inArray(wallets.userId, createdUserIds));
   }
@@ -265,7 +265,7 @@ describe('seedUsageHistory', () => {
     const usageRows = await db
       .select({ costNanoUsd: usageRecords.costNanoUsd, createdAt: usageRecords.createdAt })
       .from(usageRecords)
-      .where(eq(usageRecords.userId, fixture.userId));
+      .where(eq(usageRecords.payerUserId, fixture.userId));
     expect(usageRows).toHaveLength(2);
     expect(usageRows.every((row) => row.createdAt.getTime() < Date.now())).toBe(true);
     expect(usageRows.reduce((sum, row) => sum + row.costNanoUsd, 0n)).toBe(totalCharged);
@@ -274,7 +274,7 @@ describe('seedUsageHistory', () => {
       .select({ usageRecordId: llmCompletions.usageRecordId })
       .from(llmCompletions)
       .innerJoin(usageRecords, eq(usageRecords.id, llmCompletions.usageRecordId))
-      .where(eq(usageRecords.userId, fixture.userId));
+      .where(eq(usageRecords.payerUserId, fixture.userId));
     expect(completionRows).toHaveLength(2);
 
     // Conservation: wallet balance == Σ its legs; and 14 deposited − charged.
@@ -397,7 +397,7 @@ describe('seed producers are idempotent', () => {
     const rows = await db
       .select({ generationId: usageRecords.generationId })
       .from(usageRecords)
-      .where(eq(usageRecords.userId, fixture.userId));
+      .where(eq(usageRecords.payerUserId, fixture.userId));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.generationId).toBe('gen-seed-1');
   });

@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PolicyHooks, nanoUSD, textTag } from '@hushbox/shared';
+import { END_NODE_ID, PolicyHooks, nanoUSD, textTag } from '@hushbox/shared';
 import { createEstimateRun } from '../../models/index.js';
 import { createServerTransformCompute } from '../../media/index.js';
 import { providerUsdToBillableNanoUsd } from '../../billing/index.js';
 import { InferenceError } from '../../models/index.js';
 import {
+  branch,
   buildWorkflow,
   createModelResolver,
   createNodeRegistry,
@@ -24,6 +25,7 @@ import type {
   InferenceRequest,
   ModelDescriptor,
   SettlementRequest,
+  WorkflowDefinition,
 } from '@hushbox/shared';
 import type { Telemetry } from '../../../lib/telemetry/index.js';
 import type { ModelPricingResolver, ModelProvider } from '../../models/index.js';
@@ -116,7 +118,75 @@ function grant(limit: bigint): EngineAdmissionDecision {
   };
 }
 
-function runSingleModelTurn(prompt: string): {
+/** The persisting-turn stamp: without it the estimator holds no storage at all. */
+const STORAGE_STAMP = { inputChars: 0, tier: 'free' } as const;
+
+/**
+ * A turn whose one model call is read by a `branch` and by nothing else. The
+ * branch carries no embedded input ref, so the edge is the only record of the
+ * consumption — the shape a definition-side walk over node refs cannot see.
+ */
+function branchFedTurn(): WorkflowDefinition {
+  const models = createModelResolver(pricingResolver);
+  const compute = createServerTransformCompute();
+  const registries = {
+    nodes: createNodeRegistry({ models, compute }),
+    constraints: createConstraintRegistry(DEFAULT_WORKFLOW_CAPABILITIES),
+  };
+  const inputs = workflowInputs({ prompt: textTag() });
+  const answer = modelCall({
+    id: 'answer',
+    model: 'answer-model',
+    accepts: textTag(),
+    in: inputs.ports.prompt,
+    produces: textTag(),
+  });
+  const route = branch({
+    id: 'route',
+    predicate: 'routeByFirstWord',
+    accepts: textTag(),
+    in: answer.out,
+    cases: {},
+    else: END_NODE_ID,
+  });
+  const built = buildWorkflow({
+    deadlineClass: 'text',
+    hooks: HOOKS,
+    inputs,
+    nodes: [answer, route],
+    registries,
+  })._unsafeUnwrap();
+  return { ...built.definition, storage: STORAGE_STAMP };
+}
+
+function singleModelTurn(): WorkflowDefinition {
+  const models = createModelResolver(pricingResolver);
+  const compute = createServerTransformCompute();
+  const registries = {
+    nodes: createNodeRegistry({ models, compute }),
+    constraints: createConstraintRegistry(DEFAULT_WORKFLOW_CAPABILITIES),
+  };
+  const inputs = workflowInputs({ prompt: textTag() });
+  const answer = modelCall({
+    id: 'answer',
+    model: 'answer-model',
+    accepts: textTag(),
+    in: inputs.ports.prompt,
+    produces: textTag(),
+  });
+  return buildWorkflow({
+    deadlineClass: 'text',
+    hooks: HOOKS,
+    inputs,
+    nodes: [answer],
+    registries,
+  })._unsafeUnwrap().definition;
+}
+
+function runTurn(
+  definition: WorkflowDefinition,
+  prompt: string
+): {
   readonly done: Promise<{ readonly outcome: string }>;
   readonly settlements: SettlementRequest[];
 } {
@@ -126,22 +196,6 @@ function runSingleModelTurn(prompt: string): {
   const nodes = createNodeRegistry({ models, compute });
   const constraints = createConstraintRegistry(DEFAULT_WORKFLOW_CAPABILITIES);
   const registries = { nodes, constraints };
-
-  const inputs = workflowInputs({ prompt: textTag() });
-  const answer = modelCall({
-    id: 'answer',
-    model: 'answer-model',
-    accepts: textTag(),
-    in: inputs.ports.prompt,
-    produces: textTag(),
-  });
-  const definition = buildWorkflow({
-    deadlineClass: 'text',
-    hooks: HOOKS,
-    inputs,
-    nodes: [answer],
-    registries,
-  })._unsafeUnwrap().definition;
 
   const execution = createLiveExecutionRegistry({
     provider,
@@ -181,7 +235,7 @@ function runSingleModelTurn(prompt: string): {
 
 describe('workflow executor constructed from production factories', () => {
   it('runs a single-modelCall text turn to a value and a base-cost charge', async () => {
-    const run = runSingleModelTurn('hello');
+    const run = runTurn(singleModelTurn(), 'hello');
     await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
     expect(run.settlements[0]?.outputs).toEqual({ answer: { kind: 'text', text: 'echo:hello' } });
     expect(run.settlements[0]?.charges).toEqual([
@@ -196,5 +250,34 @@ describe('workflow executor constructed from production factories', () => {
         tokens: { inputTokens: 1, outputTokens: 1, reasoningTokens: 0, cachedInputTokens: 0 },
       },
     ]);
+  });
+
+  /**
+   * The reserve and the persisted set are one value. The estimator and the
+   * engine are handed the SAME definition here, and the only thing that decides
+   * both answers is the consumed set compile derived from it — so a reserve
+   * covering a value the run cannot persist, or a persisted value nothing
+   * reserved, would have to disagree with itself.
+   */
+  it('holds no output storage for the value its own run does not persist', async () => {
+    const definition = branchFedTurn();
+
+    const run = runTurn(definition, 'hello');
+    await expect(run.done).resolves.toEqual({ outcome: 'succeeded' });
+    // Nothing rests: the branch reads the answer, and a branch is never a sink.
+    expect(run.settlements[0]?.outputs).toEqual({});
+
+    const reserved = createEstimateRun(pricingResolver)(definition)._unsafeUnwrap();
+    const unread = createEstimateRun(pricingResolver)({
+      ...definition,
+      nodes: definition.nodes.filter((node) => node.type !== 'branch'),
+      edges: definition.edges.filter((edge) => edge.to.node !== 'route'),
+    })._unsafeUnwrap();
+
+    // Exact, not generous — and exact still covers a bill of nothing. Dropping
+    // the branch makes the answer a sink again, and the reserve grows by the
+    // storage that persisting it would cost.
+    expect(reserved).toBeLessThan(unread);
+    expect(run.settlements[0]?.charges.length).toBe(1);
   });
 });

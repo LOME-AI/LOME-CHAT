@@ -425,7 +425,7 @@ describe('GET /billing/spendable', () => {
   interface SpendableBody {
     spendableNanoUsd: string;
     heldNanoUsd: string;
-    tier: string;
+    payerTier: string;
     payer: string;
   }
 
@@ -491,11 +491,11 @@ describe('GET /billing/spendable', () => {
     expect(Object.keys(body).toSorted((a, b) => a.localeCompare(b))).toEqual([
       'heldNanoUsd',
       'payer',
+      'payerTier',
       'spendableNanoUsd',
-      'tier',
     ]);
     expect(body.payer).toBe('self');
-    expect(body.tier).toBe('paid');
+    expect(body.payerTier).toBe('paid');
     await cleanupWalletKeys(walletId);
   });
 
@@ -507,7 +507,7 @@ describe('GET /billing/spendable', () => {
     });
     expect(res.status).toBe(200);
     const body = await spendableBody(res);
-    expect(body.tier).toBe('free');
+    expect(body.payerTier).toBe('free');
     // A free payer draws the daily allowance, never the paid cushion: this is
     // the whole funding number the composer needs, from one endpoint.
     expect(body.spendableNanoUsd).toBe(DAILY_ALLOWANCE_NANO_USD.toString(10));
@@ -553,7 +553,7 @@ describe('GET /billing/spendable', () => {
     // The member dimension binds: $0.90 cap − $0.10 spent.
     expect(body.spendableNanoUsd).toBe('800000000');
     expect(body.payer).toBe('owner');
-    expect(body.tier).toBe('paid');
+    expect(body.payerTier).toBe('paid');
     await cleanupWalletKeys(ownerWalletId);
   });
 
@@ -631,7 +631,7 @@ describe('GET /billing/usage', () => {
     isEstimated: boolean
   ): Promise<void> {
     await db.insert(usageRecords).values({
-      userId,
+      payerUserId: userId,
       runId: crypto.randomUUID(),
       modelId,
       providerName: 'billing-routes-usage-provider',

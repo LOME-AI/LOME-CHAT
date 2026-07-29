@@ -4,6 +4,7 @@ import {
   shortenModelName,
   friendlyErrorMessage,
   parseReasoningText,
+  REASONING_EFFORT_LABELS,
   stageLabel,
   TEST_IDS,
 } from '@hushbox/shared';
@@ -620,6 +621,31 @@ function shouldRenderAIMessageNametag(message: Message, isStreaming: boolean | u
   return (message.mediaItems?.length ?? 0) > 0;
 }
 
+/**
+ * One badge sitting beside the model name (Smart routing, reasoning effort).
+ * Shared so every nametag badge is the same chip rather than a copy of its
+ * classes.
+ */
+function NametagChip({
+  testId,
+  title,
+  children,
+}: Readonly<{
+  testId: string;
+  title: string;
+  children: React.ReactNode;
+}>): React.JSX.Element {
+  return (
+    <span
+      data-testid={testId}
+      className="border-border text-muted-foreground inline-block rounded border px-1.5 py-0.5 text-[10px] tracking-wide uppercase"
+      title={title}
+    >
+      {children}
+    </span>
+  );
+}
+
 function AIMessageNametag({
   primaryMessage,
   modelName,
@@ -663,13 +689,20 @@ function AIMessageNametag({
         {nametagText}
       </span>
       {primaryMessage.isSmartModel && (
-        <span
-          data-testid={TEST_IDS.smartModelChip}
-          className="border-border text-muted-foreground inline-block rounded border px-1.5 py-0.5 text-[10px] tracking-wide uppercase"
+        <NametagChip
+          testId={TEST_IDS.smartModelChip}
           title="This response was routed by Smart Model"
         >
           Smart
-        </span>
+        </NametagChip>
+      )}
+      {primaryMessage.reasoningEffort !== undefined && (
+        <NametagChip
+          testId={TEST_IDS.messageEffortChip}
+          title={`This response ran at ${REASONING_EFFORT_LABELS[primaryMessage.reasoningEffort]} reasoning effort`}
+        >
+          {REASONING_EFFORT_LABELS[primaryMessage.reasoningEffort]}
+        </NametagChip>
       )}
       <TtsStopButton messageId={primaryMessage.id} />
     </span>

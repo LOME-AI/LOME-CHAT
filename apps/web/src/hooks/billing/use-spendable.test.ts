@@ -14,8 +14,19 @@ vi.mock('@/lib/api-client.js', () => ({
     billing: {
       spendable: { $get: vi.fn() },
     },
+    conversations: {
+      ':conversationId': { funding: { $get: vi.fn() } },
+    },
   },
   fetchJson: vi.fn(),
+}));
+
+const { mockLinkGuest } = vi.hoisted(() => ({
+  mockLinkGuest: { current: null as string | null },
+}));
+
+vi.mock('@/lib/link-guest-auth.js', () => ({
+  getLinkGuestAuth: () => mockLinkGuest.current,
 }));
 
 import { useSession } from '@/lib/auth';
@@ -71,6 +82,7 @@ describe('useSpendable', () => {
     mockedUseSession.mockReturnValue({
       data: { user: { id: 'user-1' } },
     } as unknown as ReturnType<typeof useSession>);
+    mockLinkGuest.current = null;
   });
 
   afterEach(() => {
@@ -81,7 +93,7 @@ describe('useSpendable', () => {
     const response = {
       spendableNanoUsd: '1500000000',
       heldNanoUsd: '300000000',
-      tier: 'paid',
+      payerTier: 'paid',
       payer: 'self',
     };
     mockedFetchJson.mockResolvedValue(response);
@@ -98,7 +110,7 @@ describe('useSpendable', () => {
     mockedFetchJson.mockResolvedValue({
       spendableNanoUsd: '1',
       heldNanoUsd: '0',
-      tier: 'paid',
+      payerTier: 'paid',
       payer: 'self',
     });
 
@@ -114,7 +126,7 @@ describe('useSpendable', () => {
     mockedFetchJson.mockResolvedValue({
       spendableNanoUsd: '800000000',
       heldNanoUsd: '0',
-      tier: 'paid',
+      payerTier: 'paid',
       payer: 'owner',
     });
 
@@ -136,7 +148,7 @@ describe('useSpendable', () => {
     mockedFetchJson.mockResolvedValue({
       spendableNanoUsd: '800000000',
       heldNanoUsd: '0',
-      tier: 'paid',
+      payerTier: 'paid',
       payer: 'owner',
     });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -159,7 +171,7 @@ describe('useSpendable', () => {
     mockedFetchJson.mockResolvedValue({
       spendableNanoUsd: '1',
       heldNanoUsd: '0',
-      tier: 'paid',
+      payerTier: 'paid',
       payer: 'self',
     });
     const wrapper = createWrapper();
@@ -176,12 +188,46 @@ describe('useSpendable', () => {
     expect(mockedClient.billing.spendable.$get).toHaveBeenCalledTimes(2);
   });
 
-  it('does not fetch for an unauthenticated (trial/guest) user — no endpoint exists for them', () => {
+  it('does not fetch for a trial user — no funding door exists for them', () => {
     mockedUseSession.mockReturnValue({ data: null } as unknown as ReturnType<typeof useSession>);
 
     const { result } = renderHook(() => useSpendable(), { wrapper: createWrapper() });
 
     expect(result.current.data).toBeUndefined();
     expect(mockedFetchJson).not.toHaveBeenCalled();
+  });
+
+  describe("the link guest's door", () => {
+    beforeEach(() => {
+      mockedUseSession.mockReturnValue({ data: null } as unknown as ReturnType<typeof useSession>);
+      mockLinkGuest.current = 'link-public-key';
+    });
+
+    it("reads the payer's snapshot from the conversation, never the billing-token route", async () => {
+      const response = {
+        spendableNanoUsd: '900000000',
+        heldNanoUsd: '0',
+        payerTier: 'paid',
+        payer: 'owner',
+      };
+      mockedFetchJson.mockResolvedValue(response);
+
+      const { result } = renderHook(() => useSpendable('conv-9'), { wrapper: createWrapper() });
+
+      await waitFor(() => {
+        expect(result.current.data).toEqual(response);
+      });
+      expect(mockedClient.conversations[':conversationId'].funding.$get).toHaveBeenCalledWith({
+        param: { conversationId: 'conv-9' },
+      });
+      expect(mockedClient.billing.spendable.$get).not.toHaveBeenCalled();
+    });
+
+    it('does not fetch outside a conversation — a guest has no payer without one', () => {
+      const { result } = renderHook(() => useSpendable(), { wrapper: createWrapper() });
+
+      expect(result.current.data).toBeUndefined();
+      expect(mockedFetchJson).not.toHaveBeenCalled();
+    });
   });
 });

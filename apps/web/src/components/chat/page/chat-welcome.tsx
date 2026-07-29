@@ -83,7 +83,8 @@ export function ChatWelcome({
   const activeModality = useModelStore((state) => state.activeModality);
   const selectedModels = useModelStore((state) => state.selections[state.activeModality]);
   const setActiveModality = useModelStore((state) => state.setActiveModality);
-  useResolveDefaultModel(activeModality);
+  // The welcome screen precedes any conversation, so the payer is the caller.
+  useResolveDefaultModel(activeModality, null);
   const webSearch = useWebSearch();
   const selectModality = React.useCallback(
     (modality: ChatModality): void => {
