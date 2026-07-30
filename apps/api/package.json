@@ -28,7 +28,7 @@
     "ai": "^6.0.203",
     "aws4fetch": "^1.0.20",
     "cockatiel": "^4.0.0",
-    "hono": "^4.12.25",
+    "hono": "^4.12.27",
     "iron-session": "^8.0.4",
     "jose": "^6.2.3",
     "marked": "^18.0.5",
@@ -41,7 +41,7 @@
     "@cloudflare/workers-types": "^4.20260612.1",
     "@hushbox/config": "workspace:*",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.8",
+    "vitest": "^4.1.10",
     "wrangler": "^4.100.0"
   }
 }
