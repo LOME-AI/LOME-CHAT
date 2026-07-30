@@ -1,5 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateEnvFiles, updateWorkflows, parseArgs, escapeEnvValue } from './generate-env.js';
@@ -11,6 +21,8 @@ const TEST_DIR_CI = path.resolve(__dirname, '__test-fixtures-ci__');
 const TEST_DIR_EDGE = path.resolve(__dirname, '__test-fixtures-edge__');
 
 describe('generateEnvFiles', () => {
+  const originalTemporaryDirectory = process.env['TMPDIR'];
+
   beforeEach(() => {
     mkdirSync(TEST_DIR_ENV, { recursive: true });
     mkdirSync(path.join(TEST_DIR_ENV, 'apps/api'), { recursive: true });
@@ -33,7 +45,15 @@ local_protocol = "http"
   });
 
   afterEach(() => {
+    // The write-behaviour tests revoke write permission on the fixture, and
+    // removal needs it back.
+    for (const relative of ['apps/api', '.']) {
+      const directory = path.join(TEST_DIR_ENV, relative);
+      if (existsSync(directory)) chmodSync(directory, 0o755);
+    }
     rmSync(TEST_DIR_ENV, { recursive: true, force: true });
+    if (originalTemporaryDirectory === undefined) delete process.env['TMPDIR'];
+    else process.env['TMPDIR'] = originalTemporaryDirectory;
     vi.restoreAllMocks();
   });
 
@@ -466,6 +486,127 @@ local_protocol = "http"
       expect(devVariables['FCM_SERVICE_ACCOUNT_JSON_CI']).toBe(
         '{"client_email":"t","private_key":"k"}'
       );
+    });
+  });
+
+  describe('write behaviour', () => {
+    const GENERATED = ['.env.development', '.env.scripts', 'apps/api/.dev.vars'] as const;
+
+    const identity = (relative: string): { ino: bigint; mtimeNs: bigint } => {
+      const stats = statSync(path.join(TEST_DIR_ENV, relative), { bigint: true });
+      return { ino: stats.ino, mtimeNs: stats.mtimeNs };
+    };
+
+    // Rewriting identical bytes does move mtime, but only by the filesystem's
+    // resolution (measured ~1 ms here), so two writes in one tick share a
+    // timestamp. Backdating the target first makes any write detectable by a
+    // minute instead of by a tick, independently of how fast the run is.
+    const backdate = (relative: string): void => {
+      const aged = new Date(Date.now() - 60_000);
+      utimesSync(path.join(TEST_DIR_ENV, relative), aged, aged);
+    };
+
+    it('attempts no write at all when the generated content already matches disk', () => {
+      generateEnvFiles(TEST_DIR_ENV);
+      for (const relative of GENERATED) backdate(relative);
+      const before = GENERATED.map((relative) => identity(relative));
+
+      // Revoking write permission on both the files and their directories makes
+      // every write form fail: truncate-in-place needs the file writable, and a
+      // temp-then-rename needs the directory writable. wrangler.toml stays
+      // writable because its unconditional rewrite is out of this file's scope.
+      for (const relative of GENERATED) chmodSync(path.join(TEST_DIR_ENV, relative), 0o444);
+      chmodSync(path.join(TEST_DIR_ENV, 'apps/api'), 0o555);
+      chmodSync(TEST_DIR_ENV, 0o555);
+
+      expect(() => {
+        generateEnvFiles(TEST_DIR_ENV);
+      }).not.toThrow();
+
+      // Mode bits are advisory for root and on permission-ignoring mounts, which
+      // makes the throw-free run above fail open on its own. Inode and mtime do
+      // not depend on the identity the process runs as, so they carry the claim.
+      for (const [index, relative] of GENERATED.entries()) {
+        expect(identity(relative)).toEqual(before[index]);
+      }
+    });
+
+    const makeStale = (): void => {
+      for (const relative of GENERATED) {
+        writeFileSync(path.join(TEST_DIR_ENV, relative), 'stale\n');
+      }
+    };
+
+    it('replaces a changed file without writing through the existing one', () => {
+      generateEnvFiles(TEST_DIR_ENV);
+      makeStale();
+      // A truncate-in-place rewrite needs the target itself writable; a rename
+      // over it does not care about its mode. wrangler.toml is left writable
+      // because its unconditional rewrite is out of this file's scope.
+      const before = GENERATED.map((relative) => identity(relative));
+      for (const relative of GENERATED) chmodSync(path.join(TEST_DIR_ENV, relative), 0o444);
+
+      generateEnvFiles(TEST_DIR_ENV);
+
+      for (const [index, relative] of GENERATED.entries()) {
+        expect(readFileSync(path.join(TEST_DIR_ENV, relative), 'utf8')).not.toBe('stale\n');
+        // A rename installs the temporary file's inode; truncate-in-place
+        // preserves the original's, so this cannot pass without a replacement.
+        expect(identity(relative).ino).not.toBe(before[index]?.ino);
+      }
+    });
+
+    it('builds its temporary file outside the system temp directory', () => {
+      generateEnvFiles(TEST_DIR_ENV);
+      makeStale();
+      // rename is only atomic within one filesystem, so a temp in the system
+      // temp directory would forfeit the property this is buying. Pointing
+      // TMPDIR at nothing makes that choice fail instead of degrading quietly.
+      process.env['TMPDIR'] = path.join(TEST_DIR_ENV, 'no-such-temp-dir');
+
+      expect(() => {
+        generateEnvFiles(TEST_DIR_ENV);
+      }).not.toThrow();
+      expect(readFileSync(path.join(TEST_DIR_ENV, '.env.development'), 'utf8')).not.toBe('stale\n');
+    });
+
+    it('builds its temporary file beside the target rather than in the tree root', () => {
+      generateEnvFiles(TEST_DIR_ENV);
+      writeFileSync(path.join(TEST_DIR_ENV, 'apps/api/.dev.vars'), 'stale\n');
+      // Only .dev.vars differs now, so the two root files are no-ops and the run's
+      // single write belongs to apps/api. A temporary file built in the tree root
+      // instead cannot be created there once the root is read-only, and it moves
+      // the root's mtime either way — a directory's mtime tracks entry creation
+      // and removal whatever identity the process runs as.
+      backdate('.');
+      const rootBefore = identity('.');
+      chmodSync(TEST_DIR_ENV, 0o555);
+
+      expect(() => {
+        generateEnvFiles(TEST_DIR_ENV);
+      }).not.toThrow();
+
+      expect(readFileSync(path.join(TEST_DIR_ENV, 'apps/api/.dev.vars'), 'utf8')).not.toBe(
+        'stale\n'
+      );
+      expect(identity('.')).toEqual(rootBefore);
+    });
+
+    it('leaves no temporary file behind', () => {
+      generateEnvFiles(TEST_DIR_ENV);
+      makeStale();
+
+      generateEnvFiles(TEST_DIR_ENV);
+
+      expect(readdirSync(TEST_DIR_ENV).toSorted((a, b) => a.localeCompare(b))).toEqual([
+        '.env.development',
+        '.env.scripts',
+        '.git',
+        'apps',
+      ]);
+      expect(
+        readdirSync(path.join(TEST_DIR_ENV, 'apps/api')).toSorted((a, b) => a.localeCompare(b))
+      ).toEqual(['.dev.vars', 'wrangler.toml']);
     });
   });
 });

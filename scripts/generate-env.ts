@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   envConfig,
@@ -194,11 +194,34 @@ function resolveWorktree(rootDir: string, mode: EnvMode): WorktreeConfig | null 
   return needsWorktree ? getWorktreeConfig(rootDir) : null;
 }
 
+/**
+ * Write a generated env file only when its bytes differ, and replace rather
+ * than rewrite it.
+ *
+ * Every local `pnpm test:*` and `pnpm dev` regenerates these files on its way
+ * in, so an unchanged regeneration must not touch them: truncating a file
+ * another process has open hands that reader an empty or partial one. When the
+ * content does change, the bytes land on a temporary path first and are moved
+ * into place. The temporary path is a sibling of the target because `rename`
+ * is atomic only within a single filesystem.
+ */
+function writeGeneratedFile(rootDir: string, relativePath: string, content: string): void {
+  const filePath = path.resolve(rootDir, relativePath);
+  if (existsSync(filePath) && readFileSync(filePath, 'utf8') === content) {
+    console.log(`  Unchanged ${relativePath}`);
+    return;
+  }
+
+  const temporaryPath = `${filePath}.${String(process.pid)}.tmp`;
+  writeFileSync(temporaryPath, content);
+  renameSync(temporaryPath, filePath);
+  console.log(`  Generated ${relativePath}`);
+}
+
 function writeBackendEnv(rootDir: string, backendLines: string[]): void {
   const devVariablesContent =
     ['# Auto-generated - do not edit', '', ...backendLines].join('\n') + '\n';
-  writeFileSync(path.resolve(rootDir, 'apps/api/.dev.vars'), devVariablesContent);
-  console.log('  Generated apps/api/.dev.vars');
+  writeGeneratedFile(rootDir, 'apps/api/.dev.vars', devVariablesContent);
   updateWranglerToml(rootDir);
   updateWorkflows(rootDir);
 }
@@ -254,15 +277,13 @@ export function generateEnvFiles(
       '',
       ...frontendLines,
     ].join('\n') + '\n';
-  writeFileSync(path.resolve(rootDir, '.env.development'), envDevContent);
-  console.log('  Generated .env.development');
+  writeGeneratedFile(rootDir, '.env.development', envDevContent);
 
   const ports = worktree?.ports ?? BASE_PORTS;
   const portLines = generatePortLines(ports, worktree);
   const envScriptsContent =
     ['# Auto-generated - do not edit', '', ...scriptsLines, ...portLines].join('\n') + '\n';
-  writeFileSync(path.resolve(rootDir, '.env.scripts'), envScriptsContent);
-  console.log('  Generated .env.scripts');
+  writeGeneratedFile(rootDir, '.env.scripts', envScriptsContent);
 
   if (!skipBackend) {
     writeBackendEnv(rootDir, backendLines);

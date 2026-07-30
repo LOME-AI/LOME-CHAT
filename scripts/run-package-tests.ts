@@ -265,10 +265,70 @@ export function writeWeight(
   fs.writeFile(path.join(dir, `${packageName}.json`), JSON.stringify({ totalWorkMs }));
 }
 
+const REPORTS_DIRECTORY_FLAG = '--coverage.reportsDirectory';
+const COVERAGE_INCLUDE_FLAG = '--coverage.include';
+const ARGUMENT_SEPARATOR = '--';
+
+/**
+ * Coverage output directory for one wrapper process, under the package's
+ * conventional `coverage/` tree so the repo's gitignore and turbo `outputs`
+ * globs keep covering it.
+ *
+ * Vitest keeps its per-worker raw coverage in `<reportsDirectory>/.tmp` and
+ * deletes that directory when it finishes, so two runs sharing a reports
+ * directory delete each other's `.tmp`: the losing run dies on
+ * `Something removed the coverage directory` with every test passed and no
+ * `FAIL` line, which reads as a healthy run. Keying the directory to the pid
+ * removes the shared resource instead of arbitrating access to it.
+ */
+export function processCoverageDirectory(packageDir: string, pid: number): string {
+  return path.join(packageDir, 'coverage', `run-${String(pid)}`);
+}
+
+/** Whether the caller already pinned the reports directory, in either CLI form. */
+function suppliesReportsDirectory(args: readonly string[]): boolean {
+  return args.some(
+    (argument) =>
+      argument === REPORTS_DIRECTORY_FLAG || argument.startsWith(`${REPORTS_DIRECTORY_FLAG}=`)
+  );
+}
+
+/** A flag's value in either CLI form (`--flag=value`, `--flag value`); first occurrence wins. */
+function flagValue(args: readonly string[], flag: string): string | undefined {
+  for (const [index, argument] of args.entries()) {
+    if (argument.startsWith(`${flag}=`)) {
+      return argument.slice(flag.length + 1);
+    }
+    if (argument === flag) {
+      return args[index + 1];
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Drop every bare separator a package manager puts among forwarded arguments.
+ * vitest 4.1.8 discards every argument after a bare `--` (verified: the
+ * positional file filter is dropped and the whole package is collected), so an
+ * unstripped separator silently voids the rest of the passthrough *and* this
+ * wrapper's own appended defaults — the coverage override lands nowhere and the
+ * run still exits 0. Position cannot be used to tell a harmful separator from a
+ * meaningful one, because there is no meaningful one: `pnpm run <script> -- <args>`
+ * re-inserts a separator of its own on top of the one it consumed, so `-- --`
+ * arrives as two, and a `test` script carrying its own arguments makes them land
+ * mid-list. A `--`-prefixed token longer than the separator is an ordinary flag
+ * and is untouched.
+ */
+function dropSeparators(args: readonly string[]): readonly string[] {
+  return args.filter((argument) => argument !== ARGUMENT_SEPARATOR);
+}
+
 export interface RunDeps {
   readonly cores: number;
   readonly weightsDir: string;
   readonly cwdPackageName: string;
+  /** Used only when the caller passes no `--coverage.reportsDirectory` of its own. */
+  readonly defaultReportsDirectory: string;
   readonly passthroughArgs: readonly string[];
   /**
    * The authoritative set of packages a full run spans — every workspace package
@@ -281,10 +341,52 @@ export interface RunDeps {
   readonly readWeights: (dir: string) => Record<string, number>;
   readonly writeWeight: (dir: string, packageName: string, totalWorkMs: number) => void;
   readonly readReport: (file: string) => VitestJsonReport | undefined;
+  /**
+   * The run's coverage map (`coverage-final.json`) from the reports directory in
+   * force, or `undefined` when the run wrote none — a file that is absent means
+   * no coverage data exists to judge, which is not the same as a map that is
+   * present and empty.
+   */
+  readonly readCoverageMap: (
+    reportsDirectory: string
+  ) => Readonly<Record<string, unknown>> | undefined;
   readonly makeTmpFile: () => string;
   readonly exec: (vitestArgs: readonly string[], childEnv: NodeJS.ProcessEnv) => Promise<number>;
   readonly log: (line: string) => void;
   readonly warn: (line: string) => void;
+}
+
+/**
+ * `1` when a supplied `--coverage.include` measured nothing at all (warning as
+ * it goes), `0` otherwise. An include that matches at least one file puts that
+ * file in the coverage map even if no test exercised it (verified on vitest
+ * 4.1.8: zero tests collected still yields the file at 0%), so an empty map
+ * isolates the one vacuous case — a glob matching no file, which vitest reports
+ * as a clean 0/0 run and exits 0 on. The glob's shape is not the discriminator:
+ * a wildcard-free include measures the named file, and a wildcard-bearing one
+ * can still match nothing.
+ */
+function vacuousScopeExitCode(
+  packageName: string,
+  args: readonly string[],
+  deps: Pick<RunDeps, 'readCoverageMap' | 'warn' | 'defaultReportsDirectory'>
+): number {
+  const include = flagValue(args, COVERAGE_INCLUDE_FLAG);
+  if (include === undefined) {
+    return 0;
+  }
+  // A missing map is a run that produced no coverage data to judge, not a
+  // vacuous scope; only a map that exists and is empty proves the include void.
+  const coverageMap = deps.readCoverageMap(
+    flagValue(args, REPORTS_DIRECTORY_FLAG) ?? deps.defaultReportsDirectory
+  );
+  if (coverageMap === undefined || Object.keys(coverageMap).length > 0) {
+    return 0;
+  }
+  deps.warn(
+    `[${packageName}] EMPTY COVERAGE SCOPE — ${COVERAGE_INCLUDE_FLAG}=${include} matched no file, so this run measured nothing; fix the glob (it is relative to the package directory) or drop the flag.`
+  );
+  return 1;
 }
 
 /**
@@ -318,19 +420,29 @@ export async function runPackageTests(env: NodeJS.ProcessEnv, deps: RunDeps): Pr
     `[${packageName}] scope=${scope} · work-share=${shareLabel} · workers=${String(maxWorkers)}`
   );
 
+  const passthroughArgs = dropSeparators(deps.passthroughArgs);
   const vitestArgs = [
     'run',
     '--coverage',
     `--maxWorkers=${String(maxWorkers)}`,
-    ...deps.passthroughArgs,
+    ...passthroughArgs,
   ];
+  if (!suppliesReportsDirectory(passthroughArgs)) {
+    vitestArgs.push(`${REPORTS_DIRECTORY_FLAG}=${deps.defaultReportsDirectory}`);
+    // The default is no longer vitest's `<pkg>/coverage`, so say where it went.
+    deps.log(`[${packageName}] coverage report → ${deps.defaultReportsDirectory}`);
+  }
   // The json report is captured on every scope: weight capture needs it on full
   // runs, the pole gate needs it on every run. Keep the default console reporter
   // so failures still show; json purely captures per-file durations.
   const temporaryFile = deps.makeTmpFile();
   vitestArgs.push('--reporter=default', '--reporter=json', `--outputFile.json=${temporaryFile}`);
 
-  const exitCode = await deps.exec(vitestArgs, env);
+  const vitestExitCode = await deps.exec(vitestArgs, env);
+  const exitCode = Math.max(
+    vitestExitCode,
+    vacuousScopeExitCode(packageName, passthroughArgs, deps)
+  );
 
   const report = deps.readReport(temporaryFile);
   if (report === undefined) {
@@ -377,6 +489,7 @@ if (isMainModule(import.meta.url)) {
       cores: os.availableParallelism(),
       weightsDir,
       cwdPackageName,
+      defaultReportsDirectory: processCoverageDirectory(cwd, process.pid),
       passthroughArgs: process.argv.slice(2),
       listTestPackages: () =>
         discoverWorkspaces(repoRoot)
@@ -407,6 +520,15 @@ if (isMainModule(import.meta.url)) {
           return;
         }
         return JSON.parse(readFileSync(file, 'utf8')) as VitestJsonReport;
+      },
+      readCoverageMap: (reportsDirectory) => {
+        // An explicitly supplied reports directory may be relative, and vitest
+        // resolves it against the package directory this wrapper runs in.
+        const file = path.resolve(cwd, reportsDirectory, 'coverage-final.json');
+        if (!existsSync(file)) {
+          return;
+        }
+        return JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
       },
       makeTmpFile: () =>
         path.join(os.tmpdir(), `hb-test-weights-${String(process.pid)}-${String(Date.now())}.json`),

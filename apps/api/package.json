@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "tsx ../../scripts/wrangler-dev.ts",
-    "test": "tsx ../../scripts/with-env.ts tsx ../../scripts/run-package-tests.ts && pnpm run test:workers",
+    "test": "pnpm run test:workers && tsx ../../scripts/with-env.ts tsx ../../scripts/run-package-tests.ts",
     "test:workers": "tsx ../../scripts/with-env.ts vitest run --config vitest.workers.config.ts",
     "test:watch": "tsx ../../scripts/with-env.ts vitest",
     "lint": "eslint .",

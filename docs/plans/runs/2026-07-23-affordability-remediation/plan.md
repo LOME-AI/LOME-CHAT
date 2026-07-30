@@ -56,6 +56,12 @@ eleven the ledger declares clean since (F4, F5, F7, F8, C5, D2, D3, F10, G8, G12
 **Clean — 31:** B1, B1b, B2, B3, B4, B5, B6, B7, B8, B9 · A1, A2 · C1, C2, C3, C5 · D1, D2, D3 · E1 · F1, F2,
 F3, F4, F5, F7, F8, F10 · G8, G12, G13.
 
+**LANE T IS COMPLETE for T1, T2, T3 — all CLEAN, verified end-to-end. T4 was added 2026-07-29 by founder ruling
+and is READY, not started.** The gate protocol is now enforced by the
+harness rather than by brief discipline. A pre-wave baseline was taken solo per package (see §PRE-WAVE BASELINE):
+green everywhere except `web`'s known intermittent per-file gate and two **deterministic** `@hushbox/scripts`
+collection failures, both pre-existing.
+
 **READY NOW — 28.** B10 · C4, C6, C7 · D4 · E2, E3, E4, E5, E6, E7 · F6, F9, F11, F12, F13, F14, F15 · G2, G4,
 G7, G9, G10, G11 · H1 · S1, S3, S4. **Still blocked — 7:** B8b and G5 on G2 · G1 on B8b · G6 on G5 · G3 on
 E2 · S2 on S1 · S5+ on S1 and S2. 28 + 7 = 35, and 31 + 35 = 66; the arithmetic closes.
@@ -89,6 +95,68 @@ does. Both real limits are recorded here so a resuming orchestrator does not red
    package's `coverage/.tmp` and the second aborts the first, and the failure presents as a green run with no
    coverage table. That caps trustworthy gating at roughly one agent per package regardless of how many are
    dispatched — so concurrency is planned per **gate**, not per task.
+
+### FOUR FOUNDER DECISIONS — ALL RULED 2026-07-29, each in favour of the recommendation below
+
+**All four are RULED and each has a home.** Decision 2 is already applied to `docs/BILLING.md` by the
+orchestrator (subagents may not edit `.md`). Decision 1 lands as a narrowed C4 plus a new C7 criterion and
+ordering. Decision 3 lands as a C6 criterion. Decision 4 is the new §T4. The reasoning is kept below because it is
+what a fresh agent needs to not re-litigate them.
+
+**1. `chooseFrom` has zero production callers — signature refinement, or a real unowned wiring gap?**
+Grounded: defined at `packages/shared/src/affordability/classifier-choice.ts:70` as
+`chooseFrom(options: OptionSet, rawAnswer: string)`, and grep across all of `apps/api/src` and `apps/web/src`
+returns only the shared barrels and its own test. B8 built it "where no producer existed" and nothing wired it.
+**Note why no gate caught this:** it is re-exported from the package's public barrel (`src/index.ts:114`), so knip
+treats it as used public API — a barrel re-export hides deadness from the unused-code gate.
+**RECOMMENDATION: fold the wiring into C7, and sequence C4 → C7.** C7's objective is "the classifier slot actually
+classifies"; once it does, something must turn the raw answer into refined options, and `chooseFrom` **is** that
+consumer. If C7 lands without wiring it, C7 either hand-rolls its own choice logic — a `One Implementation, Shared`
+violation — or produces an answer nothing consumes. C4 must go first so C7 wires against the refined signature
+rather than a `string` that C4 then churns. **Cost to name honestly:** this widens C7, which is money-classed with
+two auditors. **The alternative is worse:** a refined signature on an unreachable function is a task that provably
+changes no observable behaviour, i.e. a task with no pass/fail signal — which this plan forbids.
+
+**2. The §Math & Terms `minTurnCost` correction. Gates the Lane S §Math expansion and F14's citation.**
+**RECOMMENDATION: approve — the DOC changes, not the code.** Verified from arithmetic by F7's second auditor: the
+doc's literal per-sibling sum yields **27,954,400** and leaves a sibling ineligible, while the shipped
+widest-corner figure of **54,168,800** is exactly sufficient and **tight at one nano below**. Siblings share one
+solved ceiling, so sufficiency requires `max(B(mᵢ, e_min) + MIN)`, not `Σ`. The correction must also state
+explicitly that `corner × Σrates` is a **bound, not a reserve**, because §Math & Terms is controlling and later
+sections may consume only bounds, never prices. **Changing code to match the doc would under-reserve and break
+`reserve ⊇ bill`** — the run's core money invariant.
+
+**3. C6's reading — is degrading on unaffordability the same defect as degrading on choice? Gates C6.**
+**RECOMMENDATION: they are NOT the same, and only the unaffordable arm should refuse.** Degrading on **choice** —
+no effort level fits, or the model cannot reason — is legitimate: the user asked for something unavailable, so the
+nearest thing is served. Degrading on **unaffordability** silently converts "you cannot afford this" into "here is
+a cheaper different thing you did not ask for", **and then bills for it**. That is the same class as the trial
+`auto` silent static fallback C5 fixed: a money-driven substitution presented as an ordinary result. The two
+option sets (`affordable`, `admissible`) exist precisely so the client can show what is reachable, so an
+affordability failure belongs in a typed refusal plus a notice. So: `unaffordable` → refuse with a notice;
+`fallback` → keep degrading. `smart-model-turn.ts:355-360`'s own comment already says the two "mean opposite
+things" to the caller — the code knows; the paid path does not act on it.
+
+**4. Turbo stale-cache. Gates nothing. The exposed consumer is PRE-PUSH, not CI.**
+**RECOMMENDATION: `"test": { "dependsOn": ["^test", "fetch-pyodide"] }`.** This reverses a reversal, and the fact
+that settles it was checked late: **`.husky/pre-push` → `pnpm pre-push` → `scripts/pre-push.ts:28` runs
+`pnpm test` with NO `TURBO_FORCE`**, so pre-push reads the turbo cache. CI is immune (`ci.yml:217` sets
+`TURBO_FORCE: true`) and agents bypass turbo entirely under §The concurrent gate protocol — but **pre-push is
+exposed**, and it is precisely the documented failure "a warm local cache makes pre-push green while CI fails".
+Why `^test` beats `cache: false`, which I recommended in between: `^test` keeps caching, so a push touching only
+`apps/web` still skips every unchanged package, while making `@hushbox/api#test`'s hash depend on `db`/`realtime`/
+`ui` source so an edit there invalidates it. `cache: false` fixes the same hole by making **every** pre-push run
+the full suite uncached — a tax on every push, since the measured full run is minutes. `^test`'s only cost is that
+a filtered `pnpm test:api` also runs its dependencies' suites; measured solo, those are all fast
+(`db` 27 files, `shared` 133, `crypto` 36, `config` 32, `realtime` 12), so the targeted-run tax is small and the
+common path is untouched. **Lesson worth more than the decision: I let "CI is immune" stand in for "nothing is
+exposed" and did not ask which other consumers read the cache.**
+
+**Plus two small follow-ups I declined to absorb; RECOMMENDATION on both is do them, as one micro-task:**
+the `workers=N` banner prints 24 while `VITEST_MAX_WORKERS` silently overrides it (two lines, and the same
+printed-number-that-lies class as the four approved traps); and **nothing pins "the coverage clause is last"**, so
+a silent reorder reopens the trap T3 just closed — an `arch/` rule over the three `package.json` `test` scripts is
+the natural home, and this repo already prefers structural enforcement to review.
 
 ### Grounded ownership — surveyed 2026-07-29, and it OVERTURNS the coarse-glob fear
 
@@ -519,10 +587,14 @@ suite they name, and an agent that needs one waits rather than racing.
   competing process. **Only one `apps/api` suite may run at a time across all concurrent agents** — briefs must
   say so, and an agent that needs the suite waits rather than racing. This is why audit briefs in this run
   forbid `pnpm test:api` and ask for isolated file runs instead.
-- **The standing `template-html` failure blocks the `apps/api` COVERAGE gate entirely**, for every task in this
-  run: vitest suppresses the coverage report when any test fails, so a red suite yields no coverage table and
-  the gate's exit code says nothing about coverage. Until it is fixed, per-file coverage on `apps/api` must be
+- **A red suite suppresses the `apps/api` COVERAGE report entirely** — vitest prints no coverage table when any
+  test fails, so a red run's exit code says nothing about coverage. Per-file coverage on `apps/api` is therefore
   taken by a **scoped run over the owned files**, and an unscoped green claim about coverage is not evidence.
+  **The `template-html` failure that used to trigger this is FIXED — G8 closed it (stale snapshot, verified from
+  git history as the stale side rather than from a green).** The suppression mechanism remains true in general;
+  the specific standing failure does not. **This entry named that failure as standing long after G8 fixed it,
+  and T3 then repeated the claim as though it had observed it** — a stale entry does not merely go unread, it
+  actively trains agents to attribute live failures outward.
 
 **A CONCURRENT AGENT REGENERATING `.env.development` / `.env.scripts` VOIDS AN IN-FLIGHT SUITE RUN.** C2's first
 auditor lost a full `test:api` pass to this on 2026-07-27 — 35 files / 16 tests red including trial 402s and admin
@@ -686,11 +758,10 @@ yours.
 - **Environment gotcha:** the bundler pre-bundles `@hushbox/shared`. After editing shared code,
   clear `node_modules/.vite` at the root and in `apps/api` / `apps/web` before trusting a test
   result.
-- **`apps/api` `notifications/domain/templates/template-html.test.ts`** fails at HEAD — 7 snapshot
-  failures over a removed Google-Fonts `<link>`, with both the template source and the `.snap`
-  unmodified relative to HEAD. It belongs to the concurrent push/notifications workstream and
-  needs an owner outside this run. Found while gating B1; it is the single `apps/api` failure a
-  scoped run will show.
+- **~~`apps/api` `template-html.test.ts` fails at HEAD~~ — RESOLVED by G8, do not attribute a failure here
+  outward.** It was 7 snapshot failures over a removed Google-Fonts `<link>`; G8 proved from git history that
+  the **snapshot** was the stale side and closed it. If this test is red now, it is a NEW regression and belongs
+  to whoever made it red.
 - **`pnpm lint:unused` (knip) reports two findings unrelated to this run.** Knip is whole-repo and
   noisy mid-run by design; it is a Phase 4 gate, not a per-task one.
 - **`pnpm test:web` INTERMITTENTLY fails its per-file coverage gate on
@@ -821,6 +892,273 @@ acquiring` entry above. Roughly a second of added occupancy per run of that file
   then fail at **collection** on `deps_ssr/@hushbox_shared.js`. Run `rm -rf apps/api/node_modules/.vite`
   and re-run before attributing a collection failure to your own change. Distinct from the stale-optimizer
   URL-mangling entry above: this one a cache clear genuinely cures.
+
+### Four traps found 2026-07-29 by probe, none previously listed — and three of them void a GREEN
+
+These were measured, not reasoned. Each is a path by which a gate reports success while proving nothing,
+which is the failure mode this section exists to name.
+
+- **`pnpm test:*` REWRITES THE ENV FILES ON EVERY INVOCATION.** Every `test:*` script begins
+  `pnpm ensure-stack &&`; `scripts/ensure-stack.ts:155` calls `generateEnvFiles` unconditionally, and
+  `scripts/generate-env.ts:257,264,200` do bare `writeFileSync` on `.env.development`, `.env.scripts` and
+  `apps/api/.dev.vars` with **no write-if-changed guard**. This section already documented the symptom — "a
+  concurrent agent regenerating `.env.development` voids an in-flight suite run" — and blamed
+  `pnpm generate:env`. **The real trigger is the test command every agent is told to use.** Two agents running
+  any `pnpm test:*` void each other regardless of package.
+- **~~A LITERAL single-file `--coverage.include` MEASURES NOTHING AND EXITS 0.~~ REFUTED 2026-07-29 — this
+  entry was WRONG, and it was wrong because a table was read as if it were the coverage map.** The forms
+  reproduce exactly as recorded (`--coverage.include=src/slices/billing/domain/money.ts` → exit 0, zero-row
+  table), **but `coverage-final.json` for that same run holds `money.ts` at 4/4 statements: the wildcard-free
+  include measured it fully.** The zero-row table is the reporter omission below, not a measurement failure,
+  and it appears with wildcard-bearing includes too (`src/comparison*.ts` → exit 0, zero rows, one file at
+  100%). **No per-file coverage evidence in this run was vacuous for this reason.** The real vacuity path is
+  the entry that follows.
+- **THE `-- --` SEPARATOR ALSO VOIDED THE GATE RUNNER'S OWN INJECTED DEFAULTS — so criterion 1's collision
+  protection was itself void in that invocation form.** Found by T2 while fixing the separator: the wrapper
+  injects its per-process `--coverage.reportsDirectory` **after** the passthrough args, so everything it added
+  sat behind the bare `--` and was discarded, and `-- --` runs wrote into the shared `<pkg>/coverage` after all.
+  A fix whose own protection is disabled by the argument form it is meant to support is the same
+  reports-success-changes-nothing family as the two causes above, one layer deeper.
+- **AN `--coverage.include` MATCHING ZERO FILES EXITS 0 WITH NOTHING MEASURED, AND A WILDCARD DOES NOT PROTECT.**
+  Verified: `src/nope/**/*.ts` → exit 0, **0 files measured**. This is the genuine vacuous-gate path, and it is
+  the one a mistyped path in a brief actually takes. The discriminator is **not** the shape of the glob but
+  whether the resulting coverage map is empty.
+- **THE PRINTED COVERAGE TABLE OMITS FILES WITH NOTHING TO REPORT — MECHANISM ESTABLISHED 2026-07-29, AND IT
+  IS BENIGN.** The observation was real: `coverage-final.json` held **22** files while the table printed **20**,
+  omitting `money.ts` (100%) and `period.ts` (0%). Both omissions are now explained. `money.ts` was fully
+  covered, and `period.ts` is an **11-line pure re-export** (`export { utcDayKey } from '@hushbox/shared'`) with
+  **zero executable statements**, which v8 renders as 0% of nothing. `skipFull` is set nowhere in this repo —
+  verified — so the rule is not configured; the reporter simply prints nothing for files with nothing to say.
+  **Consequence: the table CANNOT hide a real shortfall**, because a file with genuinely uncovered statements
+  always prints. Reading `coverage-final.json` remains the better habit, but it is a nicety, **not** a
+  correctness requirement, and no table-read evidence in this run is suspect for this reason.
+- **`pgrep -f vitest` IS UNRELIABLE HERE — it self-matches.** Verified reporting `1` with zero vitest
+  processes running, because the polling shell's own argv contains the string; the `[v]itest` bracket trick
+  does not fix it, as the wrapper mentions `vitest` elsewhere. Any "wait until no suite is running" protocol
+  built on it is built on noise. The precise alternative — the `coverage/.tmp` marker — is **orphaned forever
+  by a killed run**, so it is an unrecoverable lock. **Neither is usable; serialisation belongs in the
+  orchestrator's dispatch state, which already knows who is running.**
+
+---
+
+## The concurrent gate protocol — measured 2026-07-29, and it supersedes `pnpm test:*` for every agent
+
+The founder asked for maximal concurrent dispatch. An analyst probed the harness and the result is that the
+old rule ("one suite per package, agents wait") was **both too slow and not actually safe** — it addressed
+disk collision and none of the three void-green paths above. What follows replaces it.
+
+**The lever that works: `--coverage.reportsDirectory=<unique absolute path>`.** Verified on vitest 4.1.8:
+three overlapping full `packages/shared` runs with distinct paths all exited 0 with coverage tables
+**byte-identical to an isolated baseline**, and three overlapping scoped `apps/api` runs likewise. Sharing one
+directory reproduces the void exactly: the loser prints **19 lines with zero test output and zero `FAIL`
+lines** and dies with `Something removed the coverage directory`. Which run dies depends purely on stagger —
+this plan previously recorded "the second aborts the first"; **either direction is possible.**
+
+**A unique directory is strictly stronger than a lock.** It removes the contended resource instead of
+arbitrating it, so there is no lease to expire and no stale marker to recover — "One Mechanism Per Task, Made
+Recoverable" in its best form.
+
+**Do NOT reach for `pnpm test:<pkg> -- -- --coverage.reportsDirectory=X`. It is a SILENT NO-OP, and there are
+TWO causes in series** — T3 measured the second while fixing the first, which is why fixing one did not make the
+form work:
+
+1. Their `test` scripts ended in `&& pnpm run test:workers`, and pnpm appends passthrough args to the **end of
+   the script string**, so the override landed on the workers run — which carries no coverage at all
+   (`apps/api/vitest.workers.config.ts:7`). Verified: exit **0**, override directory **never created**, main run
+   still writing the default path. **T3 fixed this** by reordering the chain so the coverage run is last.
+2. **pnpm's passthrough inserts a literal `--`, and vitest 4.1.8 discards every argument after a bare `--`.**
+   Measured: all 12 files ran, the positional file filter was discarded too, the directory was never created,
+   exit 0. **So the `-- --` form is still a silent no-op after T3's fix.** The one-line remedy — strip a leading
+   `--` from the passthrough args — lives in `run-package-tests.ts` and is **assigned to T2**.
+
+**What DOES work, proven after T3's fix:** `pnpm --filter <pkg> test --coverage.reportsDirectory=… --coverage.include='<wildcard>' <files>`
+with **no separator**, for all three packages; and `turbo test --filter=<pkg> -- <args>`, because turbo consumes
+its own `--` and does not re-insert one. **A fix that reports success while changing nothing is the worst
+outcome available** — and this trap had two layers of exactly that, the second hidden behind the first.
+
+### PRE-WAVE BASELINE — measured 2026-07-29, solo per package. Attribute around these, do not chase them.
+
+Taken after Lane T landed, with every `.vite` cache cleared and the weights cache reseeded. Each package run
+**solo** (24 workers). This is the baseline the 28 ready tasks must attribute against.
+
+| package    | exit  | detail                                                                            |
+| ---------- | ----- | --------------------------------------------------------------------------------- |
+| `api`      | **0** | 475 files, 474 passed + 1 skipped — green, integration tests included             |
+| `shared`   | **0** | 133 files                                                                         |
+| `ui`       | **0** | 95 files                                                                          |
+| `db`       | **0** | 2 workers files + 27                                                              |
+| `crypto`   | **0** | 36 files                                                                          |
+| `config`   | **0** | 32 files                                                                          |
+| `realtime` | **0** | 2 workers files + 12                                                              |
+| `web`      | 1     | **all 396 test files pass**; sole failure is the known intermittent per-file gate |
+| `scripts`  | 1     | **1902 tests pass, ZERO test failures**; 2 collection failures (below)            |
+
+**`web`'s only failure is the entry already in this section:**
+`ERROR: Coverage for branches (75%) does not meet global threshold (95%) for
+src/components/chat/message/markdown-renderer.tsx`. **New observation, offered as a hypothesis rather than a
+cause:** that run logged many `ECONNREFUSED ::1:7400` and aborted fetches of `render.html` / `python.html` — the
+document sandbox origin, which `pnpm dev` starts and `ensure-stack` does **not**. This section attributes the
+shortfall to load; it may instead be that sandbox-dependent branches cannot execute when that server is down.
+Not established — worth one experiment before anyone treats the shortfall as load-dependent again.
+
+**There is no `pnpm test:scripts` script.** The `@hushbox/scripts` package is reached with
+`npx turbo test --filter=@hushbox/scripts` or `pnpm --filter @hushbox/scripts test`. Inventing `test:scripts`
+yields `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL` and exit **254**, which looks like a suite failure and is not one.
+
+### The `@hushbox/scripts` collection failures are TWO deterministic ones, not five racing ones
+
+This section recorded 5 collection failures (`seed*`, `refresh-catalog*`, `lib/e2e-seeded-image-model`) as the
+stale vite pre-bundle race. Measured 2026-07-29: after clearing every `.vite` cache, **3 of the 5 disappeared and
+stayed gone** — those were the race. The remaining two, **`refresh-catalog-run.test.ts` and `seed-run.test.ts`**,
+fail **identically on two consecutive runs** with `ERR_MODULE_NOT_FOUND` on `deps_ssr/@hushbox_db.js&v=…`. They
+are **deterministic, not flaky**, so they have a fixable cause that is currently masked by being filed under a
+known flake. Pre-existing and NOT Lane T's: they predate this lane in this section's own record, and T2's auditors
+independently reproduced them under a plain `vitest list` that never loads any Lane T file. **Whoever needs a
+green `@hushbox/scripts` gate owns diagnosing these two** — the count is 2, and re-running will not clear them.
+
+### A CANCELLED FULL RUN POISONS THE WORKER ALLOCATOR — measured 2026-07-29, and it is not marginal
+
+`scripts/run-package-tests.ts` sizes each package's worker pool from `scripts/.cache/test-weights/<pkg>.json`,
+written **at the end** of a package's coverage run. Two consequences compound:
+
+- **A package that is cancelled writes no weight**, and a package with **no** weight file is assigned the
+  **median** of the packages that do have one (`weightsByPkg[p] ?? med`) — not treated as unknown-large.
+- So after a full run that turbo cancelled part-way, the cache holds real weights only for whatever finished
+  first, and the largest suite in the repo can end up with the median.
+
+**Measured:** a cancelled `pnpm test` left 14 weight files with **no `web.json` at all**. The next full run
+allocated `scripts` 48% → 17 workers, `crypto` 24% → 9 workers, and **`apps/web` — the biggest suite in the
+repo, 393 files — 2% → `--maxWorkers=1`**. That turned a run whose warm-cache baseline is ~8 minutes into 27+
+minutes still unfinished. **T3's auditor flagged exactly this residual and priced it as "a marginally staler
+allocator input, only on runs that are already failing." It is not marginal** — one cancelled run degrades the
+next run by roughly an order of magnitude, and nothing in the output says the allocation is wrong.
+
+**Recovery:** `rm -f scripts/.cache/test-weights/*.json` (gitignored, `.gitignore:107`) and run again — with no
+weights the allocator falls back to an even split, which is its documented behaviour. Weights are correct again
+after one **complete** run, so the cheap way to seed them accurately is to run the big packages **solo** first
+(`scope=solo` gives 24 workers), which also yields real per-package results.
+
+**CI is insulated but not immune:** it restores the weights cache by prefix key and saves a fresh copy each run
+(`ci.yml:186-200`), so a cancelled CI run can hand the same skew to the next one. Worth knowing before blaming a
+slow CI job on the tests.
+
+### The gate command every implementer and auditor uses
+
+Run from the package's own directory, never through `pnpm test:*` or turbo. **The `../../` in the command below
+is package-depth dependent** — it is correct for `apps/*` and `packages/*`, and WRONG for the repo-root
+`scripts` package, which is one level down and needs `./with-env.ts` / `./run-package-tests.ts`. Getting it
+wrong is a loud `ERR_MODULE_NOT_FOUND`, not a silent pass, but it costs a cycle; T1's fixer hit it.
+
+```
+G=/tmp/hb-gate/<your-agent-id>; mkdir -p $G
+VITEST_MAX_WORKERS=<budget from the orchestrator> \
+pnpm exec tsx ../../scripts/with-env.ts \
+  tsx ../../scripts/run-package-tests.ts \
+  --coverage.reportsDirectory=$G/cov \
+  --coverage.include='<ONE glob — MUST contain a wildcard>' \
+  <the test files or dirs you own> \
+  > $G/gate.log 2>&1
+echo "GATE_EXIT=$?" > $G/gate.exit
+```
+
+Read the exit status from `$G/gate.exit` — **never** from a harness completion notice, which this run has
+caught misreporting exit codes at least three times. Read coverage from `$G/cov/coverage-final.json`, never
+the printed table.
+
+- **`--coverage.include` exactly once, and it must contain a wildcard** (see the trap above).
+- **Never add `--maxWorkers`** — a duplicate is a hard crash (`Expected single value option`).
+  `VITEST_MAX_WORKERS` is read last and overrides both the config and the `--maxWorkers=24` that
+  `run-package-tests.ts:323` injects; verified `=3` yields exactly 3 forks. **The banner still prints
+  `workers=24`; the printed line is not the effective value.**
+- **Never set `HB_TEST_SCOPE`.**
+- **Never run raw `vitest --coverage` without an explicit `--coverage.reportsDirectory`.** The conventional
+  `<pkg>/coverage` is start-up-cleaned by vitest, which deletes every concurrent `run-<pid>` sibling inside it —
+  measured: an auditor lost a run to another agent doing exactly this. Raw invocations are the one remaining way
+  to void a neighbour's gate.
+- **A `POLE TEST FILE` line means exit 1 is an artifact of your own narrow selection**, not a failure:
+  `run-package-tests.ts:135-136,362` forces exit 1 when one file ≥15 s is >50% of the run's work, and a
+  one-file scoped run makes that file 100%. Widen to the owning slice and re-read.
+- **Worker budget:** 24 cores, so `VITEST_MAX_WORKERS = max(2, floor(24 / concurrent agents))`. This is not
+  only a speed knob — §Known Breakage already records load-dependent **false** coverage results at
+  single-run load (87.68% → 99.60% for one file on identical commands), so oversubscription corrupts the
+  instrument, not just the clock.
+- **api/db/realtime:** this path skips `test:workers`. Run it separately when the change touches DO/workerd
+  code — it carries no coverage, so it never collides: `pnpm --filter @hushbox/<pkg> test:workers`.
+
+### The integration lane is serialised by the orchestrator, and agents never poll for it
+
+**No generic DB isolation exists in this repo**, established by grep, not assumption: zero hits repo-wide for
+`VITEST_WORKER_ID`/`VITEST_POOL_ID`, no schema-per-worker, no test-database pool, no `TRUNCATE`, and one
+`DATABASE_URL`. What exists instead is four hand-rolled conventions, and two of them are **scoped to a single
+run**: the jobs `bulk`-shard contract is an enumeration over the files in one run ("bulk carries exactly one
+foreign claimable source" — doubling live runs doubles the sources), and the global Redis `model_catalog` lock
+keeps 16 files _correct_ but has an 8 s TTL against a 12 s max-wait that §Known Breakage already records five
+files exhausting at **single**-run load. `withRollback` is re-declared per test file rather than shared once,
+which is why each file carries its own bespoke concurrency argument.
+
+**Therefore: any run including a `*.integration.test.ts` file requires a token the orchestrator hands out at
+dispatch.** One integration run at a time, repo-wide. Agents ask, run, report, release — they do **not** poll
+(the poll signal is measurably broken, above). The referee is the orchestrator's dispatch state, which already
+knows who is running, so the token cannot leak and needs no TTL. Unit-scoped gates go fully parallel.
+
+**Before any wave, the orchestrator runs `pnpm ensure-stack` ONCE and is the only thing that ever runs it** —
+because it rewrites the env files. **The Docker stack was DOWN as of 2026-07-29**; every integration suite
+returns mass `ECONNREFUSED` until it is up, which would read as a catastrophic false red.
+
+### The turbo stale-cache question — SETTLED 2026-07-29. Refuted for `shared`, CONFIRMED for `db`/`realtime`/`ui`
+
+**The alarm as first raised was WRONG, and the orchestrator raised it.** The claim was that
+`@hushbox/api#test`'s hash contains no `packages/*` inputs, so a `packages/shared` edit followed by
+`pnpm test:api` could replay a pre-edit green — which would have meant every green api gate in this run that
+followed a shared edit proved less than it appeared to. A validator refuted it at **very high** confidence in a
+bit-exact replica of this repo: appending one line to `packages/shared/src/affordability/money.ts` moved
+`@hushbox/api#test` from `69fbb55b32e1287a` to `a6201f6a6d189e90`. **There is no retroactive damage. Every green
+`pnpm test:api` in this run genuinely executed.**
+
+**Where the reasoning broke is worth keeping, because it is a general trap.** The input-set facts were all
+correct — exactly 1010 inputs, zero from `packages/*`, `dependsOn: ["fetch-pyodide"]` with no `^test`/`^build`,
+`globalCacheInputs.files` holding only `.gitattributes`. The error was treating `tasks[].inputs` plus one field
+of `globalCacheInputs` as the whole hash. **The sibling field in the same object,
+`globalCacheInputs.hashOfInternalDependencies`, is content-derived from the transitive internal-dependency
+closure of the ROOT `package.json`** — and root `package.json:102-103` lists `@hushbox/shared` and
+`@hushbox/crypto` as `workspace:*` devDependencies. So shared edits are caught by a route nobody had looked
+at. **An input set read as proof by construction, with no stale hit ever observed, was Inferred and got
+reported as near-fact.** The 327 ms `>>> FULL TURBO` replay was consistent with a correctly-working cache and
+could not distinguish the two hypotheses, because no `packages/shared` edit happened between those two runs.
+
+**But the hazard is real for three other packages, and it was demonstrated end-to-end.**
+`packages/db`, `packages/realtime` and `packages/ui` are outside the root dependency closure **and** outside
+`apps/api`'s inputs, while `apps/api` consumes `@hushbox/db` and `@hushbox/realtime` **from source** (pnpm
+symlink, `exports` pointing at `./src/**.ts`, both in the SSR optimizer's `include` list). Verified in the
+replica: edits to `packages/db/src/index.ts`, `packages/realtime/src/index.ts` and `packages/ui/src/index.ts`
+each left `@hushbox/api#test` at `69fbb55b32e1287a` — **unchanged**. In a synthetic repo the full hazard was
+observed rather than argued: direct execution `EXIT=1` with the test failing, and the same state through turbo
+printing `cache hit, replaying logs` and `EXIT=0`.
+
+**This run edited `packages/db` in D1 and F8, so the retroactive population is narrow but non-empty**: any api
+gate taken after a `packages/db` edit could have replayed a pre-edit green. F9 will edit `packages/realtime`
+and inherits the same exposure. That is G10's population — see its criteria, which name these three packages
+rather than the false shared claim.
+
+**CI IS IMMUNE — verified 2026-07-29, and it de-escalates the decision below.** `.github/workflows/ci.yml:215-217`
+runs `pnpm test` with **`TURBO_FORCE: true`**, so CI never replays a cached test result for any package. The
+confirmed stale-cache hazard for `db`/`realtime`/`ui` is therefore a **local-run** hazard only. With agents
+bypassing turbo entirely under §The concurrent gate protocol, the whole residual exposure is one case: a human
+running `pnpm test:api` locally after editing `packages/db`. Worth closing, but it is **not** a truth-of-CI
+problem and must not be priced as one.
+
+**The protection for `shared`/`crypto` is INCIDENTAL, not designed — this is the finding with the longest
+life.** It holds only because two lines of root `package.json` happen to list them as devDependencies.
+Deleting those lines is a plausible dependency cleanup that would silently reopen the exact hole first feared,
+**with no test or gate to notice**. A structural fix makes the guarantee explicit:
+`test: { dependsOn: ["^test", "fetch-pyodide"] }`. Its cost is smaller than it looks — a `packages/shared` edit
+already invalidates every task in the monorepo through the global hash, so `^test` would tighten caching only
+for `db`/`realtime`/`ui` — and under §The concurrent gate protocol agents no longer invoke turbo at all, so the
+ordering cost lands on CI and on humans running `pnpm test:api` by hand, not on this run's gates.
+**Founder decision, still open**; the alternatives are `"cache": false` on `test` (blunt, always truthful) and
+adding the three packages to root devDependencies (**rejected** — it fixes the symptom by extending the same
+emergent mechanism the finding indicts). Turbo `inputs` cannot reference `../../packages/**`, so naming sibling
+sources is not available.
 
 ---
 
@@ -4913,7 +5251,12 @@ work by the founder. The brander stays exempt — you cannot brand a string with
 **Acceptance criteria:** a refined type whose only constructor validates against the offered set, so an answer
 that was never offered is unrepresentable rather than rejected at runtime; every caller converted; the brander's
 exemption documented at its definition.
-**Files:** `packages/shared/src/affordability/**`, `apps/api/src/slices/**` callers, tests.
+**Files:** `packages/shared/src/affordability/classifier-choice.ts`, the two barrels that re-export it
+(`packages/shared/src/index.ts`, `packages/shared/src/affordability/index.ts`), `classifier-choice.test.ts`.
+**NARROWED 2026-07-29:** the previous Files line claimed `apps/api/src/slices/**` callers. **There are none** —
+grep across `apps/api/src` and `apps/web/src` returns only the barrels and the test. Do not go looking for call
+sites; there is nothing to update. **Ordering:** C4 runs BEFORE C7, which wires the first real caller — otherwise
+C7 wires against the `string` signature and C4 immediately churns it.
 **Scoped checks:** `pnpm test:shared`, `pnpm test:api`. **Sensitive:** no — 1 auditor.
 
 ### D3 — The consumed set is computed once, at compile time
@@ -5077,9 +5420,27 @@ a permission nothing guards.
 `--coverage.include` does **not** accumulate (a false green), missing driving suites produce a false red, and a
 red suite suppresses the coverage table entirely so the gate's exit code says nothing. The founder deferred
 this; it is now a task so it is a decision rather than an omission.
-**Acceptance criteria:** each of the thirteen re-measured with a scope that carries its files' real exercisers,
-after G8 restores the gate; every shortfall listed with its file and figure; **no test written to raise a
-number** — a genuine shortfall becomes its own task with the behaviour it should cover named.
+**SCOPE EXPANDED 2026-07-29 — more coverage lies were measured, and they widen this task's population
+beyond thirteen.** §The concurrent gate protocol records them: a **literal** (wildcard-free)
+`--coverage.include` measures nothing and exits 0; the printed coverage table omitted 2 of the 22 files present
+in `coverage-final.json` in the same run; and turbo replays a green gate for a package whose
+edited dependency sits outside the root dependency closure. **The turbo axis is narrower than first feared and
+the difference matters: it is REFUTED for `packages/shared`/`crypto`/`config` and CONFIRMED for
+`packages/db`, `packages/realtime` and `packages/ui`** — see §The turbo stale-cache question. **The population
+is therefore every task whose coverage evidence was read off the printed table, taken with a wildcard-free
+`--coverage.include`, or gated through `pnpm test:*` after an edit to `packages/db`, `packages/realtime` or
+`packages/ui`.** On the turbo axis that means **D1 and F8** (both edited `packages/db`) and, when it runs, F9
+(`packages/realtime`) — not the sweeping "most of them" an earlier revision of this line claimed on a premise
+that turned out false. Size the other two axes by reading the ledger's recorded evidence per task rather than
+by assuming the thirteen.
+
+**Acceptance criteria:** each task in the population re-measured with a scope that carries its files' real
+exercisers, using §The concurrent gate protocol's command — **wildcard-bearing include, figures read from
+`coverage-final.json`, exit status from the `.exit` file, turbo bypassed**; every shortfall listed with its
+file and figure; **no test written to raise a number** — a genuine shortfall becomes its own task with the
+behaviour it should cover named. A task whose original evidence turns out to have been vacuous is reported as
+such **even when the re-measurement passes**, because the two facts differ: one says the code is covered, the
+other says the run's record was sound.
 **Scoped checks:** per package. **Sensitive:** no — 1 auditor. **Ordering:** after G8; last in the run.
 
 ### C5 — A trial turn on `auto` is classified, not silently degraded
@@ -5215,10 +5576,23 @@ the decided reasoning wire, pinned end to end rather than at the compiler · the
 call happens, so the over-reserve becomes an exact reserve · pinned for trial **and** paid, since both arms
 share the hole · **if the decision cannot be produced for a slot without a graph reshape, stop and report** —
 that is a design question, not an implementation detail.
+**CRITERION ADDED 2026-07-29 (founder-ruled): the decision is consumed through the SHARED `chooseFrom`, not a
+local reimplementation.** `chooseFrom` (`packages/shared/src/affordability/classifier-choice.ts:70`) was built by
+B8 "where no producer existed" and has **zero production callers** — grep across `apps/api/src` and
+`apps/web/src` returns only the shared barrels and its own test. You are that first producer. Turning the raw
+classifier answer into refined options with local logic instead would be a `CODE-RULES` §One Implementation,
+Shared violation, and would leave a built-but-unreachable function behind a refined signature. **C4 refines its
+signature first; wire the refined form, not `string`.**
+**Note for whoever wonders why no gate caught the deadness:** it is re-exported from the package's public barrel,
+so knip treats it as used public API. A barrel re-export hides deadness from the unused-code gate — worth
+remembering beyond this function.
+
 **Files:** `apps/api/src/slices/chat/domain/smart-model-turn.ts`, `apps/api/src/slices/workflows/**`,
-`apps/api/src/slices/models/domain/estimate-run.ts`, tests.
+`apps/api/src/slices/models/domain/estimate-run.ts`, plus the call site that invokes `chooseFrom`, tests.
+**Not yours:** `classifier-choice.ts` itself — that is C4's.
 **Scoped checks:** `pnpm test:api`. **Sensitive:** money — 2 independent auditors.
-**Ordering:** after D3, which owns the workflows compile step.
+**Ordering:** after D3, which owns the workflows compile step, **and after C4**, which refines the signature you
+wire against.
 
 ### C6 — The PAID path stops degrading reasoning-free on an unaffordable classified turn
 
@@ -5228,17 +5602,25 @@ than refusing. C5's stop-and-report rule forbade it from touching non-trial beha
 the right call, and it means the clause `BILLING.md` §Reasoning Effort 5 states ("never a silent static
 fallback") is still false on the **larger** user base.
 
-**The question this task must answer first, because it is not obvious:** is degrading on _unaffordability_
-the same defect as degrading on _choice_? C5's trial defect was a turn silently losing reasoning it could
-afford. This is a turn that genuinely cannot afford the classified form. §Effort 5's text admits no exception —
-"if no classifier can be built, the send fails with a typed error" — but whether "cannot afford it" counts as
-"cannot build it" is a reading, and the answer decides whether this is a defect or a documented carve-out.
-**Establish the reading, then act on it; if the doc needs a carve-out, that is a founder correction, not a code
-accommodation.**
+**THE READING IS RULED, 2026-07-29 — you do not need to establish it, and you must not re-open it.**
+Degrading on _unaffordability_ is **NOT** the same as degrading on _choice_, and only the unaffordable arm
+refuses:
 
-**Acceptance criteria:** the reading is stated with the doc text that decides it · if it is a defect, an
-unaffordable classified paid turn refuses with a typed error and the degradation is deleted, pinned in both
-directions · paid behaviour that is **affordable** is byte-identical either way · C5's `unaffordable` build
+- Degrading on **choice** — no effort level fits, or the model cannot reason — stays as it is. The user asked
+  for something unavailable, so the nearest thing is served. That is legitimate product behaviour.
+- Degrading on **unaffordability** is the defect. It silently converts "you cannot afford this" into "here is a
+  cheaper different thing you did not ask for", **and then bills for it** — the same class as the trial `auto`
+  silent static fallback C5 fixed. The two option sets (`affordable`, `admissible`) exist precisely so the
+  client can show what is reachable, so an affordability failure belongs in a typed refusal plus a notice, never
+  a substitution.
+
+`smart-model-turn.ts:355-360`'s own comment already records that the two result kinds "mean opposite things" to
+the caller. The code knows; the paid path does not act on it. **No doc carve-out is needed — §Effort 5 stands as
+written.**
+
+**Acceptance criteria:** an unaffordable classified paid turn **refuses with a typed error** and the
+degradation is deleted, pinned in both directions · a turn degrading for **choice** reasons is byte-identical to
+today, pinned so the two arms cannot be collapsed by a later reader · paid behaviour that is **affordable** is byte-identical either way · C5's `unaffordable` build
 variant, which currently maps back to `fallback` for the paid path precisely to keep it byte-identical, is
 consumed rather than laundered.
 **Files:** `apps/api/src/slices/chat/domain/{turn-definition,smart-model-turn}.ts`, tests.
@@ -5481,6 +5863,310 @@ codebase.
 - **`.astro` is excluded from the guard's globs, measured rather than assumed** — the astro parser hard-fails a
   raw NUL as a parse error before any lint rule runs, so the rule could never fire there. The reason is
   recorded in the config itself.
+
+## Lane T — Harness truth (founder-approved 2026-07-29, dispatched FIRST)
+
+**Why this lane exists.** §The concurrent gate protocol closes five void-green paths by instructing agents.
+The founder's question — "can we make `generate:env` idempotent? is it not already idempotent?" — exposed that
+instructing agents is the wrong instrument: **a rule repeated into 28 briefs is a sync contract with 28
+readers**, which `CODE-RULES` §One Implementation, Shared bans outright. Four of the five traps can be closed
+in the harness so that no agent can hit them and no brief needs to mention them. That is what this lane does,
+and it runs before the 28 remaining tasks so their gates are trustworthy when they run.
+
+**The founder's question answered, because it sets T1's shape.** `generate-env.ts` **is** idempotent — verified
+by grep, it contains no `Date`, `now()`, `random` or hostname read, so the same mode and worktree produce
+byte-identical output and running it twice leaves the same final state. It is idempotent in **result** and
+destructive in **effect**: lines 200, 257 and 264 are bare `writeFileSync`, which truncates to zero length and
+rewrites even when the bytes are unchanged, and a concurrent reader inside that window reads a truncated or
+empty file. **Idempotence was never the property we needed.** The two properties we need are _no-op when
+unchanged_ and _atomic when changed_, and they are complementary rather than alternatives — write-if-changed
+removes the frequency (steady state writes nothing), atomic rename removes the hazard on the runs where
+content legitimately does change (first run, worktree port change).
+
+**Scope discipline.** These files are shared with the live concurrent workstream in this repo. Change only what
+each task's criteria name; do not tidy adjacent code. Every task's `**Files:**` line is exhaustive.
+
+**All three are file-disjoint and dispatch concurrently.** Four traps, three tasks, because two of the traps
+live in one file.
+
+### T1 — `generate-env.ts` stops rewriting files whose content did not change
+
+**Objective.** Env-file generation becomes a no-op when the content is unchanged, and atomic when it is not.
+
+**Acceptance criteria.**
+
+- For each of `.env.development`, `.env.scripts` and `apps/api/.dev.vars`: when the generated content equals
+  the file's current content, **no write occurs at all** — proven by a test that asserts the file's inode and
+  mtime are unchanged across a second invocation. A test asserting only that content is equal afterwards does
+  not prove this. **CRITERION TIGHTENED 2026-07-29 after T1's first audit: the proof must be
+  mode-bit-independent.** The original wording offered "assert the write function was not called" as an
+  alternative; `vi.spyOn` on `node:fs` turns out to be structurally unavailable in `@hushbox/scripts` (`Module
+namespace is not configurable in ESM`), so the implementer substituted permission revocation — which **fails
+  open**: as root, or on a permission-ignoring mount, it passes even with the no-op check deleted. Permission
+  revocation may stay as an additional signal, but **every test whose subject is "no write happened" must carry
+  an assertion that holds regardless of the identity the process runs as**, because CI containers commonly run
+  as root and this is the one lane whose purpose is an instrument that cannot report a false green.
+- **The same-directory placement of the temporary file must be pinned by a test that actually discriminates.**
+  Added 2026-07-29: the first audit demonstrated with a mutant that a **cross-directory** temp on the same
+  filesystem passes every write-behaviour test in the suite, so the property was pinned by nothing. An
+  inversion that only fails because `/tmp` sits on a different device than the repo is an **ambient-device
+  artifact**, not discrimination — it proves the machine, not the code.
+- When content differs, the write is **atomic**: written to a temporary path in the **same directory** and
+  moved into place with `renameSync`, so a concurrent reader observes either the complete old file or the
+  complete new one, never a partial one. A same-directory temp is required — `rename` across filesystems is
+  not atomic.
+- **Generated content is byte-identical to before this change** for every mode (`development`, `ciVitest`,
+  `ciE2E`, `production`), proven by comparison rather than asserted. This task changes _when and how_ bytes
+  are written, never _which_ bytes.
+- `pnpm verify:env` still passes, and `ensure-stack`'s behaviour is otherwise untouched.
+
+**Design context.** §Known Breakage recorded the symptom — "a concurrent agent regenerating `.env.development`
+voids an in-flight suite run" — and attributed it to `pnpm generate:env`. The real trigger is
+`scripts/ensure-stack.ts:155`, which calls `generateEnvFiles` **unconditionally** on the way into every
+`pnpm test:*`, so two agents running any test command void each other regardless of package. Fixing the writer
+is what makes that structurally impossible; the comment at `ensure-stack.ts:11` calling regeneration "cheap,
+always runs" is true of its CPU cost and false of its blast radius.
+
+**Files:** `scripts/generate-env.ts`, `scripts/generate-env.test.ts`. The bare `writeFileSync` calls at
+`scripts/generate-env.ts:305` (wrangler toml) and `:568` (workflows) are the **same class** and are
+deliberately **out of scope** — they are not on the `ensure-stack` hot path. Do not touch them; if you believe
+one is, report it and stop.
+**Scoped checks:** from `scripts/`, the §The concurrent gate protocol command; `turbo typecheck lint --filter=@hushbox/scripts`.
+**Sensitive:** no — 1 auditor.
+
+### T2 — The gate runner cannot silently produce a void or a vacuous result
+
+**Objective.** Two concurrent gate runs can never void each other, and a coverage scope that measures nothing
+fails loudly instead of exiting 0.
+
+**Acceptance criteria.**
+
+- `coverage.reportsDirectory` **defaults to a path unique to the running process** (so its `.tmp` child cannot
+  be shared), while an explicitly supplied `--coverage.reportsDirectory` still wins. Proven behaviourally:
+  **two overlapping runs of the same package both complete with a coverage report** — the current code kills
+  one of them with `Something removed the coverage directory`, and the loser prints zero `FAIL` lines, which is
+  why a passing-looking log is not evidence here.
+- **CRITERION CORRECTED 2026-07-29 — the original was built on a refuted premise and would have been harmful
+  both ways.** It required failing fast on a wildcard-free `--coverage.include`. That is wrong twice: a
+  wildcard-free include **does** measure (verified — `coverage-final.json` held the named file at 4/4
+  statements), so the guard would have hard-failed working invocations across every gate in this run; and a
+  wildcard-bearing include matching zero files (`src/nope/**/*.ts`) exits 0 measuring nothing, so the guard
+  would still have passed the genuinely vacuous case. **The glob's shape is not the discriminator; the emptiness
+  of the resulting coverage map is.** The corrected criterion: when an `--coverage.include` is supplied and the
+  resulting coverage map is **empty**, the run fails with a message naming the offending include value. Proven
+  by a **negative** test — an include matching zero files must exit non-zero — and by a positive control: a
+  wildcard-free include that does match must still pass. This shape was proposed by T2's own implementer after
+  it refuted the original; the credit belongs there, and the plan defect was the orchestrator's.
+- **ADDED 2026-07-29, routed from T3: strip a leading bare `--` from the passthrough arguments.** pnpm inserts
+  a literal `--` when forwarding, and vitest 4.1.8 **discards everything after a bare `--`** — measured: all 12
+  files ran, the positional filter was discarded, the override directory was never created, exit 0. T3 fixed the
+  first cause in series (argument order) and could not reach this one, because it lives in your file. Prove it
+  with `pnpm test:<pkg> -- -- --coverage.reportsDirectory=<temp>` actually creating that directory.
+  **RULED 2026-07-29 — strip EVERY bare `--` from the passthrough list, at any position. The original wording
+  ("do not swallow a `--` that appears anywhere other than first") was an unfounded caution and it BLOCKED the
+  fix.** Two measurements retired it. First, pnpm re-inserts its own separator, so `-- --` arrives as **two**
+  leading `--` and a single strip does not satisfy the criterion's own required proof. Second, the separators
+  land **mid-list** for the seven packages whose `test` script carries its own arguments
+  (`@hushbox/{scripts,shared,crypto,config}`, `apps/marketing`, `ops`, `ads`), so a leading-only strip cannot
+  reach them at all — measured: 90 files ran and the override directory was never created. The caution assumed a
+  legitimate use for a bare `--`; there is none, because **vitest 4.1.8 gives a bare `--` no meaning except
+  discarding everything after it**. Forwarding it therefore preserves only the harmful behaviour. A `--` that is
+  part of a longer token (`--foo`) is untouched — only a standalone `--` is dropped.
+- Existing invocations keep working unchanged: `pnpm test` at the repo root, every `pnpm test:<pkg>`, and the
+  `--passWithNoTests` and `--config` forms used by `@hushbox/scripts` and `@hushbox/config`.
+- The unique default must not defeat any tooling that reads coverage output from the conventional
+  `<pkg>/coverage` path. If something does, say so and stop rather than relocating that consumer.
+
+**Design context.** This task edits the instrument that gates every other task, so **its own gate cannot be
+its only evidence** — a bug here could make its own run pass vacuously, which is precisely the failure class
+being fixed. Both criteria are therefore specified as behavioural proofs (two concurrent runs both finishing; a
+negative exit code) rather than as assertions the runner reports about itself.
+
+**Files:** `scripts/run-package-tests.ts`, `scripts/run-package-tests.test.ts`.
+**Scoped checks:** from `scripts/`, the §The concurrent gate protocol command; `turbo typecheck lint --filter=@hushbox/scripts`.
+**Sensitive:** no in the auth/money sense — but **2 independent auditors**, because a silent regression here
+degrades every gate in the run rather than one feature.
+
+### T3 — An appended flag reaches the coverage run, not the workers run
+
+**Objective.** A passthrough argument given to `pnpm test:<pkg>` takes effect on the run that carries coverage.
+
+**Acceptance criteria.**
+
+- For `apps/api`, `packages/db` and `packages/realtime`: an appended `--coverage.reportsDirectory=<temp path>`
+  **demonstrably takes effect** — that exact directory is created and populated. Assert on the explicit path,
+  which is a proof that holds whatever T2 makes the default.
+- Both the coverage run and the workers run still execute, and the command exits non-zero if **either** fails.
+  Short-circuit semantics may stay as they are (`&&`); the criterion is that neither run is silently dropped.
+- Repo-root `pnpm test` and `turbo test --filter=<each package>` behave as before.
+
+**Design context.** Verified today: those three packages' `test` scripts end in `&& pnpm run test:workers`, and
+pnpm appends passthrough args to the **end of the script string**, so an override lands on the workers run —
+which carries no coverage at all (`apps/api/vitest.workers.config.ts:7`). The measured result is exit **0**
+with the override directory **never created** and the default path still written. **A fix that reports success
+while changing nothing is the worst outcome available.**
+
+**The cheap correct fix is almost certainly to reorder the chain** so the coverage run is last and the appended
+argument lands on it. **Absorbing the workers run into `run-package-tests.ts` is explicitly out of bounds** —
+that file is T2's, and it is CI-critical logic. If reordering cannot satisfy the criteria, return BLOCKED
+rather than reaching into T2's file.
+
+**Files:** the `test` script in `apps/api/package.json`, `packages/db/package.json`,
+`packages/realtime/package.json`. Nothing else — in particular **not** `scripts/run-package-tests.ts`.
+**Scoped checks:** verify each of the three packages' `test` still runs both projects. This is a
+build-configuration change, so state explicitly in the report what CI behaviour was checked and how.
+**Sensitive:** no in the auth/money sense — but **2 independent auditors**, because it is a build-config change
+on the path CI takes.
+
+### T1 — CLEAN 2026-07-29 (audit → fix → re-audit, no findings on the second pass)
+
+Both discrimination gaps closed, each proven by the mutant that exposed it now failing, at uid 1000 **and** uid 0. The re-audit ran the real suite as root in a contained harness rather than accepting a replication, and
+re-took the four-mode byte comparison against `HEAD` itself: 0 differing files in all four modes.
+`scripts/generate-env.ts` is byte-unchanged across the fix cycle (sha256 corroborated by an artifact written
+_before_ that cycle, so it is not self-report), and no mutant survives in it.
+
+**One residual, confirmed real and judged acceptable:** a temp file placed in an arbitrary **third** writable
+directory still passes (mutant green at both identities). The two plausible implementations — tree-root and
+system-temp — are both pinned device-independently. Full generality is **structural, not behavioural**: export
+the temp-path builder and assert `path.dirname(temp) === path.dirname(target)`, because `vi.spyOn` on `node:fs`
+is structurally unavailable in this package. Not filed as a finding; recorded here if anyone wants it later.
+
+### T3 — CLEAN 2026-07-29 (two independent auditors, both PASS, zero findings)
+
+**The attribution problem was solved by measurement, twice over.** Both auditors independently established that
+T3's reorder is load-bearing without leaning on the sibling's separator strip. The decisive probe: hand
+`--coverage.reportsDirectory` straight to the workers clause and it runs its tests, exits **0**, and never
+creates the directory — with pnpm forwarding the flag and **no `--` inserted at all**. The reason is structural:
+the workers clause never passes `--coverage` and the three workers configs declare no coverage, so a
+`--coverage.reportsDirectory` sub-option cannot enable it. **Had the coverage run stayed non-last, T2's strip
+would have delivered the argument intact to a clause that structurally cannot honour it** — the identical false
+green. One auditor further measured pnpm's append semantics in a throwaway package (`A && B` + `pnpm run s ARG`
+⇒ clause A sees `[]`, clause B sees `["ARG"]`), confirming the pre-fix tail was the only clause that could ever
+receive the override.
+
+**CI cannot be changed by this reorder.** CI's test job runs root `pnpm test` with **no passthrough arguments**,
+so where an appended argument lands was never part of CI's pass/fail — only output order. Turbo's task hash was
+also verified to **include** passthrough args (distinct hashes with and without), so a scoped verification run
+cannot poison the argument-free cache entry.
+
+**An ordering risk the diff does not show was checked and cleared:** `packages/db`'s workers clause now commits
+before the node suite, but its settlement executor deletes its ledger legs and drops its scratch table in a
+`finally`, so no cross-suite state coupling is introduced; and the shared vitest setup only best-effort touches
+an idle heartbeat whose TTL is an hour, so moving it later cannot let the stack be torn down mid-run.
+
+**The short-circuit trade-off is accepted, and priced rather than waved at.** The exit code is identical in both
+orderings, so nothing can look green while being void — the class this lane exists to close. A red workers clause
+suppressing the coverage table is the **same pre-existing class** §Known Breakage already records for any red
+suite, and it costs diagnostics only in a run already failing. Workers suites are tiny and coverage-free
+(api 6 tests ~1.4 s, db 2 tests, realtime 24 tests), and agents' own coverage is untouched because the gate
+command invokes `run-package-tests.ts` directly and never runs `test:workers`.
+
+**OPEN, and it is the orchestrator's design question, not a T3 defect: nothing automated pins "the coverage
+clause is last".** A regression would be silent again, reopening exactly the trap T3 closed. The only places that
+could pin it — `scripts/run-package-tests.test.ts` or an `arch/` rule in `packages/config` — are outside T3's
+declared ownership, which is why it is recorded here rather than filed against T3.
+
+### T2 — CLEAN 2026-07-29 (two independent auditors, both PASS, zero findings)
+
+Three cycles, two of which existed because criteria of mine were wrong. Final state: per-process coverage
+directory, an empty-coverage-map guard, and a bare-separator strip at every position. **31 mutants applied across
+the two audits (17 and 14), every one killed by the semantically matching test** — and both auditors built their
+mutation harness OUTSIDE the repo (mutated copies plus a vitest `resolve.alias` or `--root`), which is how you get
+mutation evidence without touching a shared worktree. Reuse that technique. Both reproduced **both** victim
+directions of the collision, each control run printing a full 100% coverage table with **zero `FAIL` lines** — the
+passing-looking log — and neither direction reproduced under the fix.
+
+**The absent-map question is RESOLVED BY MEASUREMENT, and no ruling is needed.** One auditor raised it as its only
+open item; the other closed it. A zero-match include **writes `coverage-final.json` as `{}`** — so "absent file"
+is a different observable entirely: a run that died before the reporter, or a red suite (vitest suppresses the
+coverage report on failure and writes no map). **In every reachable absent-map case vitest's own exit is already
+non-zero**, so the abstain branch hides nothing. The one path to a void exit-0 absent map is passing
+`--coverage.reporter` without `json`, which no package script and no protocol command does. Fail-closed remains
+available as optional hardening; it is not a correctness gap.
+
+**A NEW PROTOCOL RULE, found live rather than reasoned:** `<pkg>/coverage/run-<pid>` nests inside the conventional
+`<pkg>/coverage`, which keeps `.gitignore`, `turbo.json`'s `outputs`, jscpd and eslint ignores all covering it with
+no foreign edits — but **any process that runs vitest with the conventional default reports directory in that
+package wipes every concurrent `run-<pid>` sibling**, because vitest's start-up clean deletes the whole tree. An
+auditor lost a run to exactly this, diagnosed live via `ps`: a sibling agent running raw
+`pnpm exec vitest run --coverage` with no explicit directory. **Therefore: never run raw `vitest --coverage`
+without an explicit `--coverage.reportsDirectory`.** This is not a regression — such a run wiped the shared `.tmp`
+before this change too — but it is the one way left for one agent to void another's gate.
+
+**Two residuals, both deliberately not findings.** Nothing sweeps `run-<pid>` directories, and any age-based
+sweeper would delete a live sibling's output — re-creating the exact class this task removed. And a pre-change
+`<pkg>/coverage/coverage-final.json` is now never overwritten, so a reader of the old habit path gets **stale**
+data rather than none; mitigated by the `coverage report → <dir>` line printed on every defaulted run.
+
+### T4 — Turbo's test hash includes sibling package source (founder-ruled 2026-07-29)
+
+**Objective.** A change to `packages/db`, `packages/realtime` or `packages/ui` invalidates the cached `test`
+result of every package that consumes them, so a cached green can never replay across a sibling-source edit.
+
+**Design context.** A validator established at very high confidence, in a bit-exact replica, that
+`@hushbox/api#test`'s hash carries ~1010 inputs, **none from `packages/*`**, and that root `turbo.json` gives
+`test` a `dependsOn` of `["fetch-pyodide"]` with no `^`. `packages/shared` and `packages/crypto` are caught
+anyway — but only **incidentally**, because two lines of root `package.json` happen to list them as
+devDependencies, which feeds `globalCacheInputs.hashOfInternalDependencies`. `db`, `realtime` and `ui` sit
+outside that closure and were confirmed unprotected: edits to each left `api#test`'s hash **unchanged**, and in a
+synthetic repo the full hazard was **observed** — direct execution `EXIT=1` with the test failing, versus turbo
+printing `cache hit, replaying logs` and `EXIT=0`.
+
+**Who is actually exposed, because it is not CI.** CI sets `TURBO_FORCE: true` (`ci.yml:217`) and never replays a
+cached test result; agents bypass turbo entirely under §The concurrent gate protocol. **The exposed consumer is
+pre-push**: `.husky/pre-push` → `pnpm pre-push` → `scripts/pre-push.ts:28` runs `pnpm test` with **no**
+`TURBO_FORCE`. That is the mechanism behind the already-documented failure "a warm local cache makes pre-push
+green while CI fails".
+
+**Why `dependsOn` and not `cache: false`.** `cache: false` closes the same hole by making **every** pre-push run
+the full suite uncached — minutes on the most frequent operation. `^test` keeps caching, so a push touching only
+`apps/web` still skips every unchanged package, while making the hash correct. Rejected outright: adding the
+three packages to root devDependencies, which fixes the symptom by extending the very emergent mechanism the
+finding indicts. Not available: naming sibling sources in `inputs` — turbo `inputs` cannot reference
+`../../packages/**`, verified.
+
+**Acceptance criteria.**
+
+- Root `turbo.json`'s `test` task gains `^test` alongside `fetch-pyodide`.
+- **Proven by hash comparison, not by reasoning:** in a **copy** of the repo under `/tmp` (never the live tree),
+  capture `@hushbox/api#test`'s hash from `turbo run test --filter=@hushbox/api --dry=json`, append one line to a
+  `packages/db` source file, re-capture, and show the hash **moved**. Repeat for `packages/realtime`. Show the
+  pre-change behaviour too — the same probe on the current `turbo.json` leaves the hash unchanged — because the
+  fix is only meaningful against that baseline.
+- A filtered `pnpm test:<pkg>` still succeeds, and the report states which dependency suites it now pulls in and
+  what that costs in wall time.
+- Repo-root `pnpm test` still succeeds. **You may run it** — you are the only task allowed to, and only because
+  no other agent is live; confirm with the orchestrator before starting.
+- CI's behaviour is unchanged in kind: state explicitly that `TURBO_FORCE: true` makes this a no-op for CI, and
+  that the value is entirely for pre-push and local runs.
+
+**Files:** `turbo.json`. Nothing else — in particular **not** `package.json` files, and **not**
+`scripts/pre-push.ts`.
+**Scoped checks:** `pnpm lint` over the changed file plus the hash probes above. There is no unit test for a
+turbo config; the hash comparison **is** the test, so it must be shown as a transcript.
+**Sensitive:** no in the auth/money sense — but **2 independent auditors**, because it changes the build
+configuration CI and pre-push both run.
+
+### Recorded, NOT owned by this lane
+
+- **The `workers=N` banner prints a lie.** `run-package-tests.ts` prints `workers=24` while
+  `VITEST_MAX_WORKERS` silently overrides the effective count (verified: `=3` yields exactly 3 forks). It is
+  two lines in T2's file and the same class of defect — a printed number that is false — but it is a **fifth**
+  trap and the founder approved four. Not added. Surfaced for a ruling rather than absorbed.
+- **RESOLVED, not deferred — the coverage-table omission is benign.** It was listed here as an undiagnosed
+  hazard; the mechanism is now established (see §Known Breakage): the reporter omits files with nothing to
+  report — fully-covered ones, and files with no executable statements such as an 11-line pure re-export. A
+  file with genuinely uncovered statements always prints, so the table cannot hide a shortfall. Nothing to fix.
+- **Turbo stale-cache: SETTLED, and one open founder decision remains.** Refuted for `packages/shared`;
+  **confirmed for `packages/db`, `packages/realtime`, `packages/ui`** (see §The turbo stale-cache question). The
+  remaining decision is whether to make the shared/crypto protection explicit via
+  `test: { dependsOn: ["^test", "fetch-pyodide"] }` rather than leaving it emergent in two lines of root
+  `package.json`. Not this lane's work until ruled.
+- **No generic DB isolation exists, and `withRollback` is re-declared per test file** rather than shared once.
+  That second half is a `CODE-RULES` §One Implementation, Shared violation in its own right. Both are real
+  design changes, deliberately not attempted from a brief.
+
+---
 
 ## Dependency graph
 

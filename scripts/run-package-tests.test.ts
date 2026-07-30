@@ -8,6 +8,7 @@ import {
   writeWeight,
   runPackageTests,
   detectPoles,
+  processCoverageDirectory,
   POLE_MIN_MS,
   POLE_MAJORITY_SHARE,
   type RunDeps,
@@ -315,16 +316,30 @@ describe('writeWeight', () => {
   });
 });
 
+describe('processCoverageDirectory', () => {
+  it('keeps the default output under the package coverage directory', () => {
+    expect(processCoverageDirectory('/repo/packages/shared', 4242)).toBe(
+      '/repo/packages/shared/coverage/run-4242'
+    );
+  });
+
+  it('gives two live processes non-overlapping directories', () => {
+    expect(processCoverageDirectory('/pkg', 11)).not.toBe(processCoverageDirectory('/pkg', 12));
+  });
+});
+
 describe('runPackageTests', () => {
   const baseDeps = (over: Partial<RunDeps> = {}): RunDeps => ({
     cores: 8,
     weightsDir: '/wd',
     cwdPackageName: '@hushbox/ops',
+    defaultReportsDirectory: '/pkg/coverage/run-1',
     passthroughArgs: [],
     listTestPackages: vi.fn(() => ['ops']),
     readWeights: vi.fn(() => ({})),
     writeWeight: vi.fn(),
     readReport: vi.fn<RunDeps['readReport']>(() => {}),
+    readCoverageMap: vi.fn<RunDeps['readCoverageMap']>(() => {}),
     makeTmpFile: vi.fn(() => '/weights-tmp/report.json'),
     exec: vi.fn(() => Promise.resolve(0)),
     log: vi.fn(),
@@ -347,6 +362,7 @@ describe('runPackageTests', () => {
         'run',
         '--coverage',
         '--maxWorkers=8',
+        '--coverage.reportsDirectory=/pkg/coverage/run-1',
         '--reporter=default',
         '--reporter=json',
         '--outputFile.json=/weights-tmp/report.json',
@@ -372,6 +388,170 @@ describe('runPackageTests', () => {
       expect.arrayContaining(['--passWithNoTests']),
       expect.anything()
     );
+  });
+
+  it('forwards a two-argument flag value untouched', async () => {
+    const deps = baseDeps({ passthroughArgs: ['--config', 'vitest.package.config.ts'] });
+    await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    const args = (deps.exec as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as readonly string[];
+    expect(args.slice(args.indexOf('--config'), args.indexOf('--config') + 2)).toEqual([
+      '--config',
+      'vitest.package.config.ts',
+    ]);
+  });
+
+  it('sends coverage output to the per-process directory when the caller supplies none', async () => {
+    const deps = baseDeps();
+    await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    expect(deps.exec).toHaveBeenCalledWith(
+      expect.arrayContaining(['--coverage.reportsDirectory=/pkg/coverage/run-1']),
+      expect.anything()
+    );
+  });
+
+  it('names the defaulted coverage directory in its output', async () => {
+    const deps = baseDeps();
+    await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    expect(deps.log).toHaveBeenCalledWith('[ops] coverage report → /pkg/coverage/run-1');
+  });
+
+  it('leaves an explicitly supplied coverage directory in force', async () => {
+    const deps = baseDeps({ passthroughArgs: ['--coverage.reportsDirectory=/explicit/cov'] });
+    await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    const args = (deps.exec as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as readonly string[];
+    expect(args).toContain('--coverage.reportsDirectory=/explicit/cov');
+    expect(args.filter((argument) => argument.includes('/pkg/coverage/run-1'))).toEqual([]);
+  });
+
+  it('leaves a coverage directory supplied as two arguments in force', async () => {
+    const deps = baseDeps({
+      passthroughArgs: ['--coverage.reportsDirectory', '/explicit/cov'],
+    });
+    await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    const args = (deps.exec as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as readonly string[];
+    expect(args.filter((argument) => argument.includes('/pkg/coverage/run-1'))).toEqual([]);
+  });
+
+  it('drops the bare separator a package-manager passthrough puts in front of the args', async () => {
+    const deps = baseDeps({
+      passthroughArgs: ['--', '--coverage.reportsDirectory=/explicit/cov'],
+    });
+    await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    const args = (deps.exec as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as readonly string[];
+    expect(args).not.toContain('--');
+    expect(args).toContain('--coverage.reportsDirectory=/explicit/cov');
+    expect(args.filter((argument) => argument.includes('/pkg/coverage/run-1'))).toEqual([]);
+  });
+
+  it('drops every separator stacked in front of the args, not just the first', async () => {
+    // `pnpm run <script> -- <args>` re-inserts a separator of its own, so the
+    // `-- --` form arrives here as two.
+    const deps = baseDeps({
+      passthroughArgs: ['--', '--', '--coverage.reportsDirectory=/explicit/cov'],
+    });
+    await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    const args = (deps.exec as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as readonly string[];
+    expect(args).not.toContain('--');
+    expect(args).toContain('--coverage.reportsDirectory=/explicit/cov');
+  });
+
+  it('drops a separator sitting between a script own arguments and the forwarded ones', async () => {
+    // A `test` script that carries its own arguments makes the passthrough
+    // separators land after them, which is where most packages put them.
+    const deps = baseDeps({ passthroughArgs: ['--passWithNoTests', '--', '--', 'some.test.ts'] });
+    await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    const args = (deps.exec as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as readonly string[];
+    expect(args).not.toContain('--');
+    const kept = args.indexOf('--passWithNoTests');
+    expect(args.slice(kept, kept + 2)).toEqual(['--passWithNoTests', 'some.test.ts']);
+  });
+
+  it('leaves a flag whose own name begins with the separator intact', async () => {
+    const deps = baseDeps({
+      passthroughArgs: ['--', '--coverage.include=lib/**/*.ts', '--passWithNoTests'],
+    });
+    await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    const args = (deps.exec as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as readonly string[];
+    expect(args).toContain('--coverage.include=lib/**/*.ts');
+    expect(args).toContain('--passWithNoTests');
+    expect(args).not.toContain('--');
+  });
+
+  it('fails a run whose supplied coverage include matched no file', async () => {
+    const deps = baseDeps({
+      passthroughArgs: ['--coverage.include=src/nope/**/*.ts'],
+      readCoverageMap: vi.fn(() => ({})),
+    });
+    const code = await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    expect(code).toBe(1);
+    const warnings = (deps.warn as ReturnType<typeof vi.fn>).mock.calls
+      .map((call) => call[0] as string)
+      .join('\n');
+    expect(warnings).toContain('src/nope/**/*.ts');
+    expect(warnings).toMatch(/measured nothing/i);
+  });
+
+  it('fails on an empty coverage map for an include supplied as two arguments', async () => {
+    const deps = baseDeps({
+      passthroughArgs: ['--coverage.include', 'src/nope/**/*.ts'],
+      readCoverageMap: vi.fn(() => ({})),
+    });
+    const code = await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    expect(code).toBe(1);
+  });
+
+  it('passes a run whose supplied coverage include measured at least one file', async () => {
+    const deps = baseDeps({
+      passthroughArgs: ['--coverage.include=src/*.ts'],
+      readCoverageMap: vi.fn(() => ({ '/pkg/src/a.ts': {} })),
+      readReport: vi.fn(() => ({
+        testResults: [{ startTime: 0, endTime: 500, name: '/a.test.ts' }],
+      })),
+    });
+    const code = await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    expect(code).toBe(0);
+    expect(deps.warn).not.toHaveBeenCalled();
+  });
+
+  it('reads the coverage map from the reports directory actually in force', async () => {
+    const withDefault = baseDeps({ passthroughArgs: ['--coverage.include=src/*.ts'] });
+    await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, withDefault);
+    expect(withDefault.readCoverageMap).toHaveBeenCalledWith('/pkg/coverage/run-1');
+
+    const withExplicit = baseDeps({
+      passthroughArgs: [
+        '--coverage.include=src/*.ts',
+        '--coverage.reportsDirectory',
+        '/explicit/cov',
+      ],
+    });
+    await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, withExplicit);
+    expect(withExplicit.readCoverageMap).toHaveBeenCalledWith('/explicit/cov');
+  });
+
+  it('does not judge the scope of a run that wrote no coverage map at all', async () => {
+    const deps = baseDeps({
+      passthroughArgs: ['--coverage.include=src/*.ts'],
+      readCoverageMap: vi.fn<RunDeps['readCoverageMap']>(() => {}),
+      readReport: vi.fn(() => ({
+        testResults: [{ startTime: 0, endTime: 500, name: '/a.test.ts' }],
+      })),
+    });
+    const code = await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    expect(code).toBe(0);
+    expect(deps.warn).not.toHaveBeenCalled();
+  });
+
+  it('leaves an empty coverage map alone when no include was supplied', async () => {
+    const deps = baseDeps({
+      readCoverageMap: vi.fn(() => ({})),
+      readReport: vi.fn(() => ({
+        testResults: [{ startTime: 0, endTime: 500, name: '/a.test.ts' }],
+      })),
+    });
+    const code = await runPackageTests({ HB_TEST_SCOPE: 'solo', HB_PKG_NAME: 'ops' }, deps);
+    expect(code).toBe(0);
+    expect(deps.warn).not.toHaveBeenCalled();
   });
 
   it('captures the weight on a full run from the json report', async () => {

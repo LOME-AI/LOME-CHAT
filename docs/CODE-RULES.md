@@ -381,7 +381,7 @@ existing suite over new standalone specs — suite runtime is a shared budget.
 
 ### When to Comment
 
-Comment durable facts that a future reader with no context cannot derive from the code, names, types, or tests, when the information is load-bearing on correctness or future modification and survives the current task.
+Default to no comment. Write one only when a future reader with no context cannot derive the fact from the code, names, types, or tests, and the fact is load-bearing on correctness or future modification and survives the current task.
 
 Examples:
 
@@ -397,6 +397,8 @@ Examples:
 - Exceptions to established rules
 - Subtle edge cases
 
+A comment is one line, two when the fact needs two. Length follows the size of the durable fact, never the size of the change: a rejected-alternative record or a hidden-coupling warning may run longer, but a paragraph explaining ordinary code means the code is wrong.
+
 A wrong comment is worse than no comment. If you can't state the durable fact precisely, leave it out.
 
 ### When Not to Comment
@@ -406,6 +408,8 @@ A wrong comment is worse than no comment. If you can't state the durable fact pr
 - Standard patterns
 - What code does (code shows this)
 - Code you didn't change
+- Restating the adjacent code in prose
+- Anything that belongs in the commit message or PR description
 
 ### Never Include
 
@@ -414,6 +418,7 @@ A wrong comment is worse than no comment. If you can't state the durable fact pr
 - Specific timing estimates
 - Ephemeral values (container IDs, hashes)
 - TODO and FIXME
+- Task IDs or plan references (see Durable Naming)
 
 ### Doc Lifecycle
 
