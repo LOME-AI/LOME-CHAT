@@ -47,7 +47,7 @@ jobs:
     steps:
       # fetch-depth: 0 pulls all branches so the commit scan below sees every
       # branch's history, not just the default ref.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup
@@ -85,7 +85,7 @@ jobs:
 
       # Unique name per run so weekly artifacts never overwrite each other.
       - name: Upload board backup
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: board-backup-${{ github.run_id }}
           path: board-backup-${{ github.run_id }}.json
@@ -133,11 +133,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
 
       - name: Download board backup
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: board-backup-${{ github.run_id }}
 
@@ -174,12 +174,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Download board backup
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: board-backup-${{ github.run_id }}
 

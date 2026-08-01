@@ -60,7 +60,7 @@ jobs:
       version_code: ${{ steps.version.outputs.version_code }}
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: ./.github/actions/setup
@@ -109,7 +109,7 @@ jobs:
     timeout-minutes: 8
     environment: production
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       # The whole-workspace build assembles the sandbox origin, whose dist ships
       # the self-hosted Pyodide assets (~26 MB, gitignored) pulled from a pinned
@@ -153,7 +153,7 @@ jobs:
       - name: Verify web bundle
         run: pnpm verify:bundle
       - name: Upload web build artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: web-dist
           path: apps/web/dist

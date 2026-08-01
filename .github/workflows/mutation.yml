@@ -14,12 +14,12 @@ jobs:
     timeout-minutes: 30
     environment: ci
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup-blacksmith
 
       - name: Cache Docker images
-        uses: useblacksmith/stickydisk@v1
+        uses: useblacksmith/stickydisk@v1.4.0
         with:
           key: docker-${{ hashFiles('docker-compose.yml') }}
           path: /tmp/docker-cache
@@ -59,7 +59,7 @@ jobs:
           STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
 
       - name: Upload mutation report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: mutation-report

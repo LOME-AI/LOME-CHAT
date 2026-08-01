@@ -23,11 +23,11 @@ jobs:
     timeout-minutes: 15
     environment: production
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
 
       - name: Download web build artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: web-dist
           path: apps/web/dist
@@ -68,7 +68,7 @@ jobs:
 
       - name: Upload IPA as workflow artifact
         if: inputs.output == 'ipa-artifact'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: HushBox-ipa-v${{ inputs.version-name }}
           path: apps/web/ios/build/HushBox.ipa
